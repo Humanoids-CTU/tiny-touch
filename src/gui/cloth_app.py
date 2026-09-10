@@ -43,15 +43,6 @@ class ClothApp:
         self.controls.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         self.controls.columnconfigure(0, weight=1)
 
-        save_btn = ttk.Button(
-            self.controls,
-            text="Save",
-            command=self.on_save,
-            style="Tool.TButton",
-            takefocus=0,
-        )
-        save_btn.pack(side="left", padx=5)
-
         save_close_btn = ttk.Button(
             self.controls,
             text="Save & Close",

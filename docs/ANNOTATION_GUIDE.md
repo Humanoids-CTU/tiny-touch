@@ -152,7 +152,7 @@ Click **Clothes** to open the clothing dialog. It shows the whole-body diagram.
 
 - **Left-click** places a dot on a covered zone.
 - **Middle-click** removes the nearest dot.
-- **Save** stores the current dots; **Save & Close** stores them and closes the dialog.
+- **Save & Close** stores the current dots and closes the dialog.
 
 The zones under the dots are resolved with the same masks used for touch coding, and the
 resulting list is written to the export metadata as `Zones Covered With Clothes`. Do this
