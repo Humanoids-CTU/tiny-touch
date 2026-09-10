@@ -1,0 +1,8 @@
+version = 1
+
+# Central file-level notices; existing third-party notices take precedence.
+[[annotations]]
+path = "**"
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Czech Technical University in Prague"
+SPDX-License-Identifier = "GPL-3.0-or-later"

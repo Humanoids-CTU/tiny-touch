@@ -4,7 +4,7 @@ Frame-by-frame annotation of infant self-touch, for behavioral research.
 
 ![TinyTouch main window](assets/readme_images/showcase.png)
 
-![version](https://img.shields.io/badge/version-9.0.0-blue) ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey) ![python](https://img.shields.io/badge/python-3.12-blue) ![license](https://img.shields.io/badge/license-CC%20BY%204.0-green)
+![version](https://img.shields.io/badge/version-9.0.0-blue) ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey) ![python](https://img.shields.io/badge/python-3.12-blue) ![license](https://img.shields.io/badge/license-GPLv3%2B-green)
 
 ## What it does
 
@@ -26,12 +26,9 @@ Three builds are published per release: `windows-x64` (Windows 10/11, 64-bit), `
 (current distributions) and `linux-legacy-x64` (older glibc; built on Debian Bullseye). On
 Linux, launch from a terminal so you can see the log.
 
-> **Upgrading from 8.0.x or earlier:** this version reads only the current project
-> layout (`data/<video>/state/<video>.db`). Older folders — `Labeled_data/…`, a
-> `<video>_unified.csv` working file, source videos in `Videos/` — are **not
-> converted**, and opening one shows an empty project rather than an error. Keep those
-> folders as archives, keep a copy of their `*_export.csv` files (which this version
-> still reads for Analysis), and start new labeling in a fresh project.
+> **Start new projects with this release.** Previously coded projects are not
+> imported or upgraded. Keep them as archives and use a fresh data folder.
+> The CSV and metadata export formats remain compatible with existing analysis scripts.
 
 <details>
 <summary><b>Run from source</b></summary>
@@ -55,7 +52,7 @@ default; add `-m gui` to include them).
 
 ## Quick start
 
-1. **Load Video** — choose `Normal` or `Reliability`, then pick the video file. TinyTouch
+1. **Load Video** — choose `Normal` or `Reliability`, choose a body template, then pick the video file. TinyTouch
    copies it into `videos/` and extracts every frame into `data/<video>/frames/`. This runs
    once per video and can take several minutes.
 2. **Clothes** — mark the body zones covered by clothing. Saved with the project and
@@ -68,7 +65,17 @@ default; add `-m gui` to include them).
 6. **Add gaze and parameters** with the buttons on the right; type per-frame remarks in the
    note box and click **Save Note**.
 7. **Save** — writes `data/<video>/export/<video>_export.csv` and
-   `data/<video>/export/<video>_metadata.json`. TinyTouch also saves on close.
+   `data/<video>/export/<video>_metadata.json` identifying the
+   body template as `"template": "default"` or `"alternate"`. Keep these two files together. TinyTouch also saves on close.
+
+The template picker applies to new projects. Existing projects restore their saved
+template, and Reliability inherits the original project's template. **Settings** shows the active
+template and allows a change only before annotation begins. The first annotation or
+clothing mark permanently locks it, including if that mark is later deleted. The Clothes
+window and analysis use the same template. See [project template provenance](docs/DATA_FORMAT.md#2-the-metadata-sidecar).
+
+Working projects use schema 2 and must have a recorded template. Unsupported projects
+are rejected without conversion. You can reopen projects created by this release normally.
 
 | Input | Action |
 | --- | --- |
@@ -91,16 +98,17 @@ Each labeled video gets a self-contained folder:
 
 ```
 data/<video>/
-├── export/     <video>_export.csv + <video>_metadata.json   <- the published dataset
+├── export/     <video>_export.csv + <video>_metadata.json
 ├── state/      <video>.db          working state, internal
 ├── frames/     frame0.jpg …        extracted video frames
 └── plots/                          analysis dashboards
 ```
 
-Only the two files under `export/` are meant to be read by anything other than TinyTouch.
+Keep the three files under `export/` together when sharing the published dataset.
 The CSV has one row per frame with per-limb coordinates, onset/offset markers and zone
 lists; the JSON records program version, frame rate, labeling mode, clothing zones,
-parameter labels and total labeling time.
+parameter labels and total labeling time. The project JSON records the versioned body
+template; see [docs/DATA_FORMAT.md#2-the-metadata-sidecar](docs/DATA_FORMAT.md#2-the-metadata-sidecar).
 
 **The export format is unchanged from earlier TinyTouch versions** — same columns, same
 order, same cell encoding — so existing analysis pipelines keep working. The full
@@ -133,12 +141,20 @@ An example of the kind of analysis this coding scheme supports:
 
 Copyright (c) 2026 Czech Technical University in Prague.
 
-TinyTouch -- the software, its documentation and the bundled assets -- is licensed under the
-[Creative Commons Attribution 4.0 International License (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
-You may copy, redistribute and adapt it for any purpose, including commercially, provided you
-give appropriate credit (see [Citing](#citing)), link to the license, and indicate if changes
-were made. The software is provided as is, without warranty of any kind. The full license text
-is in [LICENSE](LICENSE).
+TinyTouch's source code, tests, build scripts, configuration files, documentation,
+and original artwork (including body diagrams and zone masks) are licensed under
+the GNU General Public License, version 3 or (at your option) any later version
+(`GPL-3.0-or-later`). See [LICENSE](LICENSE) for the full terms.
+
+You may use, modify, and distribute the software, including commercially, under those
+terms. When distributing binaries, provide the corresponding source code as required
+by the GPL. Recipients retain the right to modify and redistribute their copies.
+The software comes without warranty, to the extent permitted by applicable law.
+
+[REUSE.toml](REUSE.toml) records file-level copyright and license notices.
+Third-party components retain their respective licenses. This project license does
+not impose a license on users' input videos or annotation datasets.
+Earlier releases offered under CC BY 4.0 remain available under those terms.
 
 ## Contact
 
