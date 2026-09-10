@@ -305,36 +305,37 @@ def _build_diagram_panel(app, scale):
     separator = ttk.Separator(app.diagram_frame, orient="horizontal")
     separator.pack(fill="x", padx=10, pady=5)
 
-    app.mode_param_label = ttk.Label(
+    parameter_box = ttk.LabelFrame(
         app.diagram_frame,
         text="Parameters",
-        font=theme.FONT_BOLD,
+        padding=8,
     )
-    app.mode_param_label.pack(anchor="n", pady=(5, 0))
-    app.mode_param_subtitle = ttk.Label(
-        app.diagram_frame,
-        text="(Limb-Specific)",
-        font=theme.FONT_SUBTITLE,
-    )
-    app.mode_param_subtitle.pack(anchor="n", pady=(0, 5))
+    parameter_box.pack(fill="x", padx=10, pady=5)
+    parameter_box.columnconfigure(0, weight=1, uniform="parameters")
+    parameter_box.columnconfigure(1, weight=1, uniform="parameters")
 
-    app.limb_parameter_frame = ttk.Frame(app.diagram_frame)
-    app.limb_parameter_frame.pack(fill="x", anchor="n")
+    ttk.Label(
+        parameter_box,
+        text="Limb-specific",
+        font=theme.FONT_SUBTITLE,
+    ).grid(row=0, column=0, pady=(0, 5))
+    ttk.Label(
+        parameter_box,
+        text="Global",
+        font=theme.FONT_SUBTITLE,
+    ).grid(row=0, column=1, pady=(0, 5))
+
+    app.limb_parameter_frame = ttk.Frame(parameter_box)
+    app.limb_parameter_frame.grid(row=1, column=0, sticky="new", padx=(0, 4))
     app.limb_par1_btn = None
     app.limb_par2_btn = None
     app.limb_par3_btn = None
 
-    separator = ttk.Separator(app.diagram_frame, orient="horizontal")
-    separator.pack(fill="x", padx=10, pady=5)
+    global_parameter_frame = ttk.Frame(parameter_box)
+    global_parameter_frame.grid(row=1, column=1, sticky="new", padx=(4, 0))
 
-    label_after_separator3 = ttk.Label(
-        app.diagram_frame,
-        text="Parameters",
-        font=theme.FONT_BOLD,
-    )
-    label_after_separator3.pack(anchor="n", pady=(5, 2))
     app.par1_btn = ttk.Button(
-        app.diagram_frame,
+        global_parameter_frame,
         text="Parameter 1",
         command=lambda: app.parameter_dic_insert(1),
         width=15,
@@ -343,7 +344,7 @@ def _build_diagram_panel(app, scale):
     )
     app.par1_btn.pack(anchor="n", pady=4)
     app.par2_btn = ttk.Button(
-        app.diagram_frame,
+        global_parameter_frame,
         text="Parameter 2",
         command=lambda: app.parameter_dic_insert(2),
         width=15,
@@ -352,7 +353,7 @@ def _build_diagram_panel(app, scale):
     )
     app.par2_btn.pack(anchor="n", pady=4)
     app.par3_btn = ttk.Button(
-        app.diagram_frame,
+        global_parameter_frame,
         text="Parameter 3",
         command=lambda: app.parameter_dic_insert(3),
         width=15,

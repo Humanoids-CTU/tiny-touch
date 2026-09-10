@@ -436,10 +436,6 @@ class LabelingApp(tk.Tk):
         self.limb_par2_btn = None
         self.limb_par3_btn = None
 
-        if getattr(self, "mode_param_label", None):
-            self.mode_param_label.config(text="Parameters")
-        if getattr(self, "mode_param_subtitle", None):
-            self.mode_param_subtitle.config(text="(Limb-Specific)")
         ttk.Label(
             self.mode_controls_frame,
             text="Limb Selector",
