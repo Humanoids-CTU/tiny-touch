@@ -2059,20 +2059,22 @@ class LabelingApp(tk.Tk):
         cfg = config.load_config()
         labeling_var = tk.StringVar(value=getattr(self, "labeling_mode", cfg.get("last_labeling_mode", "Normal")))
 
+        options = ttk.Frame(content)
+        options.pack()
         ttk.Radiobutton(
-            content,
+            options,
             text="Normal",
             variable=labeling_var,
             value="Normal",
             takefocus=0,
-        ).pack()
+        ).pack(anchor="w")
         ttk.Radiobutton(
-            content,
+            options,
             text="Reliability",
             variable=labeling_var,
             value="Reliability",
             takefocus=0,
-        ).pack()
+        ).pack(anchor="w")
 
         chosen = {"mode": None}
 
