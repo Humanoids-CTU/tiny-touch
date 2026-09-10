@@ -10,9 +10,7 @@ dist/
 flagged/
 
 # Ignore videos/ contents (large binaries kept locally only)
-# Exception: cat3.mp4 is the in-repo sample used for quick smoke testing.
 /videos/**
-!/videos/cat3.mp4
 
 # Ignore data/ (labeling output) contents but keep the folder in the repo.
 # Anchored with a leading slash so it cannot swallow scripts/bench/data/ etc.

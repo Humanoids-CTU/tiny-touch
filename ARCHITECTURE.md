@@ -73,7 +73,7 @@ tiny-touch/
 │           ├── zones3/           # Touch-mode zone masks (one PNG per zone)
 │           └── zones3_new_template/  # Alternate zone set (config: new_template = true)
 ├── data/                         # Output (gitignored) -- one folder per video
-├── videos/                       # Source videos (gitignored except cat3.mp4 sample)
+├── videos/                       # Local source videos (gitignored; not distributed)
 ├── tests/                        # pytest suite: unit/ + integration/ + e2e/ (see "Testing")
 ├── assets/, docs/, .github/      # REPO-ONLY static assets, docs, CI workflow
 ├── config.json                   # User-configurable settings (see "Configuration")
