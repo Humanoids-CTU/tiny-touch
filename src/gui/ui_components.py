@@ -187,6 +187,13 @@ def _build_controls(app):
     )
     back_frame_btn.pack(side="left", padx=5)
 
+    app.select_frame_button = ttk.Button(
+        right_top_buttons, text="Select Frame", command=app.select_frame,
+        style="Tool.TButton", takefocus=0, state="disabled",
+    )
+    app.select_frame_button.pack(side="left", padx=5)
+    app._selecting_frame = False
+
     next_frame_btn = ttk.Button(
         right_top_buttons,
         text=">",
@@ -223,28 +230,8 @@ def _build_controls(app):
     )
     stop_btn.pack(side="left", padx=5)
 
-    frame_controls = ttk.Frame(right_top_status)
-    frame_controls.pack(side="left", padx=5)
-    ttk.Label(frame_controls, text="Frame").grid(row=0, column=0, padx=(0, 4))
-    app.frame_entry_value = tk.StringVar(value="0")
-    app.frame_entry_error = tk.StringVar(value="")
-    app._editing_frame = False
-    app.frame_entry = ttk.Entry(
-        frame_controls, textvariable=app.frame_entry_value, width=8,
-        justify="right", state="disabled",
-    )
-    app.frame_entry.grid(row=0, column=1)
-    app.frame_entry.bind("<Button-1>", app.begin_frame_edit)
-    app.frame_entry.bind("<FocusIn>", app.begin_frame_edit)
-    app.frame_entry.bind("<FocusOut>", app.cancel_frame_edit)
-    app.frame_entry.bind("<Return>", app.select_frame)
-    app.frame_entry.bind("<Escape>", app.cancel_frame_edit)
-    app.frame_counter_label = ttk.Label(frame_controls, text="/ 0")
-    app.frame_counter_label.grid(row=0, column=2, padx=(4, 0))
-    ttk.Label(
-        frame_controls, textvariable=app.frame_entry_error,
-        foreground=theme.STATUS_BAD,
-    ).grid(row=1, column=0, columnspan=3)
+    app.frame_counter_label = ttk.Label(right_top_status, text="0 / 0")
+    app.frame_counter_label.pack(side="left", padx=5)
 
     app.time_counter_label = ttk.Label(right_top_status, text="0 / 0")
     app.time_counter_label.pack(side="left", padx=10)

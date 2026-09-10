@@ -32,6 +32,7 @@ from domain.touch import NO_ZONE, find_last_open_onset, zones_at
 from domain.templates import ALTERNATE_TEMPLATE, TEMPLATE_LABELS, DEFAULT_TEMPLATE
 from gui import theme
 from gui.cloth_app import ClothApp, DEFAULT_CLOTH_DIAGRAM_SCALE
+from gui.frame_dialog import FrameDialog
 from gui.template_dialog import choose_template, template_diagram
 from gui.resource_utils import asset_path
 from gui.ui_components import build_ui
@@ -524,17 +525,14 @@ class LabelingApp(tk.Tk):
             focus = self.focus_get()
         except Exception:
             focus = None
-        editors = (getattr(self, "note_entry", None), getattr(self, "frame_entry", None))
-        if focus is not None and focus in editors and event.widget not in editors:
+        if getattr(self, "note_entry", None) and focus == self.note_entry and event.widget != self.note_entry:
             self.focus_set()
 
     def _entry_has_focus(self):
-        """True while either the note or frame editor holds keyboard focus."""
+        """True while the note entry holds keyboard focus."""
         try:
-            focus = self.focus_get()
-            return focus is not None and focus in (
-                getattr(self, "note_entry", None), getattr(self, "frame_entry", None),
-            )
+            return getattr(self, "note_entry", None) is not None \
+                and self.focus_get() is self.note_entry
         except Exception:
             return False
 
@@ -693,7 +691,7 @@ class LabelingApp(tk.Tk):
 
     # --- Mouse-wheel navigation, paced at the video frame rate ---------------
     def on_mouse_wheel(self, event):
-        if self.video is None or getattr(self, "_editing_frame", False):
+        if self.video is None or getattr(self, "_selecting_frame", False):
             return
         notches = self._wheel_notches(event)
         if notches == 0:
@@ -1357,11 +1355,9 @@ class LabelingApp(tk.Tk):
             )
     
     def update_frame_counter(self):
-        self.frame_entry.config(state="normal" if self.video else "disabled")
-        if not self._editing_frame or self.video is None:
-            self.frame_entry_value.set(str(self.video.current_frame if self.video else 0))
+        self.select_frame_button.config(state="normal" if self.video else "disabled")
         if self.video:
-            current_frame_text = f"/ {self.video.total_frames}"
+            current_frame_text = f"{self.video.current_frame} / {self.video.total_frames}"
             self.frame_counter_label.config(text=current_frame_text)
 
             def format_time(ms):
@@ -1382,9 +1378,7 @@ class LabelingApp(tk.Tk):
                 self.time_counter_label.config(text="--:-- / --:--")
 
         else:
-            self.frame_counter_label.config(text="/ 0")
-            self.frame_entry_error.set("")
-            self._editing_frame = False
+            self.frame_counter_label.config(text="0 / 0")
             return
 
         self.video.current_frame_zone = int(self.video.current_frame / self.video.number_frames_in_zone)
@@ -1608,8 +1602,8 @@ class LabelingApp(tk.Tk):
         if self.video is None:
             logger.debug("play advance skipped: no video (shutdown/reload)")
             return
-        if getattr(self, "_editing_frame", False):
-            return  # Discard an advance queued just before editing paused playback.
+        if getattr(self, "_selecting_frame", False):
+            return  # Discard an advance queued just before the dialog paused playback.
         self.video.current_frame = next_frame
         self._last_step_sign = direction
         try:
@@ -1802,43 +1796,23 @@ class LabelingApp(tk.Tk):
         self._clear_note_entry()
         self.note_entry.insert("1.0", text)
 
-    def begin_frame_edit(self, event=None):
-        if self.video is None:
-            return "break"
-        if not self._editing_frame:
-            self.stop_video()
-            self._cancel_arrow_hold_state()
-            self._cancel_wheel_scroll()
-            self._editing_frame = True
-            self.frame_entry_value.set(str(self.video.current_frame))
-            self.frame_entry.focus_set()
-            self.frame_entry.selection_range(0, tk.END)
-            self.frame_entry.icursor(tk.END)
-            return "break"
-
-    def cancel_frame_edit(self, event=None):
-        self._editing_frame = False
-        self.frame_entry_error.set("")
-        self.frame_entry_value.set(str(self.video.current_frame if self.video else 0))
-        if self.focus_get() is self.frame_entry:
-            self.focus_set()
-        return "break"
-
-    def select_frame(self, event=None):
-        if self.video is None:
-            return "break"
-        frame = self.frame_entry_value.get().strip()
+    def select_frame(self):
+        """Pause navigation and ask for an absolute frame in a modal dialog."""
+        if self.video is None or self._selecting_frame:
+            return
+        self.stop_video()
+        self._cancel_arrow_hold_state()
+        self._cancel_wheel_scroll()
+        self._selecting_frame = True
         try:
-            frame_int = int(frame)
-        except ValueError:
-            frame_int = -1
-        if not 0 <= frame_int <= self.video.total_frames:
-            self.frame_entry_error.set(f"Enter a frame from 0 to {self.video.total_frames}.")
-            return "break"
-        self.cancel_frame_edit()
-        if frame_int != self.video.current_frame:
-            self.next_frame(frame_int - self.video.current_frame)
-        return "break"
+            target = FrameDialog(
+                self, self.video.current_frame, self.video.total_frames,
+            ).result
+        finally:
+            self._selecting_frame = False
+        self.focus_set()
+        if target is not None and target != self.video.current_frame:
+            self.next_frame(target - self.video.current_frame)
 
     def save_note(self):
         idx = self.video.current_frame

@@ -283,11 +283,12 @@ The text box at the bottom right stores one free-text note per frame.
   reappears when you return to it.
 - Saving an empty box clears the note.
 
-To jump to a specific frame, click the current frame number beside **Frame** above
-the video. Playback pauses and the number is selected for replacement. Type a frame
-number and press **Enter** to jump; **Escape** or clicking elsewhere cancels the edit.
-The number after `/` is the last valid frame index; numbering starts at **0**.
-Invalid numbers show the allowed range without moving the video.
+To jump to a specific frame, click **Select Frame** between the backward and forward
+buttons (`<<  <  Select Frame  >  >>`). Playback pauses and a dialog opens with the
+current frame number selected. Type a frame number and press **Enter** or click
+**OK** to jump. **Escape**, **Cancel**, or closing the dialog leaves the frame unchanged.
+The dialog shows the allowed range; numbering starts at **0**. Invalid numbers keep
+the dialog open so you can correct them. The frame counter remains read-only.
 
 Notes end up in the `Note` column of the export, one per frame.
 
