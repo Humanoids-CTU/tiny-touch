@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: >-
+  If you use TinyTouch in your research, please cite the software using this
+  metadata and the version you used.
+type: software
+title: TinyTouch
+authors:
+  - family-names: Navara
+    given-names: Lukáš
+    orcid: https://orcid.org/0009-0003-5725-9021
+version: 9.0.0
+repository-code: https://github.com/Humanoids-CTU/tiny-touch
+url: https://github.com/Humanoids-CTU/tiny-touch
+license: GPL-3.0-only
+abstract: >-
+  TinyTouch is a desktop tool for frame-by-frame annotation of infant self-touch
+  in behavioral research. It records limb-to-body-zone contacts, onset and offset
+  events, gaze, and configurable annotation parameters, and exports structured
+  datasets and analysis reports.
+keywords:
+  - video annotation
+  - infant development
+  - self-touch
+  - behavioral research

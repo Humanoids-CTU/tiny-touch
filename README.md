@@ -4,7 +4,7 @@ Frame-by-frame annotation of infant self-touch, for behavioral research.
 
 ![TinyTouch main window](assets/readme_images/showcase.png)
 
-![version](https://img.shields.io/badge/version-9.0.0-blue) ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey) ![python](https://img.shields.io/badge/python-3.12-blue) ![license](https://img.shields.io/badge/license-GPLv3%2B-green)
+![version](https://img.shields.io/badge/version-9.0.0-blue) ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey) ![python](https://img.shields.io/badge/python-3.12-blue) ![license](https://img.shields.io/badge/license-GPLv3-green)
 
 ## What it does
 
@@ -149,8 +149,8 @@ Copyright (c) 2026 Czech Technical University in Prague.
 
 TinyTouch's source code, tests, build scripts, configuration files, documentation,
 and original artwork (including body diagrams and zone masks) are licensed under
-the GNU General Public License, version 3 or (at your option) any later version
-(`GPL-3.0-or-later`). See [LICENSE](LICENSE) for the full terms.
+the GNU General Public License, version 3 only
+(`GPL-3.0-only`). See [LICENSE](LICENSE) for the full terms.
 
 You may use, modify, and distribute the software, including commercially, under those
 terms. When distributing binaries, provide the corresponding source code as required
@@ -167,7 +167,7 @@ Earlier releases offered under CC BY 4.0 remain available under those terms.
 Developed at the Vision for Robotics and Autonomous Systems (VRAS) group, Czech Technical
 University in Prague.
 
-Maintainer: navarlu2@fel.cvut.cz
+Maintainer: Lukáš Navara — navarlu2@fel.cvut.cz
 
 ## Reporting a problem
 

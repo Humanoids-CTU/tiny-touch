@@ -29,9 +29,9 @@ jobs:
           TINYTOUCH_APP_NAME=TinyTouch-${{ github.ref_name }} python -m PyInstaller TinyTouch.spec
       - name: Package
         run: |
-          cp LICENSE README.md REUSE.toml dist/
+          cp LICENSE README.md REUSE.toml CITATION.cff dist/
           cd dist
-          zip TinyTouch-${{ github.ref_name }}-linux-x64.zip TinyTouch-${{ github.ref_name }} LICENSE README.md REUSE.toml
+          zip TinyTouch-${{ github.ref_name }}-linux-x64.zip TinyTouch-${{ github.ref_name }} LICENSE README.md REUSE.toml CITATION.cff
       - uses: actions/upload-artifact@v4
         with:
           name: TinyTouch-linux-x64
@@ -57,9 +57,9 @@ jobs:
           TINYTOUCH_APP_NAME=TinyTouch-${{ github.ref_name }} python -m PyInstaller TinyTouch.spec
       - name: Package
         run: |
-          cp LICENSE README.md REUSE.toml dist/
+          cp LICENSE README.md REUSE.toml CITATION.cff dist/
           cd dist
-          zip TinyTouch-${{ github.ref_name }}-linux-legacy-x64.zip TinyTouch-${{ github.ref_name }} LICENSE README.md REUSE.toml
+          zip TinyTouch-${{ github.ref_name }}-linux-legacy-x64.zip TinyTouch-${{ github.ref_name }} LICENSE README.md REUSE.toml CITATION.cff
       - uses: actions/upload-artifact@v4
         with:
           name: TinyTouch-linux-legacy-x64
@@ -85,7 +85,7 @@ jobs:
           python -m PyInstaller TinyTouch.spec
       - name: Package
         run: |
-          Compress-Archive -Path dist\\TinyTouch-${{ github.ref_name }}.exe, LICENSE, README.md, REUSE.toml -DestinationPath dist\\TinyTouch-${{ github.ref_name }}-windows-x64.zip
+          Compress-Archive -Path dist\\TinyTouch-${{ github.ref_name }}.exe, LICENSE, README.md, REUSE.toml, CITATION.cff -DestinationPath dist\\TinyTouch-${{ github.ref_name }}-windows-x64.zip
       - uses: actions/upload-artifact@v4
         with:
           name: TinyTouch-windows-x64
