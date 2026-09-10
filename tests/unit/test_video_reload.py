@@ -48,6 +48,7 @@ def _app(events, save_result=True, cloth_app=None):
         _reset_zone_cache=lambda: events.append("reset_zone_cache"),
         _set_note_entry_text=lambda text: events.append(("note_entry", text)),
         _refresh_jump_label=lambda: None,
+        update_frame_counter=lambda: None,
         _set_mode_button_states=lambda: events.append("mode_buttons"),
         cloth_btn=object(),
         name_label=SimpleNamespace(config=lambda **kw: None),

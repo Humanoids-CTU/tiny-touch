@@ -223,8 +223,28 @@ def _build_controls(app):
     )
     stop_btn.pack(side="left", padx=5)
 
-    app.frame_counter_label = ttk.Label(right_top_status, text="0 / 0")
-    app.frame_counter_label.pack(side="left", padx=5)
+    frame_controls = ttk.Frame(right_top_status)
+    frame_controls.pack(side="left", padx=5)
+    ttk.Label(frame_controls, text="Frame").grid(row=0, column=0, padx=(0, 4))
+    app.frame_entry_value = tk.StringVar(value="0")
+    app.frame_entry_error = tk.StringVar(value="")
+    app._editing_frame = False
+    app.frame_entry = ttk.Entry(
+        frame_controls, textvariable=app.frame_entry_value, width=8,
+        justify="right", state="disabled",
+    )
+    app.frame_entry.grid(row=0, column=1)
+    app.frame_entry.bind("<Button-1>", app.begin_frame_edit)
+    app.frame_entry.bind("<FocusIn>", app.begin_frame_edit)
+    app.frame_entry.bind("<FocusOut>", app.cancel_frame_edit)
+    app.frame_entry.bind("<Return>", app.select_frame)
+    app.frame_entry.bind("<Escape>", app.cancel_frame_edit)
+    app.frame_counter_label = ttk.Label(frame_controls, text="/ 0")
+    app.frame_counter_label.grid(row=0, column=2, padx=(4, 0))
+    ttk.Label(
+        frame_controls, textvariable=app.frame_entry_error,
+        foreground=theme.STATUS_BAD,
+    ).grid(row=1, column=0, columnspan=3)
 
     app.time_counter_label = ttk.Label(right_top_status, text="0 / 0")
     app.time_counter_label.pack(side="left", padx=10)
@@ -391,7 +411,6 @@ def _build_diagram_panel(app, scale):
     note_button_row = ttk.Frame(note_controls)
     note_button_row.pack(fill="x", pady=(6, 0))
     note_button_row.columnconfigure(0, weight=1, uniform="note_actions")
-    note_button_row.columnconfigure(1, weight=1, uniform="note_actions")
 
     app.save_note_button = ttk.Button(
         note_button_row,
@@ -400,16 +419,7 @@ def _build_diagram_panel(app, scale):
         style="Tool.TButton",
         takefocus=0,
     )
-    app.save_note_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
-
-    app.select_frame_button = ttk.Button(
-        note_button_row,
-        text="Select Frame",
-        command=app.select_frame,
-        style="Tool.TButton",
-        takefocus=0,
-    )
-    app.select_frame_button.grid(row=0, column=1, sticky="ew", padx=(4, 0))
+    app.save_note_button.grid(row=0, column=0, sticky="ew")
 
     if hasattr(app, "rebuild_annotation_controls"):
         app.rebuild_annotation_controls()
@@ -417,7 +427,7 @@ def _build_diagram_panel(app, scale):
 
 
 def _guard_key(app, cb):
-    """Skip a global nav key action while the Note entry holds focus.
+    """Skip a global nav key action while a text editor holds focus.
 
     The keystroke still reaches the Entry (its class binding ran first in
     bindtag order); we only suppress the nav side effect. Returns None so no

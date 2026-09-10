@@ -282,9 +282,12 @@ The text box at the bottom right stores one free-text note per frame.
 - Type the text and click **Save Note**. The note is attached to the frame you are on and
   reappears when you return to it.
 - Saving an empty box clears the note.
-- **Select Frame** reuses the same box as a "go to frame" field: type a frame number and
-  click it to jump there. Remember that this consumes whatever is in the box, so do not
-  leave a half-typed note in it.
+
+To jump to a specific frame, click the current frame number beside **Frame** above
+the video. Playback pauses and the number is selected for replacement. Type a frame
+number and press **Enter** to jump; **Escape** or clicking elsewhere cancels the edit.
+The number after `/` is the last valid frame index; numbering starts at **0**.
+Invalid numbers show the allowed range without moving the video.
 
 Notes end up in the `Note` column of the export, one per frame.
 

@@ -39,14 +39,14 @@ _REQUIRED_ATTRIBUTES = (
     "note_entry", "load_video_btn", "analysis_btn", "cloth_btn",
     "par1_btn", "par2_btn", "par3_btn",
     "limb_par1_btn", "limb_par2_btn", "limb_par3_btn",
-    "frame_counter_label", "time_counter_label", "name_label",
+    "frame_entry", "frame_counter_label", "time_counter_label", "name_label",
     "mode_label", "loading_label", "jump_label",
 )
 
 _EXPECTED_BUTTON_LABELS = (
     "Load Video", "Settings", "Clothes", "Analysis", "Save",
     "<<", "<", ">", ">>", "Play", "Stop",
-    "Save Note", "Select Frame",
+    "Save Note",
 )
 
 _EXPECTED_TOP_BUTTON_ORDER = (
@@ -104,6 +104,7 @@ def test_app_builds_wires_and_closes_cleanly(app, capfd):
     # Analysis / Clothes stay disabled until a video is loaded.
     assert str(app.analysis_btn.cget("state")) == "disabled"
     assert str(app.cloth_btn.cget("state")) == "disabled"
+    assert str(app.frame_entry.cget("state")) == "disabled"
 
     # The periodic diagram repaint (after(300, ...)) must survive a few ticks
     # with no video loaded — that is the state the app starts in.

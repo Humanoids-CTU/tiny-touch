@@ -34,6 +34,12 @@ def test_true_when_note_entry_is_focused():
     assert _call(entry, entry) is True
 
 
+def test_true_when_frame_entry_is_focused():
+    entry = object()
+    app = SimpleNamespace(frame_entry=entry, focus_get=lambda: entry)
+    assert LabelingApp._entry_has_focus(app) is True
+
+
 def test_false_when_other_widget_is_focused():
     entry = object()
     other = object()

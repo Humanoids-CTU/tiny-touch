@@ -524,14 +524,17 @@ class LabelingApp(tk.Tk):
             focus = self.focus_get()
         except Exception:
             focus = None
-        if getattr(self, "note_entry", None) and focus == self.note_entry and event.widget != self.note_entry:
+        editors = (getattr(self, "note_entry", None), getattr(self, "frame_entry", None))
+        if focus is not None and focus in editors and event.widget not in editors:
             self.focus_set()
 
     def _entry_has_focus(self):
-        """True when the Note entry currently holds keyboard focus."""
+        """True while either the note or frame editor holds keyboard focus."""
         try:
-            return getattr(self, "note_entry", None) is not None \
-                and self.focus_get() is self.note_entry
+            focus = self.focus_get()
+            return focus is not None and focus in (
+                getattr(self, "note_entry", None), getattr(self, "frame_entry", None),
+            )
         except Exception:
             return False
 
@@ -690,7 +693,7 @@ class LabelingApp(tk.Tk):
 
     # --- Mouse-wheel navigation, paced at the video frame rate ---------------
     def on_mouse_wheel(self, event):
-        if self.video is None:
+        if self.video is None or getattr(self, "_editing_frame", False):
             return
         notches = self._wheel_notches(event)
         if notches == 0:
@@ -1354,8 +1357,11 @@ class LabelingApp(tk.Tk):
             )
     
     def update_frame_counter(self):
+        self.frame_entry.config(state="normal" if self.video else "disabled")
+        if not self._editing_frame or self.video is None:
+            self.frame_entry_value.set(str(self.video.current_frame if self.video else 0))
         if self.video:
-            current_frame_text = f"{self.video.current_frame} / {self.video.total_frames}"
+            current_frame_text = f"/ {self.video.total_frames}"
             self.frame_counter_label.config(text=current_frame_text)
 
             def format_time(ms):
@@ -1376,7 +1382,10 @@ class LabelingApp(tk.Tk):
                 self.time_counter_label.config(text="--:-- / --:--")
 
         else:
-            self.frame_counter_label.config(text="0 / 0")
+            self.frame_counter_label.config(text="/ 0")
+            self.frame_entry_error.set("")
+            self._editing_frame = False
+            return
 
         self.video.current_frame_zone = int(self.video.current_frame / self.video.number_frames_in_zone)
 
@@ -1599,6 +1608,8 @@ class LabelingApp(tk.Tk):
         if self.video is None:
             logger.debug("play advance skipped: no video (shutdown/reload)")
             return
+        if getattr(self, "_editing_frame", False):
+            return  # Discard an advance queued just before editing paused playback.
         self.video.current_frame = next_frame
         self._last_step_sign = direction
         try:
@@ -1791,23 +1802,43 @@ class LabelingApp(tk.Tk):
         self._clear_note_entry()
         self.note_entry.insert("1.0", text)
 
-    def select_frame(self):
-        frame = self._get_note_entry_text().strip()
+    def begin_frame_edit(self, event=None):
+        if self.video is None:
+            return "break"
+        if not self._editing_frame:
+            self.stop_video()
+            self._cancel_arrow_hold_state()
+            self._cancel_wheel_scroll()
+            self._editing_frame = True
+            self.frame_entry_value.set(str(self.video.current_frame))
+            self.frame_entry.focus_set()
+            self.frame_entry.selection_range(0, tk.END)
+            self.frame_entry.icursor(tk.END)
+            return "break"
+
+    def cancel_frame_edit(self, event=None):
+        self._editing_frame = False
+        self.frame_entry_error.set("")
+        self.frame_entry_value.set(str(self.video.current_frame if self.video else 0))
+        if self.focus_get() is self.frame_entry:
+            self.focus_set()
+        return "break"
+
+    def select_frame(self, event=None):
+        if self.video is None:
+            return "break"
+        frame = self.frame_entry_value.get().strip()
         try:
             frame_int = int(frame)
         except ValueError:
-            logger.warning("cannot select frame: value is not a valid integer: %r", frame)
-            self._clear_note_entry(); return
-        if self.video is not None:
-            if frame_int < 0 or frame_int > self.video.total_frames:
-                logger.warning("cannot select frame: %s is out of range", frame_int)
-                self._clear_note_entry(); return
-            self.video.current_frame = frame_int
-            self.update_frame_counter()
-            self.display_first_frame()
-        else:
-            logger.warning("cannot select frame: no video loaded")
-        self._clear_note_entry()
+            frame_int = -1
+        if not 0 <= frame_int <= self.video.total_frames:
+            self.frame_entry_error.set(f"Enter a frame from 0 to {self.video.total_frames}.")
+            return "break"
+        self.cancel_frame_edit()
+        if frame_int != self.video.current_frame:
+            self.next_frame(frame_int - self.video.current_frame)
+        return "break"
 
     def save_note(self):
         idx = self.video.current_frame
@@ -2152,6 +2183,7 @@ class LabelingApp(tk.Tk):
         self._reset_zone_cache()
 
         # UI bits tied to the old project.
+        self.update_frame_counter()
         self._set_note_entry_text("")
         theme.set_button_state(self.cloth_btn, None)
         self.name_label.config(text="Video Name: -----")
@@ -2171,6 +2203,7 @@ class LabelingApp(tk.Tk):
         self.video = None
         self.video_name = None
         self._buffer_reset()
+        self.update_frame_counter()
         self._set_mode_button_states()
 
     def load_video(self):
