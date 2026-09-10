@@ -13,6 +13,11 @@ def main() -> None:
     from labeling_app import LabelingApp
 
     app = LabelingApp()
+    # X11 uses a window attribute for the same maximized state as Windows.
+    if app.tk.call("tk", "windowingsystem") == "x11":
+        app.attributes("-zoomed", True)
+    else:
+        app.state("zoomed")
     log_setup.apply_config(app.config.log_level_console, app.config.log_keep_files)
     log_setup.install_tk_exception_hook(app)
     log_setup.log_session_header(
