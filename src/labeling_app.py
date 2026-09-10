@@ -440,17 +440,17 @@ class LabelingApp(tk.Tk):
             self.mode_controls_frame,
             text="Limb Selector",
             font=theme.FONT_BOLD,
-        ).pack(anchor="n", pady=(5, 2))
+        ).pack(anchor="n", pady=(5, 6))
 
         # Center the selector as one group while keeping labels easy to scan.
         limb_selector_frame = ttk.Frame(self.mode_controls_frame)
         limb_selector_frame.pack(anchor="n")
-        for text, value in (
+        for index, (text, value) in enumerate((
             ("Right Hand", "RH"),
             ("Left Hand", "LH"),
             ("Right Leg", "RL"),
             ("Left Leg", "LL"),
-        ):
+        )):
             ttk.Radiobutton(
                 limb_selector_frame,
                 text=text,
@@ -458,11 +458,11 @@ class LabelingApp(tk.Tk):
                 value=value,
                 command=self._on_limb_selected,
                 takefocus=0,
-            ).pack(anchor="w")
+            ).grid(row=index // 2, column=index % 2, sticky="w", padx=8, pady=2)
 
         self.limb_par1_btn = ttk.Button(
             self.limb_parameter_frame,
-            text="Limb Parameter 1",
+            text=self.config.limb_parameter1,
             command=lambda: self.toggle_limb_parameter(1),
             width=15,
             style="StateNeutral.TButton",
@@ -471,7 +471,7 @@ class LabelingApp(tk.Tk):
         self.limb_par1_btn.pack(anchor="n", pady=4)
         self.limb_par2_btn = ttk.Button(
             self.limb_parameter_frame,
-            text="Limb Parameter 2",
+            text=self.config.limb_parameter2,
             command=lambda: self.toggle_limb_parameter(2),
             width=15,
             style="StateNeutral.TButton",
@@ -480,7 +480,7 @@ class LabelingApp(tk.Tk):
         self.limb_par2_btn.pack(anchor="n", pady=4)
         self.limb_par3_btn = ttk.Button(
             self.limb_parameter_frame,
-            text="Limb Parameter 3",
+            text=self.config.limb_parameter3,
             command=lambda: self.toggle_limb_parameter(3),
             width=15,
             style="StateNeutral.TButton",
