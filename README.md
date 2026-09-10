@@ -23,9 +23,10 @@ Download the ZIP for your system from the
 run the executable inside — `TinyTouch-<tag>.exe` on Windows, `TinyTouch-<tag>` on Linux.
 No installation step and no Python required.
 
-Three builds are published per release: `windows-x64` (Windows 10/11, 64-bit), `linux-x64`
-(current distributions) and `linux-legacy-x64` (older glibc; built on Debian Bullseye). On
-Linux, launch from a terminal so you can see the log.
+Two builds are published per release: `windows-x64` (Windows 10/11, 64-bit) and
+`linux-x64` (Ubuntu 24.04 or newer, 64-bit x86). The Linux executable is built on
+Ubuntu 24.04; other Linux distributions are not verified. On Linux, launch from a
+terminal so you can see the log.
 
 On Windows, open PowerShell in the extracted folder and run `./TinyTouch-v9.0.0.exe`.
 On Linux, open a terminal in the extracted folder and run:

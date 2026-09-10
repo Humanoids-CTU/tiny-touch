@@ -489,7 +489,7 @@ Produces a standalone executable in `dist/`. The spec bundles two `datas` entrie
 
 ## Releasing a New Version
 
-A GitHub Actions workflow ([.github/workflows/build.yml](.github/workflows/build.yml)) builds and publishes Windows x64, Linux x64, and Linux Legacy x64 (Bullseye / Python 3.11) artifacts on every `v*` tag push, then creates a GitHub Release with the zips attached.
+A GitHub Actions workflow ([.github/workflows/build.yml](.github/workflows/build.yml)) builds and publishes Windows x64 and Linux x64 (Ubuntu 24.04 / Python 3.12) artifacts on every non-legacy `v*` tag push, then creates a GitHub Release with the zips attached.
 
 Quick reference:
 
