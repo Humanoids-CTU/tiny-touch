@@ -126,9 +126,15 @@ from duration statistics.
 
 ## Citing
 
-A paper describing TinyTouch is in preparation. Until it appears, please cite the software
-by its repository URL and the version string recorded in your dataset's metadata sidecar
-(`Program Version`).
+Please cite the software using [CITATION.cff](CITATION.cff), or GitHub's **Cite this repository**
+button for APA and BibTeX entries. Cite the version you used, recorded in your
+dataset's metadata sidecar (`Program Version`).
+
+A paper describing TinyTouch is in preparation and will have its own citation
+and author list, separate from the software citation.
+
+When releasing a new version, update the `version` in `CITATION.cff` alongside
+`PROGRAM_VERSION` in `src/app_info.py`.
 
 An example of the kind of analysis this coding scheme supports:
 

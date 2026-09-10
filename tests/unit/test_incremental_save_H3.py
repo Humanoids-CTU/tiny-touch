@@ -112,7 +112,8 @@ def test_H3_touch_save_does_not_read_or_rewrite_stored_frames(repo):
     # Exactly one save's worth of work: BEGIN, the frame's DELETE + INSERTs,
     # the meta UPSERT, COMMIT — a constant, independent of the 40 stored frames.
     assert log.count("DELETE") == 1
-    assert log.count("INSERT") == 5  # frames, frame_params, limb_records, clicks, meta
+    # Frame rows plus the frame-count and permanent template-lock metadata.
+    assert log.count("INSERT") == 6
     # Nothing already stored changed.
     after = repo.load_frames()
     assert {f: after[f] for f in before} == before

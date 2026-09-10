@@ -20,6 +20,8 @@ class ClothApp:
         initial_points=None,
         diagram_scale=DEFAULT_CLOTH_DIAGRAM_SCALE,
         dot_radius=DEFAULT_CLOTH_DOT_RADIUS,
+        diagram_path=None,
+        on_first_mark=None,
     ):
         self.top_level = tk.Toplevel(master)
         self.top_level.title("Clothes App")
@@ -28,6 +30,7 @@ class ClothApp:
         self.on_close_callback = on_close_callback
         self.diagram_scale = float(diagram_scale)
         self.dot_radius = int(dot_radius)
+        self.on_first_mark = on_first_mark
 
         self.content = ttk.Frame(self.top_level, padding=16)
         self.content.grid(row=0, column=0, sticky="nsew")
@@ -62,7 +65,7 @@ class ClothApp:
         self.f.grid(row=1, column=0, sticky="nsew")
 
         self.dots = {}
-        self.img = Image.open(asset_path("icons/diagram.png"))
+        self.img = Image.open(diagram_path or asset_path("icons/diagram.png"))
         self.img = self.img.resize(
             (int(self.img.width * self.diagram_scale), int(self.img.height * self.diagram_scale)),
             Image.LANCZOS,
@@ -111,6 +114,8 @@ class ClothApp:
         return dot_id
 
     def add_dot(self, event):
+        if self.on_first_mark and self.on_first_mark() is False:
+            return
         self._create_dot(event.x, event.y)
         annotation_logger.info(
             "clothes click add x=%s y=%s dots=%s", event.x, event.y, len(self.dots)

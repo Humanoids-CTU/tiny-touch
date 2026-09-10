@@ -190,7 +190,7 @@ def test_session_header_and_footer_include_diagnostics(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "stdout", console)
     session = log_setup.configure_logging(str(tmp_path))
     config = SimpleNamespace(
-        new_template=False, diagram_scale=0.5, dot_size=10.0,
+        diagram_scale=0.5, dot_size=10.0,
         video_downscale=1.0, jump_seconds=0.28, realtime_arrow_hold=False,
         perf_enabled=False, perf_log_every_s=2.0, perf_log_top_n=10,
         log_level_console="INFO", log_keep_files=20,

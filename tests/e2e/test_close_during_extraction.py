@@ -34,12 +34,13 @@ def test_close_during_frame_extraction_is_clean(
     workspace.chosen_video = str(workspace.video)
 
     mode_dialog = dismiss_dialog(app, "Select Mode", "Continue")
+    template_dialog = dismiss_dialog(app, "Template for new projects", "Continue")
     close_dialog = dismiss_dialog(app, "Close Application", "OK")
     app.load_video_btn.invoke()
 
     assert mode_dialog["clicked"] is True
+    assert template_dialog["clicked"] is True
     assert close_dialog["clicked"] is True
     assert observed["cancel_event"] is not None
     assert observed["cancelled"] is True
     assert not [message for message in workspace.messages if message[0] == "showerror"]
-

@@ -95,6 +95,7 @@ def test_full_save_pipeline_writes_state_and_export(tmp_path):
         param_labels={"Parameter_1": "Looking1"},
         limb_param_labels=None,
         labeling_time_seconds=3600.0,
+        template="alternate",
     )
 
     repo = SqliteRepository(paths.state_db)
@@ -113,6 +114,8 @@ def test_full_save_pipeline_writes_state_and_export(tmp_path):
     meta = json.load(open(paths.export_metadata, encoding="utf-8"))
     assert meta["Video Name"] == "vid"
     assert meta["Total Labeling Time (hours)"] == 1.0
+    assert meta["template"] == "alternate"
+    assert not os.path.exists(os.path.join(paths.export_dir, "vid_project.json"))
 
 
 def test_clothes_zones_for_metadata_come_from_the_repo(tmp_path):

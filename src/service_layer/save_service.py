@@ -32,6 +32,7 @@ from adapters.export_writer import export_from_unified, write_export_metadata
 from adapters.sqlite_repo import SqliteRepository
 from domain.model import FrameBundle
 from domain.project import ProjectPaths
+from domain.templates import validate_template
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ class MetadataInputs:
     param_labels: Optional[dict]
     limb_param_labels: Optional[dict]
     labeling_time_seconds: Optional[float]
+    template: Optional[str] = None
 
 
 def load_clothes_zones(repo: Optional[SqliteRepository]):
@@ -84,11 +86,13 @@ def run_export(snapshot: Dict[int, FrameBundle],
                fps,
                metadata: MetadataInputs,
                total_frames: int) -> None:
-    """Full export: JSON metadata sidecar + legacy export CSV, both written
+    """Full export: metadata and legacy CSV, all written
     from the immutable snapshot. Runs on the GUI's worker thread."""
+    template = validate_template(metadata.template)
     os.makedirs(paths.export_dir, exist_ok=True)
     write_export_metadata(
         meta_path=paths.export_metadata,
+        template=template,
         program_version=metadata.program_version,
         video_name=metadata.video_name,
         labeling_mode=metadata.labeling_mode,
@@ -110,6 +114,7 @@ def run_export(snapshot: Dict[int, FrameBundle],
         param_labels=metadata.param_labels,
         limb_param_labels=metadata.limb_param_labels,
     )
+
 
 
 def clear_clean_flags(frames: Dict[int, FrameBundle],

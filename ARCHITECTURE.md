@@ -71,7 +71,7 @@ tiny-touch/
 │       └── icons/                # Body diagrams, limb images, zone masks
 │           ├── diagram0.png      # Default touch diagram (rendered on canvas)
 │           ├── zones3/           # Touch-mode zone masks (one PNG per zone)
-│           └── zones3_new_template/  # Alternate zone set (config: new_template = true)
+│           └── zones3_new_template/  # Alternate zone set (project: alternate)
 ├── data/                         # Output (gitignored) -- one folder per video
 ├── videos/                       # Local source videos (gitignored; not distributed)
 ├── tests/                        # pytest suite: unit/ + integration/ + e2e/ (see "Testing")
@@ -120,10 +120,10 @@ User input (clicks / keys)
                                               ┌─► persist_state  (dirty frames -> state DB,
                                               │                   ONE transaction, Tk thread)
 On Save / Close ─► LabelingApp.save_data ─────┼─► export_from_unified  (full legacy schema)
-                                              └─► write_export_metadata (JSON sidecar)
+                                              ├─► write_export_metadata (JSON sidecar)
 ```
 
-The state write happens on the Tk thread; the two export writes run on a worker
+The state write happens on the Tk thread; the three export writes run on a worker
 thread against a `deepcopy` snapshot taken beforehand. The SQLite connection
 never leaves the Tk thread (`SqliteRepository` raises if it does).
 
@@ -191,12 +191,36 @@ Mode is chosen on every "Load Video" via a dialog (`ask_labeling_mode`):
 
 The choice is persisted in `config.json` (`last_labeling_mode`).
 
+The next dialog selects a template for new projects, before the video picker. Read-only
+`plan_project_template` then inspects both Normal/Reliability databases before the current
+project is unloaded. Only current-schema projects with recorded template IDs are accepted.
+Cancellation or rejection leaves the databases and active template unchanged. Saved choices
+override the picker selection; conflicting existing pairs are rejected.
+
+`domain.templates.TemplateState` owns template names (`default`, `alternate`) and the
+permanent lock rule. The SQLite `meta` keys `template` and `template_locked` own the
+project choice. This release creates schema 2 databases; other schema versions and
+existing projects missing a template ID are rejected. There is no migration, historical
+template confirmation, or import of previously coded data. Reopening projects created
+by this release restores their saved template normally.
+
+The controller durably locks before the first annotation mutation; Clothes locks before
+adding its first dot. Repository saves also retain locks for non-GUI consumers. Deletion
+never unlocks. A linked Reliability pair locks both projects. Settings permits changing
+only an unlocked project with no open Clothes dialog. All diagram and mask consumers use
+the active project choice, and project changes clear the mask cache. Clothes and previews
+use each template's neutral `LINE.png` outline, which matches its mask coordinates.
+
+The CSV format is unchanged. Export metadata includes `"template": "default"` or
+`"alternate"`. Analysis requires this field and rejects missing, invalid, or conflicting choices. See
+[docs/DATA_FORMAT.md#2-the-metadata-sidecar](docs/DATA_FORMAT.md#2-the-metadata-sidecar).
+
 ### Touch Annotation
 
 - Navigate frame-by-frame: `←` / `→`, mouse wheel, `<<` / `<` / `>` / `>>` buttons, `Space` or Play / Stop, click on either timeline. `Shift`+arrow and `<<` / `>>` jump by `jump_seconds` worth of frames. All key bindings live in `gui.ui_components._bind_navigation` and are suppressed while the note entry has focus (`_guard_key`). Wheel notches are queued and consumed one frame per video frame interval (`LabelingApp._wheel_tick`), so a fast flick moves at playback speed rather than racing the redraw; the queue is capped at `WHEEL_BACKLOG_S` so motion stops shortly after the wheel does.
 - Pick a limb (RH / LH / RL / LL) via radio buttons; the diagram re-renders with that limb's overlays.
 - **Left-click** on the diagram = touch-onset (green dot), **right-click** = touch-offset (red dot), **middle-click** or `d` = remove the dot nearest the pointer (within ~20 display px).
-- Zones under each click are auto-detected from per-zone PNG masks under [src/resources/icons/zones3/](src/resources/icons/zones3/) (or [src/resources/icons/zones3_new_template/](src/resources/icons/zones3_new_template/) when `new_template = true`). Both directories are loaded by directory scan (`adapters.zone_masks.load_zone_masks`), so *every* PNG in them is live -- adding a file adds a zone. Masks are black-on-white; a hit is pixel `== 0` and a miss yields the `NN` sentinel (`domain.touch.zones_at`). The masks OVERLAP on 1.4% / 2.2% of the diagram (almost all of it the `LINE` mask lying over the zones it separates), so overlaps resolve by **precedence, not filename order**: real anatomical zone > `BOX1..BOX6` > `OUTSIDE` > `LINE` > `NN`. `LINE` means "the click is exactly between two zones", so it is only recorded when nothing else claims the pixel; sorted filename order is just the tie-break inside one tier (in practice only box-vs-box borders). The real/catch-all split is one predicate, `domain.touch.is_catch_all_zone`, shared with `touch_stats.zone_sort_key`. A click that resolves to `NN` is logged with a `WARN` naming the frame, limb and coordinates.
+- Zones under each click are auto-detected from per-zone PNG masks under [src/resources/icons/zones3/](src/resources/icons/zones3/) (or [src/resources/icons/zones3_new_template/](src/resources/icons/zones3_new_template/) when the project uses `alternate`). Both directories are loaded by directory scan (`adapters.zone_masks.load_zone_masks`), so *every* PNG in them is live -- adding a file adds a zone. Masks are black-on-white; a hit is pixel `== 0` and a miss yields the `NN` sentinel (`domain.touch.zones_at`). The masks OVERLAP on 1.4% / 2.2% of the diagram (almost all of it the `LINE` mask lying over the zones it separates), so overlaps resolve by **precedence, not filename order**: real anatomical zone > `BOX1..BOX6` > `OUTSIDE` > `LINE` > `NN`. `LINE` means "the click is exactly between two zones", so it is only recorded when nothing else claims the pixel; sorted filename order is just the tie-break inside one tier (in practice only box-vs-box borders). The real/catch-all split is one predicate, `domain.touch.is_catch_all_zone`, shared with `touch_stats.zone_sort_key`. A click that resolves to `NN` is logged with a `WARN` naming the frame, limb and coordinates.
 - Track infant gaze and up to 3 global + 3 per-limb parameters. Each button is a three-state toggle (`unset → ON → OFF → unset`, `domain.touch.cycle_param_state`); gaze is global `Par1`. Button labels are user-editable in Settings → persisted to `config.json` and written into the export metadata, but the export COLUMN names never change.
 - Six "boxes" on the diagram act as catch-all zones (ground, prop, etc).
 - Two timelines visualize all touch events; the upper, slimmer one is the global scrub bar and the taller one is the 100-frame detail view for the selected limb.
@@ -213,8 +237,8 @@ data/<video_name>/
 │   └── <video>.db                    # SQLite — THE source of truth (see below)
 ├── export/                           # Final, "publication-ready" artifacts
 │   ├── <video>_export.csv            # Flat schema (see below) -- the file analysis reads
-│   └── <video>_metadata.json         # Program version, FPS, mode, clothes zones, param labels,
-│                                     # total labeling time (hours)
+│   ├── <video>_metadata.json         # Program version, FPS, mode, clothes zones, param labels,
+│   │                                 # total labeling time (hours)
 ├── frames/                           # frame0.jpg ... frameN.jpg (one per video frame)
 └── plots/                            # Plotly HTMLs from "Analysis"
 ```
@@ -225,24 +249,14 @@ them.
 
 ### Supported data layout (no migration path)
 
-Up to and including `v8.0.0` the same tree was named
-`Labeled_data/<video_name>/data/...`, source videos lived in `Videos/`, and the
-working state was a `<video>_unified.csv` journal plus five CSV/JSON/TXT
-sidecars. An automatic converter for both existed during 9.0 development and was
-**removed before release** — hence the major version bump. This build reads the
-layout above and `state/<video>.db` only.
+This release is for new projects and resumes only its own schema 2 databases with
+recorded template IDs. Other working-state formats are not imported or converted.
+Project loading rejects existing exports with no working database, preventing them
+from being opened as an empty project and overwritten on Save. Use a fresh data
+folder for new work and keep older project folders as archives.
 
-There is therefore no upgrade path from `8.0.x` data. Opening a pre-9.0 project
-does not fail loudly: `open_state` finds no `state/<video>.db`, creates an empty
-one, and the project shows **zero annotations** while the real data sits unread
-in `<video>_unified.csv`. Because `save_service.run_export` rewrites the export
-CSV from the in-memory store on every save, the first Save then overwrites
-`export/<video>_export.csv` with empty rows. Treat 8.0.x project folders as
-read-only archives and keep a copy of their export CSVs.
-
-The export CSV format itself is unchanged across the rename, and
-`adapters.export_reader` still tolerates the pre-8.x 6-line preamble, so
-Analysis reads old exports fine.
+The CSV and metadata export contracts remain unchanged for downstream consumers.
+The app's Analysis workflow requires the template recorded in the accompanying metadata.
 
 ### Working state: `state/<video>.db`
 
@@ -253,7 +267,7 @@ labeling-time accumulator.
 
 | Table | Holds |
 | --- | --- |
-| `meta` | `video_name`, `fps`, `last_frame`, `total_frames`, `labeling_time_seconds`, `clothes_diagram_scale` |
+| `meta` | `video_name`, `fps`, `last_frame`, `total_frames`, `labeling_time_seconds`, `clothes_diagram_scale`, `template`, `template_locked` |
 | `frames` | one row per frame present in the store (its EXISTENCE is data) + `note` |
 | `frame_params` | global `Par1..3`; absent row = key absent, `state IS NULL` = key present but None |
 | `limb_records` | per-limb `onset` + a `has_limb_params` flag; a limb with nothing to store has NO row and is rebuilt as `empty_record(limb)` |
@@ -289,10 +303,10 @@ then re-stamps the provenance meta (`video_name`, `fps`,
 self-describing. `repo.load_frames()` stays a separate step so the GUI can start
 its labeling timer between the two.
 
-`SCHEMA_VERSION` stays at 1: the removed migration never changed the shape of a
-table this build reads, so no DB needs upgrading. `_upgrade_from` still refuses to
-open a database written by a NEWER build rather than silently dropping fields on
-the next save.
+`SCHEMA_VERSION` is 2. Existing databases must match exactly; the version is checked
+before changing database settings or writing state. There is no migration or backup
+path for older projects. The template metadata uses the existing `meta` table, and
+older app builds cannot open these databases and bypass the template lock.
 
 ### Touch export schema
 
@@ -334,7 +348,6 @@ survive a Settings round-trip (`AppConfig.raw` keeps the full parsed dict). Keys
 | --- | --- | --- |
 | `diagram_scale` | yes | Diagram render scale (1.0 = native). Display only — stored click coordinates are always at native scale. |
 | `dot_size` | yes | Click-marker radius on the diagram. |
-| `new_template` | no | Use the alternate touch zone set + diagram. |
 | `minimal_touch_length` | no | Visualization threshold (ms) shown as the "Minimal Touch Length" readout, converted to frames. **Filters nothing**, in the app or in Analysis. |
 | `parameter1..3` | yes | Display labels for the three global parameter buttons. |
 | `limb_parameter1..3` | yes | Display labels for the three per-limb parameter buttons. |
@@ -379,7 +392,7 @@ exception to otherwise pure computation.
 
 ## Application Workflow
 
-1. **Load Video** -- pick `Normal` / `Reliability`, then select a video file (mp4/mov/avi/mkv/flv/wmv). The video is copied into `videos/` and the project tree is created under `data/<video>/` so the working set is self-contained, frames are extracted (or copied for Reliability), prior state is loaded, and the buffering thread starts. Loading **another video mid-session** is supported: `LabelingApp._unload_current_video` first persists the open project exactly like Close does (save, last position, labeling time), then detaches it in the one order that cannot mix two projects' data — video dropped (idling the worker threads) → frame buffer emptied (generation bump) → state DB closed — before the new project is opened. The new session is built against a local `Video` and published only after its frames exist; a failure mid-load falls back to the clean "no video loaded" state, and cancelling either dialog leaves the open project untouched.
+1. **Load Video** -- pick `Normal` / `Reliability`, choose a template for new projects, then select a video file (mp4/mov/avi/mkv/flv/wmv). The video is copied into `videos/` and the project tree is created under `data/<video>/` so the working set is self-contained, frames are extracted (or copied for Reliability), prior state is loaded, and the buffering thread starts. Loading **another video mid-session** is supported: `LabelingApp._unload_current_video` first persists the open project exactly like Close does (save, last position, labeling time), then detaches it in the one order that cannot mix two projects' data — video dropped (idling the worker threads) → frame buffer emptied (generation bump) → state DB closed — before the new project is opened. The new session is built against a local `Video` and published only after its frames exist; a failure mid-load falls back to the clean "no video loaded" state, and cancelling the mode, template or file dialog leaves the open project untouched.
 2. **Clothes** -- mark which body zones are covered with clothes; stored in the state DB's `clothes_dots` and surfaced in the export metadata.
 3. **Annotate** -- pick a limb, click onsets/offsets, set gaze and parameters, type notes. Edits stay in memory until Save.
 4. **Save** -- `Save` button (or auto on Close / before Load) writes the dirty frames to the state DB (one transaction), then the export CSV (full) and the metadata sidecar. The `Changed` flags are cleared.

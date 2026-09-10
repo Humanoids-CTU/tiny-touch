@@ -54,7 +54,10 @@ def test_close_confirmation_is_centered_over_its_parent():
 
 
 def test_video_picker_is_owned_by_main_window(monkeypatch):
-    app = SimpleNamespace(ask_labeling_mode=lambda: "Normal")
+    app = SimpleNamespace(
+        ask_labeling_mode=lambda: "Normal",
+        ask_template=lambda: "default",
+    )
     picker_options = {}
     monkeypatch.setattr(
         labeling_app.filedialog,

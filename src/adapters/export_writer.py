@@ -1,7 +1,7 @@
 """
 adapters/export_writer.py
-The frozen legacy export contract: `export/<video>_export.csv` plus its JSON
-metadata sidecar. Moved VERBATIM from data_utils.py — the byte-level golden
+The frozen CSV export contract plus its JSON metadata sidecar. The metadata
+includes the project template; the CSV format is unchanged. Moved from data_utils.py — the byte-level golden
 master tests (tests/unit/test_export_golden_master.py) pin this file's output;
 any encoding drift silently corrupts published research datasets.
 """
@@ -12,6 +12,7 @@ import pandas as pd
 from typing import Dict
 
 from adapters.atomic_io import atomic_write
+from domain.templates import validate_template
 from domain.model import FrameBundle, _normalize_param_state, empty_bundle
 
 
@@ -26,15 +27,18 @@ def write_export_metadata(meta_path: str,
                           clothes_list,
                           param_labels: dict | None = None,
                           limb_param_labels: dict | None = None,
-                          labeling_time_seconds: float | None = None) -> None:
+                          labeling_time_seconds: float | None = None,
+                          *, template: str) -> None:
     """
     Writes a JSON sidecar with all non-tabular export metadata that used to be
     stuffed into the first 5 lines of *_export.csv.
     """
+    template = validate_template(template)
     meta = {
         "Program Version": program_version,
         "Video Name": video_name,
         "Labeling Mode": labeling_mode,
+        "template": template,
         "Frame Rate": frame_rate,
         "Zones Covered With Clothes": clothes_list,
         "Param Labels": param_labels or {},

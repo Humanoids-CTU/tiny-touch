@@ -222,7 +222,6 @@ DIAGRAM_SCALE = 0.5
 TEST_CONFIG = {
     "diagram_scale": DIAGRAM_SCALE,
     "dot_size": 10.0,
-    "new_template": False,
     "minimal_touch_length": 280,
     "parameter1": "Looking1",
     "parameter2": "P2",

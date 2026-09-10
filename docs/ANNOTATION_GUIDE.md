@@ -66,6 +66,7 @@ amber in Reliability mode. Your choice is remembered as the default for next tim
 ## 3. Loading a video
 
 1. Click **Load Video** and pick `Normal` or `Reliability`, then **Continue**.
+   Choose **Default** or **Alternate** in the template preview, then **Continue** again.
 2. Select the video file (`.mp4`, `.mov`, `.avi`, `.mkv`, `.flv`, `.wmv`).
 3. TinyTouch copies the video into the project's `videos/` folder so the working set is
    self-contained. A progress window shows the copy.
@@ -74,6 +75,23 @@ amber in Reliability mode. Your choice is remembered as the default for next tim
    In Reliability mode the frames are copied from the original project instead.
 5. Any existing annotations for that project are loaded, and you resume at the frame you
    left off on.
+
+The template choice applies to new projects. A saved project restores its own choice;
+a Reliability pass inherits its original's choice. If two existing passes disagree,
+TinyTouch refuses to link them. This release is for new projects; older working databases
+or projects without a recorded template are rejected without conversion. Keep earlier
+annotations as archives and start new work in a fresh data folder.
+
+**Settings** displays the active project template. You may change it while the project
+has never contained annotations or clothing marks. The first annotation (including a
+note or parameter) or clothing mark locks it permanently; deleting marks does not unlock
+it. Linking a Reliability pass locks both projects. Clothes uses the same body outline
+and zones as the annotation view. Close the Clothes window before changing an empty
+project's template.
+
+On saving, keep the CSV and metadata JSON together. The metadata records `"template"`
+as `"default"` or `"alternate"`; see [the metadata specification](DATA_FORMAT.md#2-the-metadata-sidecar).
+Working databases use schema 2. There is no import or upgrade of older working data.
 
 Do not close the terminal window that opens alongside the application. It carries the log,
 and if something goes wrong a screenshot of it is what makes the problem diagnosable.
@@ -186,7 +204,7 @@ per-zone mask images that exactly overlay the body diagram.
 
 - The **default zone set** has 38 zones: `A`–`Z`, `WB`, `XB`, `YB`, `ZB`, six boxes, `LINE`
   and `OUTSIDE`.
-- The **alternate zone set** (`"new_template": true` in `config.json`) has 32: `A`–`T`,
+- The **alternate zone set** (selected when opening a new project) has 32: `A`–`T`,
   `QB`, `RB`, `SB`, `TB`, six boxes, `LINE` and `OUTSIDE`. It uses a different body diagram,
   so the same letter means different anatomy. Agree on one template before a study starts
   and record which one you used.

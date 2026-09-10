@@ -156,6 +156,7 @@ literal UTF-8 (no `\uXXXX` escaping), keys in this exact order:
 | `Program Version` | str | The TinyTouch build that wrote the export, e.g. `"9.0.0 (Windows)"`. Matches the release tag. |
 | `Video Name` | str | Project folder name. Carries the `_reliability` suffix when the file came from a Reliability pass. |
 | `Labeling Mode` | str | `"Normal"` or `"Reliability"`. |
+| `template` | str | `"default"` or `"alternate"`, selected for this project. Required by analysis; determines the body diagrams and zone masks. |
 | `Frame Rate` | float | Frames per second as probed from the video, rounded to one decimal. May be `0.0` — see "Zero frame rate". |
 | `Zones Covered With Clothes` | list of str \| null | Zone names the annotator marked as covered by clothing. `null` means the Clothes dialog was never used, which is **not** the same as `[]` ("opened, marked nothing"). Deduplicated but unsorted; a dot that resolved to several zones contributes one comma-joined string as a single entry. |
 | `Param Labels` | object | Display labels of the three global parameter buttons, keyed `"Parameter_1"`, `"Parameter_2"`, `"Parameter_3"`. `{}` when unavailable. |
@@ -169,6 +170,7 @@ Example:
   "Program Version": "9.0.0 (Windows)",
   "Video Name": "infant_042",
   "Labeling Mode": "Normal",
+  "template": "default",
   "Frame Rate": 25.0,
   "Zones Covered With Clothes": ["A", "B"],
   "Param Labels": {
@@ -263,10 +265,9 @@ extension. Adding a PNG to the mask directory adds a zone; nothing else needs to
 | Default | [`src/resources/icons/zones3/`](../src/resources/icons/zones3/) | 38 masks: `A`–`Z`, `WB`, `XB`, `YB`, `ZB`, `BOX1`–`BOX6`, `LINE`, `OUTSIDE` |
 | Alternate | [`src/resources/icons/zones3_new_template/`](../src/resources/icons/zones3_new_template/) | 32 masks: `A`–`T`, `QB`, `RB`, `SB`, `TB`, `BOX1`–`BOX6`, `LINE`, `OUTSIDE` |
 
-The alternate set is selected by `"new_template": true` in `config.json`, which also swaps
-the body diagram and the four limb images. **The zone name alone does not tell you which
-template produced it** — `A` means different anatomy in the two sets. Record the template
-alongside your dataset.
+Select Default or Alternate in the template picker before selecting a video. The saved
+project choice determines the body diagram, clothing outline, and four limb images. **The zone name alone does not tell you which
+template produced it** — `A` means different anatomy in the two sets. Keep the metadata JSON with your dataset: its `template` field identifies the set.
 
 Special names:
 

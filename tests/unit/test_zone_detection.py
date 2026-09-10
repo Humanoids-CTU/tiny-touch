@@ -444,7 +444,7 @@ def test_click_that_resolves_to_a_zone_logs_no_NN_warning(caplog):
 # --- _load_zone_masks -------------------------------------------------------
 
 def _loader_stub():
-    return SimpleNamespace(NEW_TEMPLATE=False, _zone_dir=None, _zone_masks=[])
+    return SimpleNamespace(template="default", _zone_dir=None, _zone_masks=[])
 
 
 def _write_png(directory, name, value=0):

@@ -127,7 +127,7 @@ def type_text(entry, text):
 
 
 # === modal dialogs the app owns itself ========================================
-def dismiss_dialog(app, title, button_text, attempts=400, interval_ms=15):
+def dismiss_dialog(app, title, button_text, attempts=400, interval_ms=15, *, radio_text=None):
     """Arm a poller that clicks `button_text` on the app's own modal `title`.
 
     The app's mode picker and close confirmation are real `Toplevel`s that block
@@ -146,6 +146,8 @@ def dismiss_dialog(app, title, button_text, attempts=400, interval_ms=15):
         if window is not None:
             button = find_widget(window, cls=(ttk.Button, tk.Button), text=button_text)
             if button is not None:
+                if radio_text is not None:
+                    select_radio(window, radio_text)
                 state["clicked"] = True
                 button.invoke()
                 return
@@ -158,8 +160,8 @@ def dismiss_dialog(app, title, button_text, attempts=400, interval_ms=15):
 
 
 # === composed workflows =======================================================
-def load_video(app, workspace, video_path, mode="Normal"):
-    """Click "Load Video" and answer both dialogs the way a user would.
+def load_video(app, workspace, video_path, mode="Normal", template="Default"):
+    """Choose mode and template in real dialogs, then select the video.
 
     The mode picker is the app's own Toplevel (driven for real); the OS file
     picker is `tkinter.filedialog.askopenfilename`, which cannot be synthesized
@@ -167,9 +169,13 @@ def load_video(app, workspace, video_path, mode="Normal"):
     """
     workspace.chosen_video = str(video_path)
     workspace.mode = mode
-    mode_dialog = dismiss_dialog(app, "Select Mode", "Continue")
+    mode_dialog = dismiss_dialog(app, "Select Mode", "Continue", radio_text=mode)
+    template_dialog = dismiss_dialog(
+        app, "Template for new projects", "Continue", radio_text=template,
+    )
     app.load_video_btn.invoke()
     assert mode_dialog["clicked"], "the mode dialog never appeared"
+    assert template_dialog["clicked"], "the template dialog never appeared"
     assert app.video is not None, "Load Video did not produce a video"
     # The buffering thread decodes frame 0 asynchronously; wait for the first
     # real paint so later steps see a consistent display.

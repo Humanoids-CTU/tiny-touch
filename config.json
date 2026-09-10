@@ -1,7 +1,6 @@
 {
-  "diagram_scale": 0.5,
+  "diagram_scale": 0.8,
   "dot_size": 10.0,
-  "new_template": false,
   "minimal_touch_length": 280,
   "parameter1": "P1",
   "parameter2": "P2",
@@ -9,7 +8,7 @@
   "limb_parameter1": "LP1",
   "limb_parameter2": "LP2",
   "limb_parameter3": "LP3",
-  "video_downscale": 1.0,
+  "video_downscale": 2.0,
   "jump_seconds": 0.28,
   "realtime_arrow_hold": false,
   "perf_enabled": false,

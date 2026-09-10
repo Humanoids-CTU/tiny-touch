@@ -12,7 +12,7 @@ import pytest
 
 from adapters import config as config_utils
 from adapters.config import (
-    load_config_flags,
+    load_app_config,
     load_perf_config,
     load_display_limits,
     load_video_downscale,
@@ -25,13 +25,13 @@ from labeling_app import load_parameter_names_into
 @pytest.fixture
 def corrupt_config(tmp_path, monkeypatch):
     p = tmp_path / "config.json"
-    p.write_text('{"new_template": true, "jump_sec')  # truncated -> JSONDecodeError
+    p.write_text('{"minimal_touch_length": "280", "jump_sec')  # truncated -> JSONDecodeError
     monkeypatch.setattr(config_utils, "get_config_path", lambda: str(p))
     return p
 
 
 def test_H4_flags_fall_back(corrupt_config):
-    assert load_config_flags() == (False, '280')
+    assert load_app_config().minimal_touch_length == '280'
 
 
 def test_H4_perf_falls_back(corrupt_config):

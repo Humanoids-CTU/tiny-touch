@@ -43,7 +43,6 @@ def _ensure_config_file() -> str:
 
 
 CONFIG_DEFAULTS = {
-    'new_template': False,
     'minimal_touch_length': '280',
     'perf_enabled': False, 'perf_log_every_s': 2.0, 'perf_log_top_n': 6,
     'max_display_width': 0, 'max_display_height': 0,
@@ -82,13 +81,6 @@ def save_config(config: dict) -> None:
         config_path,
         lambda file: json.dump(config, file, indent=2, sort_keys=False, ensure_ascii=False),
     )
-
-
-def load_config_flags():
-    config = load_config()   # never raises; {} on corrupt file
-    NEW_TEMPLATE = config.get('new_template', CONFIG_DEFAULTS['new_template'])
-    minimal_touch_length = config.get('minimal_touch_length', CONFIG_DEFAULTS['minimal_touch_length'])
-    return NEW_TEMPLATE, minimal_touch_length
 
 
 def load_perf_config():
@@ -165,7 +157,6 @@ class AppConfig:
     as the individual load_* helpers above; `raw` keeps the full parsed dict
     so unknown keys survive a Settings save round-trip."""
 
-    new_template: bool = CONFIG_DEFAULTS['new_template']
     minimal_touch_length: object = CONFIG_DEFAULTS['minimal_touch_length']
     diagram_scale: float = 1.0
     dot_size: float = 10.0
@@ -223,7 +214,6 @@ def load_app_config() -> AppConfig:
         return CONFIG_DEFAULTS['log_keep_files']
 
     return AppConfig(
-        new_template=config.get('new_template', CONFIG_DEFAULTS['new_template']),
         minimal_touch_length=config.get('minimal_touch_length', CONFIG_DEFAULTS['minimal_touch_length']),
         diagram_scale=_float_or(config.get('diagram_scale', 1.0), 1.0),
         dot_size=_float_or(config.get('dot_size', 10), 10.0),

@@ -74,6 +74,7 @@ import os
 import sqlite3
 import threading
 import time
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from domain.model import (
@@ -82,11 +83,12 @@ from domain.model import (
     _normalize_param_state,
     empty_record,
 )
+from domain.templates import TemplateState, bundle_has_annotation
 
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 LIMB_KEYS = ("LH", "RH", "LL", "RL")
 
@@ -165,14 +167,21 @@ META_LAST_FRAME = "last_frame"
 META_TOTAL_FRAMES = "total_frames"
 META_LABELING_TIME = "labeling_time_seconds"
 META_CLOTHES_SCALE = "clothes_diagram_scale"
+META_TEMPLATE = "template"
+META_TEMPLATE_LOCKED = "template_locked"
 
 
 class SchemaVersionError(RuntimeError):
-    """The database was written by a NEWER TinyTouch than this one.
+    """The database is not in this release's working-project format."""
 
-    Refusing to open is deliberate: a forward-compatible guess would silently
-    drop columns this build does not know about on the next save.
-    """
+
+def _require_current_schema(version: int, db_path: str) -> None:
+    if version != SCHEMA_VERSION:
+        raise SchemaVersionError(
+            f"{db_path} has schema v{version}; this release supports only schema "
+            f"v{SCHEMA_VERSION}. Start a new project in a fresh data folder. "
+            "Existing annotations have not been converted."
+        )
 
 
 class SqliteRepository:
@@ -198,22 +207,17 @@ class SqliteRepository:
             db_path, isolation_level=None, check_same_thread=True
         )
         self._conn.row_factory = sqlite3.Row
-        self._apply_pragmas()
-
-        version = self._user_version()
-        if is_new or version == 0:
-            self._create_schema()
-            logger.info(
-                "sqlite_repo: created state DB (schema v%d) -> %s", SCHEMA_VERSION, db_path
-            )
-        else:
-            self._upgrade_from(version)
-            logger.debug(
-                "sqlite_repo: opened state DB (schema v%d) -> %s (%d bytes)",
-                self._user_version(),
-                db_path,
-                os.path.getsize(db_path),
-            )
+        try:
+            if not is_new:
+                _require_current_schema(self._user_version(), db_path)
+            self._apply_pragmas()
+            if is_new:
+                self._create_schema()
+            logger.debug("sqlite_repo: %s schema v%d database %s",
+                         "created" if is_new else "opened", SCHEMA_VERSION, db_path)
+        except Exception:
+            self._conn.close()
+            raise
 
     # === plumbing =============================================================
     @property
@@ -249,26 +253,6 @@ class SqliteRepository:
         # user_version pragma, so re-running it is a no-op.
         self._conn.executescript(_SCHEMA)
 
-    def _upgrade_from(self, version: int) -> None:
-        """Bring an existing DB up to SCHEMA_VERSION. No migrations exist yet;
-        the ladder is here so v2 has an obvious home and so a FUTURE file is
-        rejected instead of silently down-converted."""
-        if version > SCHEMA_VERSION:
-            raise SchemaVersionError(
-                f"{self._path} has schema v{version} but this TinyTouch build "
-                f"understands at most v{SCHEMA_VERSION}. Update TinyTouch — "
-                "opening it here would drop the newer fields on the next save."
-            )
-        if version < SCHEMA_VERSION:
-            # v0 is handled by the caller (fresh create). No v1-> path yet.
-            logger.info(
-                "sqlite_repo: upgrading %s from schema v%d to v%d",
-                self._path,
-                version,
-                SCHEMA_VERSION,
-            )
-            self._create_schema()
-
     class _Transaction:
         def __init__(self, conn):
             self._conn = conn
@@ -302,6 +286,44 @@ class SqliteRepository:
             logger.warning("sqlite_repo: close failed for %s", self._path, exc_info=True)
 
     # === meta =================================================================
+    @staticmethod
+    def inspect_template(db_path: str) -> TemplateState | None:
+        """Read a current project's selection without creating or writing it."""
+        if not os.path.exists(db_path):
+            return None
+        conn = sqlite3.connect(Path(db_path).resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            _require_current_schema(version, db_path)
+            meta = dict(conn.execute("SELECT key, value FROM meta"))
+            raw_lock = meta.get(META_TEMPLATE_LOCKED, "0")
+            if raw_lock not in ("0", "1"):
+                raise ValueError(f"Invalid template lock in {db_path}")
+            template = meta.get(META_TEMPLATE)
+            if template is None:
+                raise ValueError(f"Project {db_path} has no recorded template. Start a new project.")
+            return TemplateState(template, raw_lock == "1")
+        finally:
+            conn.close()
+
+    def load_template(self) -> TemplateState:
+        raw = self.get_meta(META_TEMPLATE_LOCKED, "0")
+        if raw not in ("0", "1"):
+            raise ValueError("Invalid project template lock")
+        return TemplateState(self.get_meta(META_TEMPLATE), raw == "1")
+
+    def save_template(self, state: TemplateState) -> None:
+        current = self.load_template()
+        if state.template is None:
+            raise ValueError("Choose the project's body template first")
+        chosen = current.choose(state.template)
+        self.set_meta_many({META_TEMPLATE: chosen.template,
+                            META_TEMPLATE_LOCKED: int(current.locked or state.locked)})
+
+    def lock_template(self) -> None:
+        if not self.load_template().locked:
+            self.set_meta(META_TEMPLATE_LOCKED, 1)
+
     def get_meta(self, key: str, default=None) -> Optional[str]:
         self._check_thread()
         row = self._conn.execute(
@@ -501,6 +523,8 @@ class SqliteRepository:
         with self.transaction():
             for frame in dirty:
                 self._write_frame_unlocked(frame, frames[frame], anomalies)
+            if any(bundle_has_annotation(frames[frame]) for frame in dirty):
+                self._set_meta_unlocked(META_TEMPLATE_LOCKED, 1)
             self._set_meta_unlocked(META_TOTAL_FRAMES, total_frames)
 
         for message in anomalies[:20]:
@@ -635,6 +659,8 @@ class SqliteRepository:
         rows = list(rows)
         with self.transaction():
             self._conn.execute("DELETE FROM clothes_dots")
+            if rows:
+                self._set_meta_unlocked(META_TEMPLATE_LOCKED, 1)
             self._conn.executemany(
                 "INSERT INTO clothes_dots (dot_id, x, y, zones) VALUES (?, ?, ?, ?)",
                 [(int(d), float(x), float(y), str(z or "")) for d, x, y, z in rows],

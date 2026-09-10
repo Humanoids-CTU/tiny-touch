@@ -113,9 +113,11 @@ def test_cancelling_the_file_dialog_keeps_the_current_video(loaded_app, workspac
 
     workspace.chosen_video = ""  # the user cancels the OS file picker
     mode_dialog = dismiss_dialog(app, "Select Mode", "Continue")
+    template_dialog = dismiss_dialog(app, "Template for new projects", "Continue")
     app.load_video_btn.invoke()
 
     assert mode_dialog["clicked"] is True
+    assert template_dialog["clicked"] is True
     # The open session is completely untouched: same video, same repo, usable.
     assert app.video is not None and app.video_name == "tiny"
     assert app.video.frames is frames_before

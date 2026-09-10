@@ -38,6 +38,7 @@ from adapters.export_reader import read_export_df
 from adapters.zone_masks import list_zone_names
 from domain.model import LIMBS
 from domain.project import ProjectPaths
+from domain.templates import ALTERNATE_TEMPLATE, validate_template
 from domain.touch_stats import (
     Episode,
     ExportSchemaError,
@@ -126,18 +127,36 @@ def resolve_frame_rate(caller_frame_rate, metadata_path: str):
     return None, "unavailable"
 
 
+def resolve_template(metadata_path: str, template=None) -> str:
+    """Read the export's template and check it against the active project."""
+    try:
+        with open(metadata_path, encoding="utf-8") as stream:
+            metadata = json.load(stream)
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Cannot read export metadata {metadata_path}: {exc}") from exc
+    if not isinstance(metadata, dict):
+        raise ValueError("Export metadata must contain a JSON object.")
+    recorded = validate_template(metadata.get("template"))
+    if template is not None:
+        if recorded != validate_template(template):
+            raise ValueError(
+                f"Export uses template {recorded}; the requested template is {template}."
+            )
+    return recorded
+
+
 def run_analysis(paths: ProjectPaths,
                  frame_rate=None,
-                 new_template: bool = False,
                  output_folder: Optional[str] = None,
                  limbs: Sequence[str] = LIMBS,
-                 open_browser: Optional[Callable[[str], object]] = None) -> AnalysisResult:
+                 open_browser: Optional[Callable[[str], object]] = None,
+                 *, template: Optional[str] = None) -> AnalysisResult:
     """Run the full analysis for one project and return an `AnalysisResult`.
 
     `paths` supplies the export CSV, the metadata sidecar and the default output
     directory (`plots/`); pass `output_folder` to write elsewhere (tests do).
-    `new_template` and the derived zone list are INPUTS — this service never
-    reads config.json, the GUI passes its config snapshot down.
+    The export metadata is required and selects the template. An explicit
+    `template` must agree with it. This service never reads config.json.
 
     Raises `adapters.export_reader.ExportReadError` when the CSV is unparseable
     and `domain.touch_stats.ExportSchemaError` when required columns are absent.
@@ -155,6 +174,9 @@ def run_analysis(paths: ProjectPaths,
     #    rejected export leaves no empty plots/ behind.
     df = read_export_df(export_path)
     data = parse_export_data(df, limbs)
+
+    resolved_template = resolve_template(paths.export_metadata, template)
+    new_template = resolved_template == ALTERNATE_TEMPLATE
 
     fps, fps_source = resolve_frame_rate(frame_rate, paths.export_metadata)
     if fps is None:
@@ -216,7 +238,7 @@ def run_analysis(paths: ProjectPaths,
     written.extend(plotting.write_analysis_tables(stats, fps, output_folder))
 
     fps_text = f"{fps:g} fps ({fps_source})" if fps is not None else "frame rate unknown"
-    subtitle = f"{data.total_frames} frames · {fps_text}"
+    subtitle = f"{data.total_frames} frames · {fps_text} · template {resolved_template}"
     master_html = report_page.write_master_html(
         name, output_folder, figures, notes=warnings, subtitle=subtitle
     )

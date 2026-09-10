@@ -27,13 +27,12 @@ import json
 import pytest
 
 from adapters import config as config_utils
-from adapters.config import load_config, save_config, load_config_flags, load_jump_seconds
+from adapters.config import load_config, save_config, load_app_config, load_jump_seconds
 
 
 FULL_CONFIG = {
     "diagram_scale": 1.5,
     "dot_size": 4,
-    "new_template": True,
     "minimal_touch_length": "280",
     "parameter1": "Looking1",
     "parameter2": "Pohled ěščřž",       # UTF-8 label must survive
@@ -64,7 +63,6 @@ def test_full_config_roundtrips_identically(config_path):
 
     assert loaded == FULL_CONFIG
     # Type fidelity, not just equality-after-coercion:
-    assert isinstance(loaded["new_template"], bool)
     assert isinstance(loaded["jump_seconds"], float)
     assert isinstance(loaded["perf_log_top_n"], int)
     assert isinstance(loaded["minimal_touch_length"], str)
@@ -124,7 +122,5 @@ def test_loaders_see_saved_values(config_path):
     what they report back to the app."""
     save_config(dict(FULL_CONFIG))
 
-    new_template, minimal = load_config_flags()
-    assert new_template is True
-    assert minimal == "280"
+    assert load_app_config().minimal_touch_length == "280"
     assert load_jump_seconds() == 2.5

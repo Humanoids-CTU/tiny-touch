@@ -24,6 +24,7 @@ pinned literally. If they ever change, the statistics changed — investigate,
 do not edit the numbers.
 """
 
+import base64
 import json
 import os
 import re
@@ -83,8 +84,11 @@ def write_project(tmp_path, frames, total_frames=CAT3_TOTAL_FRAMES - 1,
         write_export_metadata(
             meta_path=paths.export_metadata,
             program_version=8.0, video_name=name, labeling_mode="Normal",
-            frame_rate=fps, clothes_list=None,
+            frame_rate=fps, clothes_list=None, template="default",
         )
+    else:
+        with open(paths.export_metadata, "w", encoding="utf-8") as stream:
+            json.dump({"template": "default"}, stream)
     return paths
 
 
@@ -440,3 +444,41 @@ def test_service_does_not_open_a_browser_unless_asked(tmp_path):
     )
 
     assert os.path.isfile(result.master_html)
+
+
+@pytest.mark.parametrize("metadata", ["broken JSON", '{"schema_version":1,"template":"unknown-v1"}'])
+def test_invalid_metadata_preserves_existing_analysis_outputs(tmp_path, metadata):
+    paths = write_project(tmp_path, cat3_frames())
+    with open(paths.export_metadata, "w", encoding="utf-8") as stream:
+        stream.write(metadata)
+    out = tmp_path / "plots"
+    out.mkdir()
+    previous = out / "master_cat3.html"
+    previous.write_text("previous report", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        analysis_service.run_analysis(paths, output_folder=str(out), template="default")
+
+    assert previous.read_text(encoding="utf-8") == "previous report"
+    assert list(out.iterdir()) == [previous]
+
+
+def test_alternate_metadata_selects_alternate_diagrams_and_zone_axis(tmp_path):
+    paths = write_project(tmp_path, cat3_frames())
+    with open(paths.export_metadata, encoding="utf-8") as stream:
+        metadata = json.load(stream)
+    metadata["template"] = "alternate"
+    with open(paths.export_metadata, "w", encoding="utf-8") as stream:
+        json.dump(metadata, stream)
+    result = analysis_service.run_analysis(paths, limbs=("RH",))
+    page = open(result.master_html, encoding="utf-8").read()
+    assert "template alternate" in page
+    heatmap = open(os.path.join(result.output_folder, "heatmap_RH.html"), encoding="utf-8").read()
+    ticks = re.search(r'"ticktext"\s*:\s*(\[[^\]]*\])', heatmap)
+    from adapters.zone_masks import list_zone_names
+    assert set(list_zone_names(True)).issubset(json.loads(ticks.group(1)))
+    trajectory = open(os.path.join(result.output_folder, "touch_trajectory.html"), encoding="utf-8").read()
+    with open(plotting.limb_image_paths(True)[2], "rb") as stream:
+        image_data = base64.b64encode(stream.read()).decode()
+    # Plotly escapes slash characters in embedded JSON strings.
+    assert image_data in trajectory.replace("\\u002f", "/")

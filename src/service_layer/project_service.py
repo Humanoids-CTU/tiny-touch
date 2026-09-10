@@ -24,6 +24,7 @@ import os
 import shutil
 import time
 import logging
+from dataclasses import dataclass
 from typing import Optional
 
 from adapters.frame_extractor import check_items_count, create_frames
@@ -34,6 +35,7 @@ from adapters.sqlite_repo import (
     SqliteRepository,
 )
 from domain.project import VIDEOS_DIR, ProjectPaths
+from domain.templates import TemplateState, validate_template
 
 DEFAULT_VIDEOS_DIR = VIDEOS_DIR
 logger = logging.getLogger(__name__)
@@ -134,6 +136,50 @@ def copy_file_with_progress(src_path, dest_path, progress_cb, chunk_size=8 * 102
 
 
 # === Project open =============================================================
+@dataclass(frozen=True)
+class TemplatePlan:
+    template: str
+    linked_project: ProjectPaths | None
+
+
+def _existing_template(paths: ProjectPaths) -> TemplateState | None:
+    state = SqliteRepository.inspect_template(paths.state_db)
+    if state is None and any(os.path.exists(path) for path in (
+        paths.export_csv, paths.export_metadata,
+    )):
+        raise ValueError(
+            f"Project {paths.video_name} has exports but no working database. "
+            "Start a new project in a fresh data folder; existing exports are not imported."
+        )
+    return state
+
+
+def plan_project_template(paths: ProjectPaths, selected: str) -> TemplatePlan:
+    """Restore or inherit a current project's template without writing state."""
+    validate_template(selected)
+    twin = paths.original if paths.is_reliability else ProjectPaths.for_video(
+        paths.video_name, reliability=True, base_dir=paths.base_dir)
+    own = _existing_template(paths)
+    other = _existing_template(twin)
+    if own and other and own.template != other.template:
+        raise ValueError("Normal and Reliability projects use different body templates. "
+                         "They cannot be linked; keep the projects separate and resolve their provenance first.")
+    chosen = own.template if own else other.template if other else selected
+    return TemplatePlan(chosen, twin if other else None)
+
+
+def apply_project_template(repo: SqliteRepository, plan: TemplatePlan) -> None:
+    """Persist the selection and lock both projects when linking a pair."""
+    selected = repo.load_template().choose(plan.template)
+    repo.save_template(selected.lock() if plan.linked_project else selected)
+    if plan.linked_project:
+        linked = SqliteRepository(plan.linked_project.state_db)
+        try:
+            linked.save_template(linked.load_template().choose(plan.template).lock())
+        finally:
+            linked.close()
+
+
 def prepare_project(raw_video_name: str, labeling_mode: str) -> ProjectPaths:
     """ProjectPaths for a raw video name (reliability-suffix rule applied)
     with all project directories created."""

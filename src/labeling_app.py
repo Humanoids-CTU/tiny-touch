@@ -3,6 +3,7 @@ import sys
 import time
 import webbrowser
 import logging
+import sqlite3
 from contextlib import contextmanager
 from threading import Thread, Event, get_ident, current_thread
 
@@ -28,8 +29,10 @@ from domain.model import (
 )
 from domain.project import ProjectPaths
 from domain.touch import NO_ZONE, find_last_open_onset, zones_at
+from domain.templates import ALTERNATE_TEMPLATE, TEMPLATE_LABELS, DEFAULT_TEMPLATE
 from gui import theme
 from gui.cloth_app import ClothApp, DEFAULT_CLOTH_DIAGRAM_SCALE
+from gui.template_dialog import choose_template, template_diagram
 from gui.resource_utils import asset_path
 from gui.ui_components import build_ui
 from log_setup import open_logs_folder
@@ -302,7 +305,7 @@ class LabelingApp(tk.Tk):
         self.video = None
         self.video_name = None
         self.minimal_touch_length = None
-        self.NEW_TEMPLATE = False
+        self.template = DEFAULT_TEMPLATE
         self.clothes_diagram_scale = DEFAULT_CLOTH_DIAGRAM_SCALE
         self._cloth_app = None
         # Working-state repository (state/<video>.db). Opened by load_video,
@@ -324,9 +327,8 @@ class LabelingApp(tk.Tk):
         self._logged_limb = self.option_var_1.get()
 
         # Config flags that affect UI sizing & behavior
-        self.NEW_TEMPLATE = self.config.new_template
         self.minimal_touch_length = self.config.minimal_touch_length
-        logger.debug("new template: %s", self.NEW_TEMPLATE)
+        logger.debug("template: %s", self.template)
         logger.debug("minimal touch length: %s", self.minimal_touch_length)
         self.perf = PerfLogger(
             enabled=self.config.perf_enabled,
@@ -921,6 +923,8 @@ class LabelingApp(tk.Tk):
                 y_pos,
             )
 
+        if not LabelingApp._lock_before_annotation(self):
+            return
         setattr(self.video, f"is_touch{option}", True)
 
         rec = annotation_service.add_click(
@@ -985,18 +989,18 @@ class LabelingApp(tk.Tk):
         self.on_radio_click()
 
     def on_radio_click(self):
-        expected_dir = asset_path("icons/zones3_new_template" if self.NEW_TEMPLATE else "icons/zones3")
+        expected_dir = asset_path("icons/zones3_new_template" if self.template == ALTERNATE_TEMPLATE else "icons/zones3")
         if getattr(self, "_zone_dir", None) != expected_dir:
             self._reset_zone_cache()
             self._load_zone_masks()
         if self.option_var_1.get() == "RH":
-            image_path = asset_path("icons/RH_new_template.png" if self.NEW_TEMPLATE else "icons/RH.png")
+            image_path = asset_path("icons/RH_new_template.png" if self.template == ALTERNATE_TEMPLATE else "icons/RH.png")
         elif self.option_var_1.get() == "LH":
-            image_path = asset_path("icons/LH_new_template.png" if self.NEW_TEMPLATE else "icons/LH.png")
+            image_path = asset_path("icons/LH_new_template.png" if self.template == ALTERNATE_TEMPLATE else "icons/LH.png")
         elif self.option_var_1.get() == "RL":
-            image_path = asset_path("icons/RL_new_template.png" if self.NEW_TEMPLATE else "icons/RL.png")
+            image_path = asset_path("icons/RL_new_template.png" if self.template == ALTERNATE_TEMPLATE else "icons/RL.png")
         else:  # LL
-            image_path = asset_path("icons/LL_new_template.png" if self.NEW_TEMPLATE else "icons/LL.png")
+            image_path = asset_path("icons/LL_new_template.png" if self.template == ALTERNATE_TEMPLATE else "icons/LL.png")
 
         scale = getattr(self, "diagram_scale", 1.0)
         # The periodic dot refresh repaints through here every 300ms; cache the
@@ -1020,7 +1024,7 @@ class LabelingApp(tk.Tk):
 
     # === Zone Masks & Lookups ==================================================
     def _load_zone_masks(self):
-        directory = asset_path("icons/zones3_new_template" if self.NEW_TEMPLATE else "icons/zones3")
+        directory = asset_path("icons/zones3_new_template" if self.template == ALTERNATE_TEMPLATE else "icons/zones3")
         if getattr(self, "_zone_dir", None) == directory and getattr(self, "_zone_masks", None):
             return
         self._zone_dir = directory
@@ -1711,6 +1715,8 @@ class LabelingApp(tk.Tk):
         """Toggle Param_i (1..3) for the CURRENT frame directly on the bundle."""
         if self.video is None:
             return
+        if not LabelingApp._lock_before_annotation(self):
+            return
         idx = self.video.current_frame
         new_state = annotation_service.toggle_global_param(
             self.video.frames, idx, parameter_index
@@ -1726,6 +1732,8 @@ class LabelingApp(tk.Tk):
         annotation_logger.info("f=%s param P%s -> %s", idx, parameter_index, new_state)
 
     def toggle_limb_parameter(self, param_number: int):
+        if not LabelingApp._lock_before_annotation(self):
+            return
         limb = self.option_var_1.get()
         frame = self.video.current_frame
         new_state = annotation_service.toggle_limb_param(
@@ -1808,6 +1816,8 @@ class LabelingApp(tk.Tk):
     def save_note(self):
         idx = self.video.current_frame
         note_text = self._get_note_entry_text().strip()
+        if note_text and not LabelingApp._lock_before_annotation(self):
+            return
 
         changed = annotation_service.set_note(self.video.frames, idx, note_text)
         if changed:
@@ -1882,6 +1892,7 @@ class LabelingApp(tk.Tk):
             },
             limb_param_labels=self._limb_param_labels_for_export(),
             labeling_time_seconds=self._current_video_time_s(),
+            template=self.state_repo.load_template().template,
         )
 
         # 2) Snapshot BEFORE the worker-thread export so concurrent edits can
@@ -1926,8 +1937,8 @@ class LabelingApp(tk.Tk):
 
         The service does all reading/computing/writing and hands back the master
         page path; opening the browser stays here (a GUI concern) so the service
-        remains headless and testable. `new_template` is passed down from this
-        app's config snapshot — the service never reads config.json.
+        remains headless and testable. The saved project template is passed
+        down for validation against the export metadata.
         """
         if not self.video:
             return
@@ -1937,7 +1948,7 @@ class LabelingApp(tk.Tk):
             result = analysis_service.run_analysis(
                 paths,
                 frame_rate=self.frame_rate,
-                new_template=self.NEW_TEMPLATE,
+                template=self.state_repo.load_template().template,
             )
         except Exception as exc:
             logger.exception("analysis failed for %s", self.video_name)
@@ -1976,6 +1987,52 @@ class LabelingApp(tk.Tk):
             self.play_video()
 
     # === Video Load & Init =====================================================
+    def _lock_before_annotation(self):
+        repo = getattr(self, "state_repo", None)
+        if repo is None:
+            return True
+        try:
+            repo.lock_template()
+            return True
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            logger.exception("could not lock project template")
+            messagebox.showerror("Annotation not added", f"Could not save the project template lock:\n{exc}", parent=self)
+            return False
+
+    def ask_template(self):
+        initial = DEFAULT_TEMPLATE
+        return choose_template(self, initial, center=center_over_parent)
+
+    def _apply_active_template(self, template):
+        self.template = template
+        self._reset_zone_cache()
+        self._load_zone_masks()
+        self._render_diagram_dots()
+
+    def change_project_template(self):
+        if self.video is None:
+            return
+        state = self.state_repo.load_template()
+        if state.locked:
+            messagebox.showinfo("Template locked", "This project's body template is locked.", parent=self)
+            return
+        if self._cloth_app and self._cloth_app.top_level.winfo_exists():
+            messagebox.showinfo("Close Clothes", "Close the Clothes window before changing the template.", parent=self)
+            return
+        selected = choose_template(self, state.template, center=center_over_parent)
+        if selected is None:
+            return
+        try:
+            self.state_repo.save_template(state.choose(selected))
+        except ValueError as exc:
+            messagebox.showerror("Template locked", str(exc), parent=self)
+            return
+        self._apply_active_template(selected)
+        self.save_data()
+        if getattr(self, "_settings_win", None) and self._settings_win.winfo_exists():
+            self._settings_win.destroy()
+            self.open_settings()
+
     def ask_labeling_mode(self):
         """Modal mode picker. Returns "Normal" / "Reliability", or None when
         the window is closed without confirming.
@@ -2139,6 +2196,10 @@ class LabelingApp(tk.Tk):
             logger.info("video load cancelled: no mode selected")
             return
 
+        selected_template = self.ask_template()
+        if selected_template is None:
+            return
+
         with center_native_file_dialog(self):
             video_path = filedialog.askopenfilename(
                 parent=self,
@@ -2149,6 +2210,22 @@ class LabelingApp(tk.Tk):
                 ),
             )
         if not video_path: return
+
+        raw_video_name = os.path.splitext(os.path.basename(video_path))[0]
+        candidate_paths = ProjectPaths.for_video(raw_video_name, reliability=(mode == "Reliability"))
+        try:
+            template_plan = project_service.plan_project_template(
+                candidate_paths, selected_template,
+            )
+        except (ValueError, RuntimeError, OSError, sqlite3.Error) as exc:
+            messagebox.showerror("Cannot select project template", str(exc), parent=self)
+            return
+        if template_plan.template != selected_template:
+            messagebox.showinfo(
+                "Saved template restored",
+                f"This project uses {TEMPLATE_LABELS[template_plan.template]}. "
+                "Its saved or inherited template will be used.", parent=self,
+            )
 
         # 2) Read-only preparation of the NEW video (copy + probe) while the
         #    current project, if any, is still fully alive — a failure here
@@ -2216,6 +2293,7 @@ class LabelingApp(tk.Tk):
                 fps=self.frame_rate,
                 program_version=video.program_version,
             )
+            project_service.apply_project_template(self.state_repo, template_plan)
             # ORDERING (unchanged): the labeling timer starts BEFORE the frame
             # load so the session is already accumulating; an extraction abort
             # below rolls it back via _stop_video_timer_if_any().
@@ -2288,6 +2366,7 @@ class LabelingApp(tk.Tk):
         #    threads start seeing this video from this line on.
         self.video = video
         self.video_name = video_name
+        self._apply_active_template(self.state_repo.load_template().template)
         self._refresh_jump_label()
 
         self._timeline_dirty = True
@@ -2377,6 +2456,8 @@ class LabelingApp(tk.Tk):
                     on_close,
                     initial_points=initial_points,
                     diagram_scale=scale,
+                    diagram_path=template_diagram(self.state_repo.load_template().template),
+                    on_first_mark=self._lock_before_annotation,
                 )
             except Exception:
                 self.cloth_btn.config(state=tk.NORMAL)
@@ -2530,6 +2611,16 @@ class LabelingApp(tk.Tk):
         }
 
         row = 0
+        if self.video is not None:
+            template_state = self.state_repo.load_template()
+            status = "locked" if template_state.locked else "changeable until annotation begins"
+            ttk.Label(content, text=f"Project template: {TEMPLATE_LABELS[template_state.template]} ({status})").grid(
+                row=row, column=0, columnspan=2, sticky="w", padx=8, pady=4)
+            row += 1
+            ttk.Button(content, text="Change project template", command=self.change_project_template,
+                       state=tk.DISABLED if template_state.locked else tk.NORMAL).grid(
+                row=row, column=0, columnspan=2, sticky="w", padx=8, pady=4)
+            row += 1
         ttk.Label(content, text="Display", font=theme.FONT_BOLD).grid(
             row=row,
             column=0,
