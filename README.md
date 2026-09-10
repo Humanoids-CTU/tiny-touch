@@ -172,22 +172,6 @@ Share the **whole `plots/` folder**, including `plotly.min.js`, so the charts ca
 Before considering a video finished, check the open-touch count and review any missing
 offsets against the video.
 
-## Citing
-
-Please cite the software using [CITATION.cff](CITATION.cff), or GitHub's **Cite this repository**
-button for APA and BibTeX entries. Cite the version you used, recorded in your
-dataset's metadata sidecar (`Program Version`).
-
-A paper describing TinyTouch is in preparation and will have its own citation
-and author list, separate from the software citation.
-
-An example of the kind of analysis this coding scheme supports:
-
-> Khoury, J., Popescu, S. T., Gama, F., Marcel, V. and Hoffmann, M. (2022), Self-touch and
-> other spontaneous behavior patterns in early infancy, in *IEEE International Conference
-> on Development and Learning (ICDL)*, pp. 148-155.
-> [PDF](https://drive.google.com/file/d/1iVgMr-8eJFPH8jU31ksDNmv4xWY_4s5q/view?usp=sharing)
-
 ## License
 
 Copyright (c) 2026 Czech Technical University in Prague.
@@ -205,12 +189,8 @@ The software comes without warranty, to the extent permitted by applicable law.
 [REUSE.toml](REUSE.toml) records file-level copyright and license notices.
 Third-party components retain their respective licenses. This project license does
 not impose a license on users' input videos or annotation datasets.
-Earlier releases offered under CC BY 4.0 remain available under those terms.
 
 ## Contact
-
-Developed at the Vision for Robotics and Autonomous Systems (VRAS) group, Czech Technical
-University in Prague.
 
 Maintainer: Lukáš Navara — navarlu2@fel.cvut.cz
 
