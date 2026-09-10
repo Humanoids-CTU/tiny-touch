@@ -69,5 +69,5 @@ TinyTouch_env/
 
 # Local reference assets that are not part of the application or documentation
 /assets/icons_unused/
-/assets/tutorial.mp4
+
 /surprise.txt
