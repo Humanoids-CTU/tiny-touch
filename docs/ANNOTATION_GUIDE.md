@@ -54,8 +54,9 @@ your own, blind) so the two datasets can be compared instead of overwriting each
 
 - The project folder gets a `_reliability` suffix (`data/infant_042_reliability/`), so the
   original dataset is untouched.
-- The **frames are copied from the original project** rather than re-extracted, so the two
-  passes see byte-identical images and frame indices line up exactly.
+- When the original project's frames are available, they are copied so the two passes
+  see byte-identical images and frame indices line up exactly. Otherwise frames are
+  extracted from the selected video.
 - `Labeling Mode` in the export metadata records which pass produced the file.
 
 The mode chip in the bottom-left corner of the window shows which mode you are in; it turns
@@ -68,11 +69,11 @@ amber in Reliability mode. Your choice is remembered as the default for next tim
 1. Click **Load Video** and pick `Normal` or `Reliability`, then **Continue**.
    Choose **Default** or **Alternate** in the template preview, then **Continue** again.
 2. Select the video file (`.mp4`, `.mov`, `.avi`, `.mkv`, `.flv`, `.wmv`).
-3. TinyTouch copies the video into the project's `videos/` folder so the working set is
-   self-contained. A progress window shows the copy.
+3. TinyTouch copies the video into `videos/` under the current working directory
+   (the folder you launched from). A progress window shows the copy.
 4. It then extracts every frame to `data/<video>/frames/`. **This takes a while on a long
    video and only happens once**; a later session on the same video reuses the frames.
-   In Reliability mode the frames are copied from the original project instead.
+   In Reliability mode the frames are copied from the original project when available.
 5. Any existing annotations for that project are loaded, and you resume at the frame you
    left off on.
 
@@ -93,8 +94,12 @@ On saving, keep the CSV and metadata JSON together. The metadata records `"templ
 as `"default"` or `"alternate"`; see [the metadata specification](DATA_FORMAT.md#2-the-metadata-sidecar).
 Working databases use schema 2. There is no import or upgrade of older working data.
 
-Do not close the terminal window that opens alongside the application. It carries the log,
-and if something goes wrong a screenshot of it is what makes the problem diagnosable.
+Launch from the same working directory each time and use the same mode and video to
+resume. Project names come from video filenames without their extensions; use unique
+names for distinct videos. See the README for [backup and transfer instructions](../README.md#output-data).
+
+Do not close the terminal window while using the application. If something goes wrong,
+use **Settings -> Open Logs Folder** to find the session log for your bug report.
 
 ---
 
@@ -185,11 +190,11 @@ sets it. Do not left-click and then right-click on the same frame for the same l
 expecting two events; you will end up with one offset frame carrying two dots.
 
 **The limb moves during a touch.** If the contact drifts to a different zone without
-breaking, you can click (with either button, on an intermediate frame) to record the new
-location. Clicks on frames inside an open touch are recorded as mid-touch waypoints and
-appear in the trajectory plot. Note that a left-click inside an open touch counts as an
-extra onset — this is what the "touch length distribution" histogram counts — while a
-right-click closes the touch.
+breaking, left-click on an intermediate frame to record the new location. That extra
+onset becomes a mid-touch waypoint in the trajectory plot and increases the episode's
+onset count; it does not start a separate episode. The "touch length distribution"
+histogram counts these onsets. Right-click only when the contact ends, because it closes
+the touch.
 
 **Deleting.** Middle-click near a dot, or hover over it and press `d`, to remove it. The
 dot must be within roughly 20 pixels of the pointer. Removing the last dot on a frame also
@@ -257,10 +262,12 @@ unset  →  ON  →  OFF  →  unset  →  ...
 The button is colored to show the state, and the state of the current frame is reflected
 whenever you move between frames.
 
-**Gaze** is recorded with **global Parameter 1**, which the shipped configuration labels
-`Looking1`. Set it to `ON` when the infant is looking at the contact, `OFF` when the infant
-is demonstrably not looking, and leave it unset when you cannot tell. In practice you only
-need to set it once per touch, on the onset frame, unless your coding scheme says otherwise.
+**Gaze** can be recorded with **global Parameter 1** by study convention; there is no
+separate gaze control. The shipped labels are `P1`–`P3` and `LP1`–`LP3`. Rename global
+Parameter 1 to a meaningful label such as `Looking1` if you use it for gaze. One convention
+is `ON` when the infant is looking at the contact, `OFF` when demonstrably not looking,
+and unset when you cannot tell. Agree on both the meanings and which frames to label
+before coding begins; parameter values belong to individual frames.
 
 **The button labels are configurable.** Open **Settings** and edit the three global and the
 three limb-specific parameter labels. They are stored in `config.json` and written into the
@@ -269,7 +276,7 @@ export metadata (`Param Labels`, `Limb Param Labels`) so a reader can tell what
 stay `Parameter_1..3` and `{limb}_Parameter_1..3`. Agree on the labels before coding
 starts; changing them mid-study leaves you with one metadata file describing both halves.
 
-Settings also holds the display options: video downscale (lower = faster), diagram scale,
+Settings also holds the display options: video downscale (higher values render smaller frames), diagram scale,
 dot size, the fast-jump distance, and whether holding an arrow key plays at the video's real
 frame rate. Changes apply on **Apply** or **Apply & Close**.
 
@@ -310,8 +317,8 @@ seconds.
 Practical rules:
 
 - **Do not open the CSV in Excel while labeling.** A file lock can make a save fail.
-- **Close the application before starting another video** if you can; loading a second
-  video in the same session works, but a fresh start is the well-trodden path.
+- **Load Video** can open another video in the same session; the current project is saved
+  before switching.
 - The application keeps a labeling-time counter per video and reports it in the metadata as
   `Total Labeling Time (hours)`.
 

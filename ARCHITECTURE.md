@@ -493,6 +493,9 @@ A GitHub Actions workflow ([.github/workflows/build.yml](.github/workflows/build
 
 Quick reference:
 
+Update `PROGRAM_VERSION` in `src/app_info.py`, `version` in `CITATION.cff`, and the
+README version badge, executable examples, and versioned documentation links together.
+
 ```bash
 # Bump PROGRAM_VERSION in src/app_info.py, commit, push to master, then:
 git tag v9.0.0

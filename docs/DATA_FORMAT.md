@@ -17,11 +17,12 @@ dashboards. Do not parse those; they are free to change between versions. (One p
 note: the HTML files in `plots/` share a single `plotly.min.js` in the same folder, so
 copy or share the folder as a whole.)
 
-**The export format is unchanged from earlier TinyTouch versions.** The column set, the
+**The CSV columns and cell encoding are unchanged.** The column set, the
 column order and the byte-level encoding of every cell are frozen and pinned by tests
 (`tests/unit/test_export_schema.py` for the order, `tests/unit/test_export_golden_master.py`
-for the bytes, `tests/unit/test_export_metadata.py` for the sidecar). A dataset produced by
-TinyTouch 7.x parses identically to one produced by 8.x.
+for the bytes, `tests/unit/test_export_metadata.py` for the sidecar). Pre-v8 files require
+handling the legacy preamble described below. Current metadata also records the body
+template; preserving CSV compatibility does not make older working projects importable.
 
 ---
 
@@ -60,7 +61,7 @@ per-limb parameter block repeats the same LH, LL, RH, RL order.
 | 7–10 | `LL_X`, `LL_Y`, `LL_Onset`, `LL_Zones` | | Same, left leg. |
 | 11–14 | `RH_X`, `RH_Y`, `RH_Onset`, `RH_Zones` | | Same, right hand. |
 | 15–18 | `RL_X`, `RL_Y`, `RL_Onset`, `RL_Zones` | | Same, right leg. |
-| 19 | `Parameter_1` | str | Global (whole-frame) parameter 1: `ON`, `OFF`, or empty. **This is where gaze is recorded** — see "Gaze". |
+| 19 | `Parameter_1` | str | Global (whole-frame) parameter 1: `ON`, `OFF`, or empty. Can represent gaze by study convention — see "Gaze". |
 | 20 | `Parameter_2` | str | Global parameter 2: `ON`, `OFF`, or empty. |
 | 21 | `Parameter_3` | str | Global parameter 3: `ON`, `OFF`, or empty. |
 | 22–24 | `LH_Parameter_1`, `LH_Parameter_2`, `LH_Parameter_3` | str | Per-limb parameters for the left hand: `ON`, `OFF`, or empty. |
@@ -139,10 +140,11 @@ derive time from `Frame` and a frame rate you know independently.
 
 ### Gaze
 
-There is no `Look` column and there never was one in the current format. Infant gaze is
-recorded through the **global `Parameter_1`** column; the label shown on that button
-(`Looking1` in the shipped `config.json`) is written to the metadata sidecar under
-`Param Labels["Parameter_1"]`. See "Legacy notes" below.
+There is no `Look` column and there never was one in the current format. Infant gaze can
+be recorded through the **global `Parameter_1`** column by study convention. Its shipped
+label is `P1`; a study may rename it to `Looking1`, as in the example below. The configured
+label is written to the metadata sidecar under `Param Labels["Parameter_1"]`. Check the
+study's coding scheme before interpreting this parameter as gaze. See "Legacy notes" below.
 
 ---
 
@@ -379,8 +381,9 @@ Per-limb gaze (`Look`) has been fully retired from TinyTouch. Current-format exp
 contained `{limb}_Look` columns, so this did not change the export schema.
 
 External scripts that still reference `Look` columns from legacy exports should use the
-global `Parameter_1` column instead. That is where gaze is captured; its user-facing label
-(currently `Looking1`) is recorded under `Param Labels` in the metadata sidecar.
+global `Parameter_1` column only when the study uses it for gaze. Its configured label
+is recorded under `Param Labels` in the metadata sidecar; there is no automatic conversion
+of legacy gaze data.
 
 ### Metadata moved out of the CSV (v8)
 
@@ -397,15 +400,17 @@ the same time the working state became a single SQLite database,
 `state/<video>.db`, replacing the `<video>_unified.csv` journal and its five CSV/JSON/TXT
 sidecars.
 
-**There is no automatic migration.** v9.0.0 reads the new layout only. Opening a project
-created by v8.0.0 or earlier produces an EMPTY project — and because every save rewrites
-the export CSV from the in-memory store, the first save then overwrites
-`export/<video>_export.csv` with empty rows. Treat pre-v9 project folders as read-only
-archives and keep copies of their `*_export.csv` files.
+**There is no import or automatic migration.** v9.0.0 resumes only schema 2 working
+databases with a recorded template. Unsupported databases are rejected, as are project
+folders containing exports without a working database. The old `Labeled_data/` directory
+is not searched. Keep older projects as archives, retain their exports, and start new work
+in a fresh data folder.
 
 Scripts with hardcoded `Labeled_data/...` paths need updating. The export file **name**,
-its position inside `export/`, and its schema are unchanged — v9 still reads exports
-written by every earlier version, including the pre-v8 preamble layout above.
+its position inside `export/`, and its columns and cell encoding are unchanged. The CSV
+reader still handles the pre-v8 preamble layout above, but the app's Analysis workflow
+requires a recorded body template. CSV-reader compatibility does not provide a way to
+resume older annotation projects.
 
 ### 3D pose mode removed (after v8.0.0)
 
