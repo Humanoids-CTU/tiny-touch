@@ -1,5 +1,5 @@
 {
-  "diagram_scale": 0.7,
+  "diagram_scale": 0.5,
   "dot_size": 10.0,
   "minimal_touch_length": 280,
   "parameter1": "P1",
@@ -8,7 +8,7 @@
   "limb_parameter1": "LP1",
   "limb_parameter2": "LP2",
   "limb_parameter3": "LP3",
-  "video_downscale": 2.0,
+  "video_downscale": 1.0,
   "jump_seconds": 0.28,
   "realtime_arrow_hold": false,
   "perf_enabled": false,
@@ -16,5 +16,5 @@
   "perf_log_top_n": 10,
   "log_level_console": "INFO",
   "log_keep_files": 20,
-  "last_labeling_mode": "Normal"
+  "last_labeling_mode": "Reliability"
 }

@@ -96,7 +96,7 @@ Working databases use schema 2. There is no import or upgrade of older working d
 
 Launch from the same working directory each time and use the same mode and video to
 resume. Project names come from video filenames without their extensions; use unique
-names for distinct videos. See the README for [backup and transfer instructions](../README.md#output-data).
+names for distinct videos. See the README for [backup and transfer instructions](../README.md#find-your-data-and-run-analysis).
 
 Do not close the terminal window while using the application. If something goes wrong,
 use **Settings -> Open Logs Folder** to find the session log for your bug report.
