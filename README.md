@@ -14,7 +14,7 @@ Download TinyTouch from the
 [Releases page](https://github.com/Humanoids-CTU/tiny-touch/releases).
 
 **Windows 10/11 (64-bit):** download **windows-x64.zip**, extract it, and
-double-click the **TinyTouch .exe** file.
+double-click the **TinyTouch.exe** file.
 
 **Linux (Ubuntu 24.04 or newer, Intel/AMD 64-bit):** download **linux-x64.zip**
 and extract it. Open a terminal in the extracted folder and run
