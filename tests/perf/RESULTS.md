@@ -209,3 +209,34 @@ What the baseline says, mapped to plan steps:
 - step 4 — `display_frame_photo` doubles on the full-screen panel (4 → 8 ms).
 - step 5 — one resize burst costs 276-926 decodes.
 - step 6 — loading freezes the UI for 1.3-1.6 s at a time.
+
+## Step 1 — priority loads reuse in-flight decodes (A/B vs `53daf86`)
+
+Change: `FrameBuffer._load_priority` cancels a queued pool decode of the same frame (and
+decodes it on the buffering thread) or waits for a running one, instead of decoding the
+frame a second time; the priority hint is taken-and-cleared under the lock.
+Correctness: `tests/unit/test_frame_buffer_priority.py` (red on `53daf86`: frame decoded
+2× in both the queued and the running case; green after).
+
+**Method change.** The first step-1 matrix (run ~40 min after the baseline) showed code
+paths step 1 cannot touch — `display_frame_photo` (UI-thread `PhotoImage`) and `load_s`
+(ffmpeg) — 20-70 % slower: the laptop's speed drifted between the two sessions by more
+than the effects measured. `run_perf_matrix.py` got an A/B mode
+(`TINYTOUCH_PERF_AB_REV`): the reference commit runs from a temporary git worktree,
+interleaved A B / B A / A B with the new code. All numbers below are from that mode.
+
+| metric (median of 3) | 1080p default | 1080p full | 4K default | 4K full |
+|---|---|---|---|---|
+| duplicate decodes, before → after | 11 → **0** | 12 → **0** | 12 → **0** | 12 → **0** |
+| step median ms | 17.5 → 17.6 | 38.9 → 26.9 | 21.0 → 17.6 | 35.6 → 35.1 |
+| jump p95 ms | 126 → 131 | 251 → 169 | 171 → 141 | 173 → 169 |
+| playback fps | 23.6 → 23.8 | 15.5 → 22.1 | 19.6 → 24.2 | 21.9 → 22.4 |
+| control: `display_frame_photo` ms | 5.4 → 5.8 | **14.3 → 9.7** | **6.3 → 4.9** | 8.7 → 8.6 |
+
+Verdict: the target metric is met exactly (no frame is decoded twice any more), and no
+metric regressed beyond the noise band. The large latency/fps "gains" in the 1080p-full
+and 4K-default columns are NOT attributable to step 1: the control metric, which step 1
+cannot affect, moved by a similar amount in the same runs, so those reference runs simply
+landed on slower moments. Run-to-run spread is 30-100 % for several metrics even when
+interleaved; only deterministic counts (decodes) and large effects are trustworthy on
+this machine. Always read the control row before believing a latency change.

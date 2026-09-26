@@ -15,7 +15,10 @@ Threading invariants preserved from the original implementation:
       `schedule_on_ui` (the app supplies its main-loop "run this on the UI
       thread soon" scheduler);
   (d) `compute_play_step` stays a pure, side-effect-free function
-      (re-exported as `LabelingApp._compute_play_step` for the H1 tests).
+      (re-exported as `LabelingApp._compute_play_step` for the H1 tests);
+  (e) a frame is decoded at most once: the synchronous priority path
+      (`_load_priority`) cancels a queued pool decode of the same frame or
+      waits for a running one instead of decoding it again.
 
 Single-writer rule (two-writer bug fix): the playback worker no longer
 assigns `video.current_frame` itself. It REQUESTS the advance via
@@ -45,6 +48,9 @@ logger = logging.getLogger(__name__)
 PLAYBACK_BUFFER_PAUSE_S = 0.15
 PLAYBACK_BUFFER_AHEAD = 3
 BUFFER_MAX_BYTES = 1_000_000_000
+# Upper bound on how long a priority load waits for a pool decode of the same
+# frame that is already running (normally 5-40 ms). Past it we decode ourselves.
+PRIORITY_WAIT_S = 1.0
 
 
 def compute_play_step(current_frame, total_frames, direction):
@@ -219,8 +225,16 @@ class FrameBuffer:
 
     def request_priority(self, frame_number):
         """Hint the buffering thread to load `frame_number` ASAP (jump target)."""
-        self._priority_frame = frame_number
+        with self._lock:
+            self._priority_frame = frame_number
         self._priority_event.set()
+
+    def _take_priority(self):
+        """Read and clear the priority hint in one step. Two separate
+        statements would lose a hint the UI thread writes between them."""
+        with self._lock:
+            priority, self._priority_frame = self._priority_frame, None
+        return priority
 
     def poke(self):
         """Wake the buffering thread early (current frame missing from cache)."""
@@ -320,7 +334,7 @@ class FrameBuffer:
                 current_frame_loaded = current_frame in self._buffer
                 if not current_frame_loaded:
                     with self._perf.time("priority_load"):
-                        self._load_frame_to_buffer(
+                        self._load_priority(
                             current_frame, frames_dir, display_w, display_h, downscale, gen
                         )
                     if current_frame in self._buffer:
@@ -331,14 +345,13 @@ class FrameBuffer:
 
                 # 2) Honour an explicit priority hint (e.g. _request_buffered_step
                 #    polling pre-loads the jump target before next_frame() is called).
-                priority = self._priority_frame
-                self._priority_frame = None
+                priority = self._take_priority()
                 if (priority is not None
                         and priority != current_frame
                         and 0 <= priority <= ctx.total_frames
                         and priority not in self._buffer):
                     with self._perf.time("priority_load"):
-                        self._load_frame_to_buffer(
+                        self._load_priority(
                             priority, frames_dir, display_w, display_h, downscale, gen
                         )
 
@@ -530,6 +543,37 @@ class FrameBuffer:
             return False
 
     # === Decode / store / evict ==============================================
+    def _load_priority(self, frame_number, frames_dir, display_w, display_h, downscale, gen):
+        """Get `frame_number` into the buffer NOW, without decoding it twice.
+
+        Runs on the buffering thread for the current frame and the priority
+        hint. If the pool already holds a decode of this frame:
+          - still QUEUED  -> cancel it and decode here (jump the FIFO queue);
+          - already RUNNING -> wait for it; it finishes sooner than a fresh
+            decode would. Only if it fails, is discarded (buffer reset) or
+            exceeds PRIORITY_WAIT_S do we decode here after all.
+        Every `_inflight` entry the buffering thread can see here is a Future:
+        the only other writer, `_maybe_submit_load`, runs on this same thread
+        and stores its Future before returning.
+        """
+        with self._lock:
+            if frame_number in self._buffer:
+                return
+            future = self._inflight.get(frame_number)
+            if future is not None and future.cancel():
+                self._inflight.pop(frame_number, None)
+                future = None
+        if future is not None:
+            try:
+                future.result(timeout=PRIORITY_WAIT_S)
+            except Exception:
+                pass  # timeout / failure: fall through to our own decode
+            if frame_number in self._buffer:
+                return
+        self._load_frame_to_buffer(
+            frame_number, frames_dir, display_w, display_h, downscale, gen
+        )
+
     def _load_frame_to_buffer(self, frame_number, frames_dir, display_w, display_h, downscale, gen):
         """Disk read + JPEG decode + resize + buffer store. Safe to run on any thread.
 

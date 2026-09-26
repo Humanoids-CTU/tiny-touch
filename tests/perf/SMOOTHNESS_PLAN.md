@@ -38,9 +38,10 @@ So "smoother" means mostly: **keep the Tk thread free and never make a worker wa
    run-to-run noise measured in step 0, **and** no other metric got worse by more than
    the noise. Otherwise revert it or explain why it's still worth keeping.
 4. Run each scenario **3×** and compare the median of the 3 runs.
-5. After each step: `uv run pytest`, `uv run pytest -m gui`, then the perf matrix:
-   `$env:TINYTOUCH_PERF_LABEL = "step1"; uv run python tests/perf/run_perf_matrix.py`
-   (~10 min; prints the medians next to the `baseline` label).
+5. After each step: `uv run pytest`, `uv run pytest -m gui`, then the perf matrix in
+   A/B mode against the previous step's commit (~20 min):
+   `$env:TINYTOUCH_PERF_LABEL = "step2"; $env:TINYTOUCH_PERF_AB_REV = "<prev commit>"; uv run python tests/perf/run_perf_matrix.py`
+6. Check the control metrics (ones the step cannot affect) before believing a change.
 
 ## The metrics ("the ruler")
 
@@ -118,6 +119,12 @@ and a test that `request_priority` followed by one tick loads the hinted frame.
 
 **Measure:** M8 duplicate decodes → 0. M1/M2 should not get worse. Expected effect on
 latency: small — this is mainly a correctness fix and a warm-up for the harness.
+
+**Done 2026-09-26.** Duplicate decodes 11-12 → 0 in every variant; no regression beyond
+noise (A/B vs `53daf86`, see RESULTS.md). Lesson: sessions drift, so from now on every
+step is measured in A/B mode against the previous step's commit, e.g.
+`$env:TINYTOUCH_PERF_AB_REV = "<step-1 commit>"; $env:TINYTOUCH_PERF_LABEL = "step2"`,
+and `display_frame_photo` / `load_s` serve as control metrics where a step doesn't touch them.
 
 ---
 
