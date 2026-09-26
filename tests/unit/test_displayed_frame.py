@@ -50,12 +50,15 @@ def _display_app(buffered):
         loading_label=Recorder(),
         displayed_frame=None,
         frame_paint_listeners=[],
+        _displayed_image=None,
+        _buffer_status_shown=None,
     )
     app._assert_ui_thread = lambda: None
     for name in ("update_note_entry", "update_frame_counter",
                  "update_limb_parameter_buttons", "update_button_colors"):
         setattr(app, name, lambda: None)
     app.display_first_frame = MethodType(LabelingApp.display_first_frame, app)
+    app._show_buffer_status = MethodType(LabelingApp._show_buffer_status, app)
     return app
 
 

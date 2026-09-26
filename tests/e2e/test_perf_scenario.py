@@ -165,6 +165,7 @@ class Wait:
     predicate: Callable[[], bool]
     timeout: float
     what: str
+    detail: Callable[[], str] = lambda: ""   # extra state for the timeout message
 
 
 def _sleep(seconds):
@@ -183,7 +184,8 @@ def _run_in_mainloop(app, scenario):
                 if not wait.predicate():
                     if time.perf_counter() >= state["deadline"]:
                         raise AssertionError(
-                            f"timed out after {wait.timeout}s waiting for {wait.what}")
+                            f"timed out after {wait.timeout}s waiting for {wait.what}"
+                            f"{wait.detail()}")
                     app.after(DRIVER_TICK_MS, tick)
                     return
             wait = next(scenario)
@@ -363,15 +365,39 @@ def _scenario(app, workspace, video, panel, results, heartbeat, paints):
     width, height = app.winfo_width(), app.winfo_height()
     for i in range(1, RESIZE_COUNT + 1):
         app.geometry(f"{width - RESIZE_STEP_PX[0] * i}x{height - RESIZE_STEP_PX[1] * i}")
+        last_resize = time.perf_counter()
         yield _sleep(RESIZE_INTERVAL_S)
-    last_resize = time.perf_counter()
     app.update_idletasks()  # the final geometry is realized before we read it
     sharp = _sharp_size(app)
     current = app.video.current_frame
-    yield Wait(lambda: paints.first(last_resize, current, sharp) is not None,
-               15, f"frame {current} painted at the new size {sharp}")
+
+    # "Sharp" is a STATE — the latest paint shows the current frame at the
+    # final size — not a new paint event: when the last resize steps don't
+    # change the fitted image size (a 16:9 frame limited by the panel width
+    # ignores height changes), the sharp frame is already on screen and
+    # nothing needs repainting. Time is counted from the last geometry call.
+    def sharp_on_screen():
+        return bool(paints.paints) and paints.paints[-1][1:] == (current, sharp)
+
+    def resize_state():
+        """Everything needed to diagnose a missing sharp repaint."""
+        shown = app._displayed_image.size if app._displayed_image is not None else None
+        buffered = app.frame_buffer.get(app.video.current_frame)
+        recent = [(round((t - last_resize) * 1e3), f, s)
+                  for t, f, s in paints.paints if t >= last_resize - 1.0]
+        return (
+            f"\n  panel winfo={app.video_frame.winfo_width()}x"
+            f"{app.video_frame.winfo_height()}"
+            f" display cache={app._display_w}x{app._display_h}"
+            f" current={app.video.current_frame}"
+            f"\n  buffered size={buffered.size if buffered else None} shown size={shown}"
+            f"\n  paints since last_resize-1s (ms, frame, size): {recent[-12:]}"
+        )
+
+    yield Wait(sharp_on_screen, 15,
+               f"frame {current} on screen at the new size {sharp}", resize_state)
     results["resize_to_sharp_ms"] = round(
-        (paints.first(last_resize, current, sharp) - last_resize) * 1e3, 1)
+        max(0.0, paints.paints[-1][0] - last_resize) * 1e3, 1)
     results["resize_decodes"] = _perf_count(app, "load_frame_total") - decodes_before
     heartbeat.phase = None
 

@@ -152,9 +152,15 @@ Each `FrameRecord` holds aligned `X` / `Y` click lists, `Onset` (`"ON"`/`"OFF"`/
 [`adapters.frame_buffer.FrameBuffer`](src/adapters/frame_buffer.py) owns two daemon loops plus
 an adaptive decode pool (`max(3, min(8, cpu_count // 2))` workers — PIL releases the GIL
 during decode/resize, so the parallelism is real); they start lazily after a video is loaded.
-The GUI is reached only through the callbacks injected at construction (`schedule_on_ui`,
-`on_status_change`, `apply_play_advance`, …), so no worker ever touches a Tk widget — the
-buffering loop reads a `BufferContext` snapshot instead of calling `winfo_width()`.
+No worker ever touches a Tk widget — the buffering loop reads a `BufferContext` snapshot
+instead of calling `winfo_width()`. The buffering thread and the decode pool also never
+*call* into Tk, not even `after()`: from another thread that call is a synchronous
+round-trip that waits for the Tk thread, so every slow repaint used to stall buffering.
+Instead the Tk thread polls: `LabelingApp._display_pump` runs every `DISPLAY_PUMP_MS = 10`
+and paints the current frame when its buffered image is not the one on screen (a frame
+that finished decoding, or the buffer rebuilt after a resize); frames already buffered
+are painted immediately by the navigation handlers. Only the playback thread still
+marshals its advances through the injected `schedule_on_ui`.
 
 - **Decode pipeline** -- each frame load computes its target size from the JPEG header
   (`compute_target_size`: fit the source into `display / downscale` aspect-preserving,
@@ -169,8 +175,10 @@ buffering loop reads a `BufferContext` snapshot instead of calling `winfo_width(
   average frame size) so huge upscaled frames can't make eviction fight the submission loop.
   On a jump, queued-but-not-started decodes outside the new window are cancelled via their
   `Future`s so the jump target doesn't wait behind stale work. Eviction keeps at least ±200
-  frames and scales with the window; the byte budget is `BUFFER_MAX_BYTES = 1 GB`. It also
-  flips the on-screen `Buffer: Loaded` / `Buffer: Loading` chip.
+  frames and scales with the window; the byte budget is `BUFFER_MAX_BYTES = 1 GB`. The
+  current frame is loaded synchronously ahead of the pool; if the pool already holds a
+  decode of it, that decode is cancelled (queued) or awaited (running), never repeated.
+  The on-screen `Buffer: Loaded` / `Buffer: Loading` chip is set by the display pump.
 - **Playback loop** -- when Play is pressed, advances `current_frame` only once the next
   `PLAYBACK_BUFFER_AHEAD = 3` frames are buffered, pausing `PLAYBACK_BUFFER_PAUSE_S = 0.15` s
   when they are not, so playback stalls briefly rather than stutters.

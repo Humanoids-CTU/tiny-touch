@@ -240,3 +240,43 @@ cannot affect, moved by a similar amount in the same runs, so those reference ru
 landed on slower moments. Run-to-run spread is 30-100 % for several metrics even when
 interleaved; only deterministic counts (decodes) and large effects are trustworthy on
 this machine. Always read the control row before believing a latency change.
+
+## Step 2 — the buffering thread never calls Tk (A/B vs `127223d`)
+
+Change: `FrameBuffer` lost `on_status_change` / `on_priority_frame_loaded` and the
+`_schedule_ui_or_drop` path; the Tk thread polls the buffer every 10 ms
+(`LabelingApp._display_pump`) and paints when the buffered image for the current frame
+is not the one on screen. The status chip is set on the Tk thread. Only the playback
+thread still marshals through `after()` (step 3).
+Correctness: `tests/e2e/test_buffer_independent_of_ui.py` (red on `127223d`: only 1
+frame buffered while the Tk thread was busy for 600 ms; green after: the window keeps
+filling) + `tests/unit/test_display_pump.py`.
+
+**Harness fixes found on the way** (both sides of this A/B used the fixed harness):
+- The resize phase waited for a *new paint* at the final size. When the last resize
+  steps don't change the fitted image size (a 16:9 frame limited by the panel width
+  ignores height changes), the sharp frame is already on screen and no paint comes, so
+  the wait timed out (1 of 12 step-2 runs; reproduced 1 in 8). It now checks the state
+  "the latest paint shows the current frame at the final size", timed from the last
+  `geometry()` call (0 if already sharp). Resize numbers before this section are
+  not comparable with later ones.
+- A/B mode ran the reference commit's OWN copy of the scenario, so a harness change
+  would have measured the two sides differently. The runner now copies the current
+  scenario into the worktree: same ruler, only the app code differs.
+
+| metric (median of 3) | 1080p default | 1080p full | 4K default | 4K full |
+|---|---|---|---|---|
+| buffering thread blocked on Tk, ms/run (`ui_marshal` + `ui_status`) | 3185 → **0** | 2238 → **0** | 1872 → **0** | 1097 → **0** |
+| step median ms | 17.1 → **10.9** | 29.9 → 26.3 | 17.2 → 16.8 | 36.8 → 36.7 |
+| jump median ms | 24.0 → **19.7** | 48.1 → 48.3 | 26.8 → **21.4** | 42.7 → 43.5 |
+| jump p95 ms | 130 → **83** | 216 → **165** | 133 → 124 | 198 → 219 |
+| UI lag p95 during jumps ms | 79 → **57** | 115 → 108 | 64 → **47** | 70 → 77 |
+| control: `display_frame_photo` ms | 4.6 → 4.3 | 10.7 → 10.1 | 4.3 → 4.0 | 9.2 → 9.4 |
+
+Verdict: the target is met by construction (the code path that blocked is gone), and
+the control metric is flat (±8 %), so the other changes are real where they exceed the
+spread: jump latency improved 18-36 % on 1080p and 4K-default (the jump target decoded
+by the buffering thread no longer waits for its repaint to be accepted by Tk; the pump
+paints it within ≤ 10 ms), step median −36 % on 1080p-default. 4K full-screen shows no
+change beyond noise — there the UI-thread paint itself dominates (step 4's target).
+Playback is unchanged, as expected: it still goes through the playback thread (step 3).

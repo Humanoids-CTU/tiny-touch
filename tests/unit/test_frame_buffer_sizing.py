@@ -93,13 +93,11 @@ def test_resize_for_buffer_keeps_the_degenerate_guard():
 def _make_buffer(get_buffer_context=lambda: None):
     return FrameBuffer(
         schedule_on_ui=lambda fn: fn(),
-        on_status_change=lambda loaded: None,
         get_buffer_context=get_buffer_context,
         get_playback_context=lambda: None,
         apply_play_advance=lambda *a: None,
         on_playback_boundary=lambda *a: None,
         on_playback_schedule_error=lambda exc: None,
-        on_priority_frame_loaded=lambda: None,
     )
 
 

@@ -45,6 +45,7 @@ _ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))
 RESULTS_DIR = os.path.join(_HERE, "results")
 
 # --- Tunables -----------------------------------------------------------------
+SCENARIO = os.path.join("tests", "e2e", "test_perf_scenario.py")
 VIDEOS = [os.path.join("videos", "sample_1080p.mp4"),
           os.path.join("videos", "sample_2160p.mp4")]
 PANELS = ["default", "fullscreen"]
@@ -106,11 +107,18 @@ def require_mains_power():
 
 
 def ensure_worktree(rev):
-    """A detached checkout of `rev` outside the repo, reused across runs."""
+    """A detached checkout of `rev` outside the repo, reused across runs.
+
+    The CURRENT scenario file is copied over the checkout's own copy: the
+    harness is the ruler, and both sides of an A/B comparison must be
+    measured with the same ruler (only the app code under test differs).
+    Needs a reference commit from step 0 on (`frame_paint_listeners`).
+    """
     path = os.path.join(tempfile.gettempdir(), f"tinytouch-perf-{rev}")
     if not os.path.isdir(path):
         subprocess.run(["git", "worktree", "add", "--detach", path, rev],
                        cwd=_ROOT, check=True, capture_output=True, text=True)
+    shutil.copy2(os.path.join(_ROOT, SCENARIO), os.path.join(path, SCENARIO))
     return path
 
 
@@ -128,7 +136,7 @@ def run_one(label, video, panel, repo=_ROOT):
                TINYTOUCH_PERF_PANEL=panel)
     # The current interpreter (this repo's venv) runs the other checkout too:
     # its tests/conftest.py puts ITS src/ first on sys.path.
-    cmd = [sys.executable, "-m", "pytest", "tests/e2e/test_perf_scenario.py",
+    cmd = [sys.executable, "-m", "pytest", SCENARIO,
            "-m", "gui", "-q", "-p", "no:cacheprovider"]
     proc = subprocess.run(cmd, cwd=repo, env=env, capture_output=True, text=True)
     tail = proc.stdout.strip().splitlines()[-1:] or [""]

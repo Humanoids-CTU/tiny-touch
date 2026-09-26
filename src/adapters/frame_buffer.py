@@ -2,8 +2,7 @@
 adapters/frame_buffer.py
 The frame read-ahead buffer + playback pacing engine, extracted from
 LabelingApp (background_update / background_update_play and the buffer
-store/evict helpers). NO Tk imports here: every UI interaction is marshaled
-through the injected `schedule_on_ui` callable, and all app state the worker
+store/evict helpers). NO Tk imports here, and all app state the worker
 threads need arrives through the injected context providers.
 
 Threading invariants preserved from the original implementation:
@@ -11,9 +10,13 @@ Threading invariants preserved from the original implementation:
       (frame dict, byte-size dict, byte total, in-flight map);
   (b) `reset()` bumps the generation counter so in-flight decodes started
       under the old video/settings discard their result;
-  (c) worker threads never touch the GUI — UI work goes through the injected
-      `schedule_on_ui` (the app supplies its main-loop "run this on the UI
-      thread soon" scheduler);
+  (c) the buffering thread and the decode pool never call into the GUI —
+      not even to schedule work there. They only fill the buffer; the GUI
+      polls it from its own event loop (`LabelingApp._display_pump`) and
+      reads `buffer_ready`. Reason: a worker's `Tk.after()` is a synchronous
+      round-trip that waits for the Tk thread, so every slow repaint used to
+      stall buffering (SMOOTHNESS_PLAN.md step 2). Only the playback thread
+      still marshals through `schedule_on_ui` (removed in step 3);
   (d) `compute_play_step` stays a pure, side-effect-free function
       (re-exported as `LabelingApp._compute_play_step` for the H1 tests);
   (e) a frame is decoded at most once: the synchronous priority path
@@ -140,36 +143,34 @@ class _NullPerf:
 class FrameBuffer:
     """Sliding-window JPEG frame buffer + playback pacing engine.
 
-    Constructed with UI marshaling + status callbacks and config values;
-    the frames directory and all per-video numbers arrive via the context
-    providers because they change on every video load.
+    Constructed with the playback callbacks and config values; the frames
+    directory and all per-video numbers arrive via the context providers
+    because they change on every video load. The GUI learns about newly
+    decoded frames by polling (`get` / `in`), never by callback.
     """
 
     def __init__(
         self,
         *,
         schedule_on_ui: Callable,
-        on_status_change: Callable,
         get_buffer_context: Callable,
         get_playback_context: Callable,
         apply_play_advance: Callable,
         on_playback_boundary: Callable,
         on_playback_schedule_error: Callable,
-        on_priority_frame_loaded: Callable,
         max_bytes: int = BUFFER_MAX_BYTES,
         playback_buffer_ahead: int = PLAYBACK_BUFFER_AHEAD,
         playback_buffer_pause_s: float = PLAYBACK_BUFFER_PAUSE_S,
         perf=None,
     ):
-        # Injected boundary — the ONLY paths back into the GUI.
+        # Injected boundary. schedule_on_ui is used by the PLAYBACK thread
+        # only; the buffering thread never reaches back into the GUI.
         self._schedule_on_ui = schedule_on_ui
-        self._on_status_change = on_status_change            # on_status_change(loaded: bool)
         self._get_buffer_context = get_buffer_context        # () -> BufferContext | None
         self._get_playback_context = get_playback_context    # () -> PlaybackContext | None
         self._apply_play_advance = apply_play_advance        # (next_frame, direction) on UI thread
         self._on_playback_boundary = on_playback_boundary    # (current_frame, direction)
         self._on_playback_schedule_error = on_playback_schedule_error  # (exc)
-        self._on_priority_frame_loaded = on_priority_frame_loaded      # () on UI thread
 
         # Config values.
         self._max_bytes = max_bytes
@@ -259,47 +260,15 @@ class FrameBuffer:
     def shutdown(self, *, wait=False, cancel_futures=True):
         """Stop the two daemon loops, then the loader pool.
 
-        The latch is set FIRST and the buffering thread is woken immediately:
-        `background_update` marshals its priority-frame repaint through
-        `schedule_on_ui` (i.e. `Tk.after`), and the app calls this from
-        `on_close()` one line before `destroy()`. Without the latch the thread
-        keeps looping, calls `after()` on a dead interpreter and dies with an
-        unhandled `RuntimeError: main thread is not in main loop` printed to
-        stderr on every exit.
+        The latch is set FIRST and the buffering thread is woken immediately,
+        so both loops end promptly instead of idling against a destroyed Tk
+        root (the app calls this from `on_close()` one line before
+        `destroy()`; the playback thread still marshals through Tk until
+        SMOOTHNESS_PLAN.md step 3).
         """
         self._stopped.set()
         self._priority_event.set()  # break the 10 ms wait right away
         self._loader_pool.shutdown(wait=wait, cancel_futures=cancel_futures)
-
-    def _schedule_ui_or_drop(self, fn, what) -> bool:
-        """Marshal `fn` to the UI thread; drop it quietly when that fails.
-
-        `shutdown()` runs one line before `Tk.destroy()`, so this thread can be
-        mid-decode when the interpreter disappears. `Tk.after` then raises
-        (`RuntimeError: main thread is not in main loop`), which would kill the
-        daemon with an unhandled traceback on stderr instead of ending the
-        session quietly. Mirrors the guard `_request_advance` already has.
-
-        Deliberately does NOT latch `_stopped`: on the real close path
-        `shutdown()` already set it before the interpreter went away, and a
-        scheduling failure can also be transient (the main thread briefly
-        outside the event loop — pump-driven test harnesses do this
-        constantly). Killing the buffer forever over a dropped repaint would
-        break every later video load in the session; the repaint itself is
-        only an optimization, since the frame is already in the buffer and the
-        next display call picks it up.
-        """
-        try:
-            with self._perf.time("ui_marshal"):
-                self._schedule_on_ui(fn)
-            return True
-        except Exception as exc:
-            logger.debug(
-                "frame_buffer: %s dropped — could not reach the UI thread (%r)",
-                what,
-                exc,
-            )
-            return False
 
     # === Buffering thread =====================================================
     def background_update(self):
@@ -330,18 +299,14 @@ class FrameBuffer:
                 gen = self._gen
 
                 # 1) Load the currently-visible frame first (synchronously) so the
-                #    user sees their jump destination ASAP, then fire a paint.
-                current_frame_loaded = current_frame in self._buffer
-                if not current_frame_loaded:
+                #    user sees their jump destination ASAP. The GUI's display
+                #    pump notices it in the buffer and paints it.
+                if current_frame not in self._buffer:
                     with self._perf.time("priority_load"):
                         self._load_priority(
                             current_frame, frames_dir, display_w, display_h, downscale, gen
                         )
-                    if current_frame in self._buffer:
-                        self._schedule_ui_or_drop(
-                            self._on_priority_frame_loaded, "priority repaint"
-                        )
-                        current_frame_loaded = True
+                current_frame_loaded = current_frame in self._buffer
 
                 # 2) Honour an explicit priority hint (e.g. _request_buffered_step
                 #    polling pre-loads the jump target before next_frame() is called).
@@ -463,11 +428,7 @@ class FrameBuffer:
                         self._remove_frame(k)
                     self._evict_to_budget(current_frame)
 
-                # 6) Update the status pill (the app dedupes + marshals to Tk).
-                with self._perf.time("ui_status"):
-                    self._on_status_change(current_frame_loaded)
-
-                # 7) buffer_ready gates the playback thread.
+                # 6) buffer_ready gates the playback thread.
                 buffer_ready = current_frame_loaded
                 if buffer_ready:
                     max_check = min(ctx.total_frames, current_frame + self._playback_ahead)

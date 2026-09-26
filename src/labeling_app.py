@@ -72,6 +72,10 @@ WHEEL_BACKLOG_S = 0.2
 WHEEL_NOTCH_DELTA = 120
 WHEEL_DEFAULT_INTERVAL_MS = 40
 WHEEL_BUFFER_POLL_MS = 50
+# How often the Tk thread polls the frame buffer for a newly decoded current
+# frame (LabelingApp._display_pump). Workers never call Tk, so this poll is
+# how background decodes reach the screen; 10 ms is below one video frame.
+DISPLAY_PUMP_MS = 10
 # Dev guard (H1): when True, the main render/timeline methods raise if called
 # off the Tk main thread, so any future thread-boundary regression fails loudly
 # at the offending call site instead of crashing Tcl intermittently.
@@ -374,6 +378,9 @@ class LabelingApp(tk.Tk):
         # perf scenario uses them to time paints and measure playback jitter.
         self.displayed_frame = None
         self.frame_paint_listeners = []
+        self._displayed_image = None          # the PIL image on screen (identity check)
+        self._buffer_status_shown = None      # last state of the Loaded/Loading chip
+        self._display_pump_id = None          # after() id of _display_pump
 
         # While True, _buffer_context/_playback_context return None so the two
         # worker threads idle. Held for the whole load_video swap: the workers
@@ -383,22 +390,23 @@ class LabelingApp(tk.Tk):
         self._suspend_frame_workers = False
 
         # Frame buffer + playback engine (adapters.frame_buffer). The engine
-        # owns the buffer lock/generation and the loader pool; every UI touch
-        # is marshaled through the injected schedule_on_ui, and ALL writes to
-        # video.current_frame happen on the Tk thread via _apply_play_advance.
+        # owns the buffer lock/generation and the loader pool. The buffering
+        # thread never calls Tk: _display_pump polls the buffer from the event
+        # loop instead. Only the playback thread still marshals through
+        # schedule_on_ui, and ALL writes to video.current_frame happen on the
+        # Tk thread (_apply_play_advance and the UI handlers).
         self.frame_buffer = FrameBuffer(
             schedule_on_ui=lambda fn: self.after(0, fn),
-            on_status_change=self._on_buffer_status_change,
             get_buffer_context=self._buffer_context,
             get_playback_context=self._playback_context,
             apply_play_advance=self._apply_play_advance,
             on_playback_boundary=self._on_playback_boundary,
             on_playback_schedule_error=self._on_playback_schedule_error,
-            on_priority_frame_loaded=self.display_first_frame,
             perf=self.perf,
         )
         self.background_thread = Thread(target=self.frame_buffer.background_update, daemon=True)
         self.background_thread_play = Thread(target=self.frame_buffer.background_update_play, daemon=True)
+        self._display_pump_id = self.after(DISPLAY_PUMP_MS, self._display_pump)
 
         # Diagram init
         self.init_diagram()
@@ -543,24 +551,35 @@ class LabelingApp(tk.Tk):
         except Exception:
             return False
 
-    def _set_loading_label_async(self, text: str, color: str):
-        current = getattr(self, "_loading_label_state", None)
-        new_state = (text, color)
-        if current == new_state:
+    def _show_buffer_status(self, loaded: bool):
+        """The `Buffer: Loaded / Loading` chip, updated only on change (Tk thread)."""
+        if loaded == self._buffer_status_shown:
             return
-        self._loading_label_state = new_state
+        self._buffer_status_shown = loaded
+        if loaded:
+            self.loading_label.set(theme.STATUS_OK, "Loaded")
+        else:
+            self.loading_label.set(theme.STATUS_BAD, "Loading")
 
-        def _apply():
-            if getattr(self, "loading_label", None):
-                self.loading_label.set(color, text)
+    def _display_pump(self):
+        """Poll the frame buffer from the Tk event loop (every DISPLAY_PUMP_MS).
 
-        try:
-            self.after(0, _apply)
-        except (RuntimeError, tk.TclError) as exc:
-            # Called from the buffering thread, which can still be mid-tick when
-            # on_close() destroys the root; `after` then raises "main thread is
-            # not in main loop" and would kill the daemon with a traceback.
-            logger.debug("buffer status update dropped during teardown: %s", exc)
+        The ONE path by which frames decoded in the background reach the
+        screen: when the buffered image for the current frame is not the one
+        on screen — the frame just finished decoding, or the buffer was
+        rebuilt at a new size after a resize — paint it. The buffering thread
+        never calls Tk itself (see adapters.frame_buffer invariant (c)), so it
+        can't stall behind a slow repaint. A frame that is already buffered
+        is still painted immediately by next_frame; the pump only adds up to
+        DISPLAY_PUMP_MS on the path where the frame had to be decoded first.
+        """
+        self._display_pump_id = self.after(DISPLAY_PUMP_MS, self._display_pump)
+        if self.video is None or self._suspend_frame_workers:
+            return
+        buffered = self.frame_buffer.get(self.video.current_frame)
+        self._show_buffer_status(buffered is not None)
+        if buffered is not None and buffered is not self._displayed_image:
+            self.display_first_frame()
 
     def _is_ui_thread(self) -> bool:
         """True when called on the Tk main thread (recorded in __init__)."""
@@ -1591,13 +1610,6 @@ class LabelingApp(tk.Tk):
             frame_rate=self.frame_rate,
         )
 
-    def _on_buffer_status_change(self, loaded: bool):
-        """Buffer status pill (the setter dedupes and marshals to the Tk thread)."""
-        if loaded:
-            self._set_loading_label_async("Loaded", theme.STATUS_OK)
-        else:
-            self._set_loading_label_async("Loading", theme.STATUS_BAD)
-
     def _apply_play_advance(self, next_frame, direction):
         """Apply one playback advance ON THE TK THREAD (single-writer rule).
 
@@ -1673,14 +1685,15 @@ class LabelingApp(tk.Tk):
                         highlightthickness=2,
                     )
                     self.frame_label.pack(expand=True)
-                self.loading_label.set(theme.STATUS_OK, "Loaded")
+                self._show_buffer_status(True)
                 self.image = photo_img
+                self._displayed_image = pil_img
                 self.displayed_frame = frame_number
                 for listener in self.frame_paint_listeners:
                     listener(frame_number, pil_img.size)
             else:
                 logger.debug("frame not in buffer: %s", frame_number)
-                self.loading_label.set(theme.STATUS_BAD, "Loading")
+                self._show_buffer_status(False)
 
             self.update_note_entry()
             self.update_frame_counter()
@@ -2160,6 +2173,7 @@ class LabelingApp(tk.Tk):
         self.video = None
         self.video_name = None
         self.displayed_frame = None
+        self._displayed_image = None
         self._last_step_sign = 0
         self._buffer_reset()
         self.frame_buffer.buffer_ready = False
@@ -2188,6 +2202,7 @@ class LabelingApp(tk.Tk):
         self.video = None
         self.video_name = None
         self.displayed_frame = None
+        self._displayed_image = None
         self._buffer_reset()
         self.update_frame_counter()
         self._set_mode_button_states()
@@ -2553,11 +2568,18 @@ class LabelingApp(tk.Tk):
     def _cancel_pending_timers(self):
         """Cancel our own repeating `after()` timers before the root goes away.
 
-        Without this the diagram-refresh timer (and any live arrow-hold
-        watchdog) fires into a destroyed interpreter and Tcl prints
+        Without this the diagram-refresh timer, the display pump (and any live
+        arrow-hold watchdog) fire into a destroyed interpreter and Tcl prints
         `invalid command name "...periodic_print_dot"` on every close.
         """
         self._cancel_arrow_hold_state()
+        pump_id = getattr(self, "_display_pump_id", None)
+        if pump_id is not None:
+            try:
+                self.after_cancel(pump_id)
+            except Exception:
+                logger.warning("could not cancel display pump", exc_info=True)
+            self._display_pump_id = None
         after_id = getattr(self, "_dot_refresh_after_id", None)
         if after_id is not None:
             try:

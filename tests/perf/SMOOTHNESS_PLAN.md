@@ -163,6 +163,13 @@ M1 no worse (the pump adds ≤ 10 ms only when the frame was NOT buffered).
 **Docs:** ARCHITECTURE.md "Background processes", the `frame_buffer.py` module docstring
 (invariant (c)), `test_h1_thread_boundary.py` docstring.
 
+**Done 2026-09-26.** Buffering thread blocked on Tk: 1.1-3.2 s/run → 0. Jump latency
+−18-36 % on 1080p and 4K-default, step median −36 % on 1080p-default; 4K full-screen
+unchanged (paint-bound); control metric flat (A/B vs `127223d`, see RESULTS.md).
+`schedule_on_ui` stays for the playback thread only; the H1 docstring still describes
+that thread correctly, so it waits for step 3. Two harness fixes on the way: the resize
+wait is state-based now, and A/B runs copy the current scenario into the worktree.
+
 ---
 
 ## Step 3 — Playback on the Tk thread (delete the playback thread)
