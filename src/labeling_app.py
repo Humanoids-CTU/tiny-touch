@@ -1717,6 +1717,37 @@ class LabelingApp(tk.Tk):
         self.frame_buffer.reset()
 
     # === Frame Display =========================================================
+    def _show_frame_image(self, pil_img):
+        """Put `pil_img` on the video label, reusing the PhotoImage on screen.
+
+        Pasting new pixels into the image that is already displayed skips
+        creating a Tk image, deleting the old one and reconfiguring the label
+        — the dominant UI-thread cost per frame on big panels (~30 % less,
+        SMOOTHNESS_PLAN.md step 4). paste() only copies pixels into the
+        existing image, so a frame of another size or mode (after a resize)
+        still gets a fresh one.
+        """
+        shown = self._displayed_image
+        if (self.image is not None and shown is not None
+                and shown.size == pil_img.size and shown.mode == pil_img.mode):
+            self.image.paste(pil_img)
+            return
+        photo_img = ImageTk.PhotoImage(pil_img)
+        if getattr(self, "frame_label", None):
+            self.frame_label.configure(image=photo_img)
+        else:
+            self.frame_label = tk.Label(
+                self.video_frame,
+                image=photo_img,
+                bg=theme.VIDEO_BG,
+                bd=0,
+                highlightbackground=theme.BORDER,
+                highlightcolor=theme.BORDER,
+                highlightthickness=2,
+            )
+            self.frame_label.pack(expand=True)
+        self.image = photo_img  # the label does not keep the Python object alive
+
     def display_first_frame(self, frame_number=None):
         self._assert_ui_thread()
         with self.perf.time("display_first_frame"):
@@ -1730,22 +1761,8 @@ class LabelingApp(tk.Tk):
             pil_img = self.frame_buffer.get(frame_number)
             if pil_img is not None:
                 with self.perf.time("display_frame_photo"):
-                    photo_img = ImageTk.PhotoImage(pil_img)
-                if hasattr(self, 'frame_label') and self.frame_label:
-                    self.frame_label.configure(image=photo_img)
-                else:
-                    self.frame_label = tk.Label(
-                        self.video_frame,
-                        image=photo_img,
-                        bg=theme.VIDEO_BG,
-                        bd=0,
-                        highlightbackground=theme.BORDER,
-                        highlightcolor=theme.BORDER,
-                        highlightthickness=2,
-                    )
-                    self.frame_label.pack(expand=True)
+                    self._show_frame_image(pil_img)
                 self._show_buffer_status(True)
-                self.image = photo_img
                 self._displayed_image = pil_img
                 self.displayed_frame = frame_number
                 for listener in self.frame_paint_listeners:

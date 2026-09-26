@@ -35,10 +35,20 @@ class Recorder:
         return record
 
 
+class FakePhoto:
+    """Stand-in for ImageTk.PhotoImage (which needs a Tk root)."""
+
+    def __init__(self, img):
+        self.size = img.size
+
+    def paste(self, img):
+        self.size = img.size
+
+
 @pytest.fixture(autouse=True)
 def no_tk_photo(monkeypatch):
     # ImageTk.PhotoImage needs a Tk root; the paint bookkeeping does not.
-    monkeypatch.setattr(labeling_app.ImageTk, "PhotoImage", lambda img: ("photo", img.size))
+    monkeypatch.setattr(labeling_app.ImageTk, "PhotoImage", FakePhoto)
 
 
 def _display_app(buffered):
@@ -52,6 +62,7 @@ def _display_app(buffered):
         frame_paint_listeners=[],
         _displayed_image=None,
         _buffer_status_shown=None,
+        image=None,
     )
     app._assert_ui_thread = lambda: None
     for name in ("update_note_entry", "update_frame_counter",
@@ -59,6 +70,7 @@ def _display_app(buffered):
         setattr(app, name, lambda: None)
     app.display_first_frame = MethodType(LabelingApp.display_first_frame, app)
     app._show_buffer_status = MethodType(LabelingApp._show_buffer_status, app)
+    app._show_frame_image = MethodType(LabelingApp._show_frame_image, app)
     return app
 
 

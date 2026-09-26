@@ -71,6 +71,7 @@ METRICS = [
     ("lag.playback.lag_p95_ms", True),
     ("lag.playback.lag_max_ms", True),
     ("perf.display_frame_photo.avg_ms", True),
+    ("perf.display_first_frame.avg_ms", True),
     ("perf.ui_marshal.total_ms", True),
     ("perf.ui_marshal_play.total_ms", True),
     ("perf.ui_status.total_ms", True),

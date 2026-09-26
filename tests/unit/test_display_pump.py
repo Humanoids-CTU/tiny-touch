@@ -32,10 +32,20 @@ class Chip:
         self.shown.append(text)
 
 
+class FakePhoto:
+    """Stand-in for ImageTk.PhotoImage (which needs a Tk root)."""
+
+    def __init__(self, img):
+        self.size = img.size
+
+    def paste(self, img):
+        self.size = img.size
+
+
 @pytest.fixture(autouse=True)
 def no_tk_photo(monkeypatch):
     # ImageTk.PhotoImage needs a Tk root; the pump's logic does not.
-    monkeypatch.setattr(labeling_app.ImageTk, "PhotoImage", lambda img: ("photo", img.size))
+    monkeypatch.setattr(labeling_app.ImageTk, "PhotoImage", FakePhoto)
 
 
 def _pump_app(current_frame=5):
@@ -49,6 +59,7 @@ def _pump_app(current_frame=5):
         _displayed_image=None,
         _buffer_status_shown=None,
         _display_pump_id=None,
+        image=None,
         displayed_frame=None,
         frame_paint_listeners=[],
         scheduled=[],
@@ -58,7 +69,8 @@ def _pump_app(current_frame=5):
     for name in ("update_note_entry", "update_frame_counter",
                  "update_limb_parameter_buttons", "update_button_colors"):
         setattr(app, name, lambda: None)
-    for name in ("display_first_frame", "_show_buffer_status", "_display_pump"):
+    for name in ("display_first_frame", "_show_buffer_status", "_display_pump",
+                 "_show_frame_image"):
         setattr(app, name, MethodType(getattr(LabelingApp, name), app))
     painted = []
     app.frame_paint_listeners.append(lambda frame, size: painted.append((frame, size)))

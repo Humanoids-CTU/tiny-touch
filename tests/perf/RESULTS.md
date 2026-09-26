@@ -324,3 +324,37 @@ it samples. Synthetic check with identical Tk-thread work (15 ms busy every 40 m
 timers p50 10.3 / p95 11.5 ms, precise timers p50 0.1 / p95 14.5 ms. The observed increase
 is larger than that, so not all of it is proven to be artifact. From step 4 on, both A/B
 sides hold precise timers during playback, so the lag metric is comparable again.
+
+## Step 4 — reuse the on-screen PhotoImage (A/B vs `ec82208`)
+
+Change: `LabelingApp._show_frame_image` pastes the next frame into the `ImageTk.PhotoImage`
+already on the label when size and mode match, instead of creating a new photo and
+reconfiguring the label; a new size (resize) still gets a new photo.
+Correctness: `tests/e2e/test_frame_photo_reuse.py` (red on `ec82208`: `pyimage11` →
+`pyimage12` for consecutive same-size frames; green after) — it also compares the pixels
+on screen with the buffered frame, since the risk of reuse is showing stale pixels.
+
+**Metric note.** `display_frame_photo` is not comparable across this change: on the old
+side it timed only photo *creation*; the label reconfigure and the conversion of the new
+image for display ran outside it. With reuse that work moves inside `paste()` (the Pillow
+docs warn paste is slower on a displayed image). The fair number is the whole paint call,
+`display_first_frame` (added to the runner summary).
+
+| metric (median; A/B) | 1080p default* | 1080p full | 4K default | 4K full |
+|---|---|---|---|---|
+| whole paint call `display_first_frame` ms | 15.6 → **13.8** | 22.8 → **18.2** | 11.4 → **9.6** | 27.7 → **21.5** |
+| step median ms | 16.3 → **11.3** | 21.6 → **17.9** | 14.2 → **11.2** | 34.4 → **26.3** |
+| jump median ms | 20.3 → **16.3** | 39.1 → **28.4** | 20.8 → **16.8** | 40.9 → **31.0** |
+| UI lag p95 during playback ms | 37.6 → 23.9 | 22.4 → **17.8** | 11.8 → 12.9 | 51.2 → 34.0 |
+| playback fps (target 25) | 24.5 → 24.7 | 24.1 → 24.3 | 25.1 → 25.1 | 22.9 → 24.0 |
+| control: `load_s` | 9.6 → 9.8 | 9.4 → 9.5 | 32.1 → 34.5 | 35.4 → 35.6 |
+
+\* 1080p default is a separate 5-pair A/B: in the full matrix that column's control moved
++29 % and showed step 4 slightly worse (paint +10 %); the rerun with a flat control agrees
+with the other three columns.
+
+Verdict: the whole paint call is 12-22 % cheaper and step/jump latency 17-31 % lower in
+every variant — less than the ~30 % the micro-benchmark predicted (that one had no app
+work around the paint), but consistent. Full-screen 4K playback now nearly holds 25 fps.
+Spreads are wide this session (up to 50 % on some metrics), so the per-column numbers are
+indicative; the consistent direction across all four variants is the evidence.

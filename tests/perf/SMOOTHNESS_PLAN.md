@@ -221,6 +221,11 @@ name on the label and the label shows the second frame's pixels (sample a pixel 
 **Measure:** M7 `display_frame_photo` avg down ~30 % (benchmark: 8.6 → 5.8 ms at the
 default panel). M3 fps up on 4K / full-screen (UI-bound there). M4 p95 during playback down.
 
+**Done 2026-09-26.** `display_frame_photo` turned out not to be comparable (it excluded the
+label reconfigure on the old side); on the whole paint call `display_first_frame`: −12..−22 %,
+step/jump latency −17..−31 % in every variant, 4K full-screen playback 22.9 → 24.0 fps
+(A/B vs `ec82208`; 1080p-default re-measured with 5 pairs — see RESULTS.md).
+
 ---
 
 ## Step 5 — Resize: only reset on a real size change, debounced
