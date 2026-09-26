@@ -368,6 +368,13 @@ class LabelingApp(tk.Tk):
         self._display_h = 0                   # thread (workers must not call winfo_*)
         self._last_step_sign = 0              # +1 forward / -1 backward / 0 none
 
+        # What is ACTUALLY on screen, as opposed to what is buffered: set only
+        # when display_first_frame really paints an image. Listeners are called
+        # as listener(frame_number, (width, height)) after every paint — the
+        # perf scenario uses them to time paints and measure playback jitter.
+        self.displayed_frame = None
+        self.frame_paint_listeners = []
+
         # While True, _buffer_context/_playback_context return None so the two
         # worker threads idle. Held for the whole load_video swap: the workers
         # must not observe (or repaint from) a half-published video, and their
@@ -1668,6 +1675,9 @@ class LabelingApp(tk.Tk):
                     self.frame_label.pack(expand=True)
                 self.loading_label.set(theme.STATUS_OK, "Loaded")
                 self.image = photo_img
+                self.displayed_frame = frame_number
+                for listener in self.frame_paint_listeners:
+                    listener(frame_number, pil_img.size)
             else:
                 logger.debug("frame not in buffer: %s", frame_number)
                 self.loading_label.set(theme.STATUS_BAD, "Loading")
@@ -2149,6 +2159,7 @@ class LabelingApp(tk.Tk):
         # context and go idle instead of touching a half-swapped state.
         self.video = None
         self.video_name = None
+        self.displayed_frame = None
         self._last_step_sign = 0
         self._buffer_reset()
         self.frame_buffer.buffer_ready = False
@@ -2176,6 +2187,7 @@ class LabelingApp(tk.Tk):
         self._reset_zone_cache()
         self.video = None
         self.video_name = None
+        self.displayed_frame = None
         self._buffer_reset()
         self.update_frame_counter()
         self._set_mode_button_states()

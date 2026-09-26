@@ -38,7 +38,9 @@ So "smoother" means mostly: **keep the Tk thread free and never make a worker wa
    run-to-run noise measured in step 0, **and** no other metric got worse by more than
    the noise. Otherwise revert it or explain why it's still worth keeping.
 4. Run each scenario **3×** and compare the median of the 3 runs.
-5. After each step: `uv run pytest`, `uv run pytest -m gui`, then the perf scenario.
+5. After each step: `uv run pytest`, `uv run pytest -m gui`, then the perf matrix:
+   `$env:TINYTOUCH_PERF_LABEL = "step1"; uv run python tests/perf/run_perf_matrix.py`
+   (~10 min; prints the medians next to the `baseline` label).
 
 ## The metrics ("the ruler")
 
@@ -81,6 +83,15 @@ exactly that gap, so the metric must measure the real paint.
 **Correctness test:** unit test for `displayed_frame` — set when a buffered frame is shown,
 unchanged when the frame is missing. All existing tests still pass (no behavior change).
 
+**Done 2026-09-26 — what it uncovered.** The old harness drove Tk with `update()` loops
+(`gui_driver.pump`). From such a loop, a worker's `Tk.after()` waits ~1 s inside tkinter
+and then raises "main thread is not in main loop" (measured: 1074 ms). So in the harness
+the buffer thread's repaints never arrived and each attempt stalled it for a second — the
+"~1.2 s 4K jump tail" in RESULTS.md was this harness artifact, not the app. The scenario
+now runs entirely inside a real `mainloop()` (a generator driven by `after()`), like
+production. Also added: `duplicate_decode` counter (M8), `tests/perf/run_perf_matrix.py`
+(runs the matrix 3× and prints medians vs. the `baseline` label).
+
 **Files:** `src/labeling_app.py` (one attribute), `src/adapters/frame_buffer.py` (one perf
 timer), `tests/e2e/test_perf_scenario.py`, `tests/perf/make_sample_videos.py`, RESULTS.md.
 
@@ -114,9 +125,11 @@ latency: small — this is mainly a correctness fix and a warm-up for the harnes
 
 **Problem.** `schedule_on_ui = lambda fn: self.after(0, fn)` is called from the buffering
 thread (priority repaint, status pill) and the playback thread. Each call waits for the
-Tk thread, so a slow repaint stalls buffering. It is also the source of the three
-"main thread is not in main loop" shutdown guards. Possibly the ~1.2 s 4K jump tail
-(hypothesis — the M2 p95 number will confirm or reject it).
+Tk thread, so a slow repaint stalls buffering (step 0 trial run: `ui_marshal` avg 72 ms,
+max 183 ms per call under a real mainloop). It is also the source of the three
+"main thread is not in main loop" shutdown guards, and outside `mainloop()` (nested
+`update()` pumps) each call blocks ~1 s and then fails. (The old "~1.2 s jump tail"
+hypothesis is withdrawn — see step 0.)
 
 **Change (design).** Invert the direction of communication — *share data, not calls*
 (Fluent Python ch. 19 p. 770, the actor-model idea):
@@ -136,8 +149,9 @@ coordinator is stuck in `after()`). After: the prefetch window is filling.
 Plus a unit test: the pump paints a frame that arrives in the buffer after the step.
 Existing close/reload/extraction e2e tests must still pass with the guards removed.
 
-**Measure:** M6 → 0 (the code path is gone). M2 p95 on 4K (hypothesis: the tail shrinks).
-M4 no worse. M1 no worse (pump adds ≤ 10 ms only when the frame was NOT buffered).
+**Measure:** M6 → 0 (the code path is gone). M2 median/p95 (a jump target decoded by the
+coordinator no longer waits ~72 ms for its repaint to be accepted). M4 no worse.
+M1 no worse (the pump adds ≤ 10 ms only when the frame was NOT buffered).
 
 **Docs:** ARCHITECTURE.md "Background processes", the `frame_buffer.py` module docstring
 (invariant (c)), `test_h1_thread_boundary.py` docstring.

@@ -127,6 +127,9 @@ class _NullPerf:
     def time(self, name):
         return nullcontext()
 
+    def record(self, name, dt):
+        pass
+
 
 class FrameBuffer:
     """Sliding-window JPEG frame buffer + playback pacing engine.
@@ -273,7 +276,8 @@ class FrameBuffer:
         next display call picks it up.
         """
         try:
-            self._schedule_on_ui(fn)
+            with self._perf.time("ui_marshal"):
+                self._schedule_on_ui(fn)
             return True
         except Exception as exc:
             logger.debug(
@@ -447,7 +451,8 @@ class FrameBuffer:
                     self._evict_to_budget(current_frame)
 
                 # 6) Update the status pill (the app dedupes + marshals to Tk).
-                self._on_status_change(current_frame_loaded)
+                with self._perf.time("ui_status"):
+                    self._on_status_change(current_frame_loaded)
 
                 # 7) buffer_ready gates the playback thread.
                 buffer_ready = current_frame_loaded
@@ -514,7 +519,8 @@ class FrameBuffer:
                 self._advance_pending = False
 
         try:
-            self._schedule_on_ui(_apply)
+            with self._perf.time("ui_marshal_play"):
+                self._schedule_on_ui(_apply)
             return True
         except Exception as e:
             # Mirrors the old TclError/RuntimeError guard around the UI-marshal
@@ -541,6 +547,7 @@ class FrameBuffer:
         """
         with self._lock:
             self._inflight.setdefault(frame_number, None)
+        started = time.perf_counter()
         try:
             with self._perf.time("load_frame_total"):
                 frame_path = os.path.join(frames_dir, f"frame{frame_number}.jpg")
@@ -560,9 +567,14 @@ class FrameBuffer:
                     bytes_per_pixel = 4
                 est_bytes = int(img.width * img.height * bytes_per_pixel)
                 with self._lock:
+                    duplicate = frame_number in self._buffer
                     if gen == self._gen:
                         self._store_frame(frame_number, img, est_bytes)
                     self._inflight.pop(frame_number, None)
+                if duplicate:
+                    # Another decode of the same frame finished first; this
+                    # one was wasted work (perf metric M8).
+                    self._perf.record("duplicate_decode", time.perf_counter() - started)
         except Exception:
             with self._lock:
                 self._inflight.pop(frame_number, None)

@@ -158,3 +158,54 @@ not decode-bound. Raw JSONs: `results/perf_optimized_*.json`,
 7. NOT changed: the dict+RLock container, sorted() eviction, unlocked UI reads,
    ThreadPoolExecutor itself, the 1 GB budget constant.
 8. Later, separate task: extraction-resolution setting ("extract 4K at HD").
+
+---
+
+# Smoothness plan — re-baseline (2026-09-26)
+
+See [SMOOTHNESS_PLAN.md](SMOOTHNESS_PLAN.md). Step 0 rebuilt the robot-user scenario;
+all later steps compare against the `baseline` label below.
+
+## Correction to the section above
+
+The "4K jump tail (~1.2 s at p95)" measured on 2026-08-23 was a **harness artifact**.
+The old scenario drove Tk with `update()` loops instead of `mainloop()`. From such a loop a
+worker thread's `Tk.after()` waits ~1 s inside tkinter and then raises "main thread is
+not in main loop" (measured: 1074 ms), so every priority repaint stalled the buffer
+thread for a second and was then dropped. The scenario now runs inside a real
+`mainloop()`; the jump p95 under production conditions is 110-180 ms (below).
+
+## Baseline — commit `d56de5a` + step 0 instrumentation
+
+Median of 3 runs per variant; `spread` = max − min over the 3 runs (the noise band).
+Sample videos: `make_sample_videos.py` (cat3 looped to 30 s, 25 fps, grain).
+Panels: default = 1200×1000 window (914×814 video panel); fullscreen = screen-sized
+window (Windows clamps to ~1711×1048 here).
+
+| metric | 1080p default | 1080p full | 4K default | 4K full |
+|---|---|---|---|---|
+| load s | 10.0 | 10.5 | 35.0 | 34.2 |
+| step median / p95 ms | 13.9 / 21.4 | 26.0 / 47.2 | 17.9 / 25.2 | 33.2 / 46.4 |
+| jump median / p95 ms | 26.1 / 108.7 | 40.7 / 151.4 | 26.5 / 128.3 | 37.2 / 178.5 |
+| playback fps (target 25) | 24.5 | 23.7 | 24.5 | 23.3 |
+| playback jitter ms (stdev of paint intervals) | 4.6 | 7.9 | 4.7 | 10.3 |
+| playback interval p95 ms (ideal 40) | 48.2 | 59.0 | 48.2 | 59.1 |
+| resize → sharp frame ms | 90 | 140 | 178 | 192 |
+| decodes during one resize burst | 926 | 466 | 480 | 276 |
+| UI lag max during load ms | 1333 | 1333 | 1577 | 1453 |
+| UI lag p95 steps / jumps / playback ms | 25 / 69 / 15 | 46 / 88 / 25 | 27 / 64 / 18 | 47 / 60 / 27 |
+| `display_frame_photo` avg ms | 3.9 | 8.0 | 4.4 | 7.8 |
+| worker blocked on Tk, total ms (`ui_marshal` + `_play` + `ui_status`) | 2480 | 2272 | 2649 | 1972 |
+| duplicate decodes | 11 | 12 | 12 | 11 |
+
+Noise notes: step/jump medians spread 2-25 ms; `resize_to_sharp_ms` and the
+worker-blocked totals are very noisy (spread up to 100 %+), so only large changes
+there count. Idle event-loop lag floor is ~0.1 ms (p95).
+
+What the baseline says, mapped to plan steps:
+- step 1 — ~11 wasted duplicate decodes per run.
+- step 2 — worker threads spend 2-2.6 s per run blocked waiting for the Tk thread.
+- step 3 — playback interval p95 48-59 ms vs the ideal 40 ms (jitter 5-10 ms).
+- step 4 — `display_frame_photo` doubles on the full-screen panel (4 → 8 ms).
+- step 5 — one resize burst costs 276-926 decodes.
+- step 6 — loading freezes the UI for 1.3-1.6 s at a time.
