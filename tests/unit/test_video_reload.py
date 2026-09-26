@@ -151,12 +151,7 @@ def test_buffering_loop_survives_out_of_range_current_frame(tmp_path):
         )
 
     fb = FrameBuffer(
-        schedule_on_ui=lambda fn: fn(),
         get_buffer_context=get_buffer_context,
-        get_playback_context=lambda: None,
-        apply_play_advance=lambda *a: None,
-        on_playback_boundary=lambda *a: None,
-        on_playback_schedule_error=lambda exc: None,
     )
     thread = Thread(target=fb.background_update, daemon=True)
     thread.start()

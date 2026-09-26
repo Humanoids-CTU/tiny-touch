@@ -26,13 +26,24 @@ class FakeBuffer:
 
 
 class FakeClock:
-    """Deterministic stand-in for time.monotonic; the test advances it."""
+    """Deterministic stand-in for the `time` module; the test advances it."""
 
     def __init__(self):
         self.now = 1000.0
 
+    def perf_counter(self):
+        return self.now
+
     def monotonic(self):
         return self.now
+
+
+class NullTimers:
+    def hold(self, holder):
+        pass
+
+    def release(self, holder):
+        pass
 
 
 @pytest.fixture
@@ -52,6 +63,7 @@ def _wheel_app(*, fps=25.0, total_frames=999, current_frame=100, buffer=None,
         _wheel_tick_id=None,
         _wheel_delta_accum=0,
         _wheel_next_due=None,
+        _precise_timers=NullTimers(),
         scheduled=[],   # (delay_ms, callback)
         steps=[],
         cancelled=[],
@@ -78,6 +90,7 @@ def _wheel_app(*, fps=25.0, total_frames=999, current_frame=100, buffer=None,
         "_frame_interval_ms", "_wheel_tick", "_cancel_wheel_scroll",
     ):
         setattr(app, name, MethodType(getattr(LabelingApp, name), app))
+    app._next_deadline = LabelingApp._next_deadline  # staticmethod, shared with playback
     return app
 
 

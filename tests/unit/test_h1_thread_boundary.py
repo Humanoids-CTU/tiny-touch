@@ -1,16 +1,17 @@
 """
-H1 — thread → UI boundary for the playback/buffer daemon threads.
+H1 — thread → UI boundary.
 
-H1's fix stops the playback thread from calling Tk widget code directly:
-the worker now only advances plain state (`current_frame`, `_last_step_sign`)
-and schedules ONE main-thread redraw via `self.after(0, _render_current_frame)`.
-The end-to-end `after(0, ...)` marshalling needs a live Tk mainloop and is
-covered by the manual checklist in the fix plan — not reproducible headless.
+H1 originally stopped the playback thread from calling Tk widget code
+directly. The boundary is stricter now: no worker thread calls Tk at all
+(SMOOTHNESS_PLAN.md steps 2-3). The buffering thread only fills the frame
+buffer, and playback is no longer a thread — it is paced on the Tk thread
+by `LabelingApp._play_tick` (see test_playback_pacing.py).
 
-What IS testable pure logic (per the plan's "automatable slice"):
+What is tested here:
 
-1. `_compute_play_step` — the side-effect-free play-step decision extracted
-   from `background_update_play` (boundary stop + clamped advance).
+1. `_compute_play_step` — the side-effect-free play-step decision
+   (`domain.playback.compute_play_step`: boundary stop + clamped advance)
+   that `_play_tick` uses.
 2. `_is_ui_thread` / `_assert_ui_thread` — the thread-identity guard that
    catches future off-thread widget access. Exercised via unbound methods on
    a lightweight stub `self`, without a running Tk root (same pattern as C2).

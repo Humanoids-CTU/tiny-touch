@@ -393,7 +393,7 @@ def _teardown_app(application):
         # within one poll interval) — same rationale as the pool join above:
         # nothing of this app may still be running when the next test's
         # `_tkinter.create()` starts.
-        for attr in ("background_thread", "background_thread_play"):
+        for attr in ("background_thread",):
             thread = getattr(application, attr, None)
             if thread is not None and thread.is_alive():
                 thread.join(timeout=5.0)

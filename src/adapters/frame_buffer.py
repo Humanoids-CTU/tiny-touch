@@ -1,35 +1,25 @@
 """
 adapters/frame_buffer.py
-The frame read-ahead buffer + playback pacing engine, extracted from
-LabelingApp (background_update / background_update_play and the buffer
-store/evict helpers). NO Tk imports here, and all app state the worker
-threads need arrives through the injected context providers.
+The frame read-ahead buffer, extracted from LabelingApp (background_update
+and the buffer store/evict helpers). NO Tk imports here, and all app state
+the worker threads need arrives through the injected context provider.
+Playback pacing is not here any more: it runs on the Tk thread
+(`LabelingApp._play_tick`, SMOOTHNESS_PLAN.md step 3).
 
-Threading invariants preserved from the original implementation:
+Threading invariants:
   (a) one RLock (`_lock`) guards the four buffer structures
       (frame dict, byte-size dict, byte total, in-flight map);
   (b) `reset()` bumps the generation counter so in-flight decodes started
       under the old video/settings discard their result;
   (c) the buffering thread and the decode pool never call into the GUI —
       not even to schedule work there. They only fill the buffer; the GUI
-      polls it from its own event loop (`LabelingApp._display_pump`) and
-      reads `buffer_ready`. Reason: a worker's `Tk.after()` is a synchronous
-      round-trip that waits for the Tk thread, so every slow repaint used to
-      stall buffering (SMOOTHNESS_PLAN.md step 2). Only the playback thread
-      still marshals through `schedule_on_ui` (removed in step 3);
-  (d) `compute_play_step` stays a pure, side-effect-free function
-      (re-exported as `LabelingApp._compute_play_step` for the H1 tests);
-  (e) a frame is decoded at most once: the synchronous priority path
+      polls it from its own event loop (`LabelingApp._display_pump`,
+      `LabelingApp._play_tick`). Reason: a worker's `Tk.after()` is a
+      synchronous round-trip that waits for the Tk thread, so every slow
+      repaint used to stall buffering (SMOOTHNESS_PLAN.md step 2);
+  (d) a frame is decoded at most once: the synchronous priority path
       (`_load_priority`) cancels a queued pool decode of the same frame or
       waits for a running one instead of decoding it again.
-
-Single-writer rule (two-writer bug fix): the playback worker no longer
-assigns `video.current_frame` itself. It REQUESTS the advance via
-`schedule_on_ui`, so every write to `current_frame` happens on the Tk main
-thread (`apply_play_advance` callback), alongside the UI-thread writers
-(next_frame, timeline clicks, select_frame). The `_advance_pending` flag
-keeps the worker from double-stepping while a requested advance is still
-queued on the UI thread.
 """
 
 import logging
@@ -38,35 +28,21 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from threading import Event, RLock
-from typing import Callable, NamedTuple, Optional
+from typing import Callable, NamedTuple
 
 from PIL import Image
 
 
 logger = logging.getLogger(__name__)
 
-# 0.15 s (was 1.0): playback sleeps this long when the next frame isn't
-# buffered yet — a full second made every stall feel enormous, while 150 ms
-# rechecks fast enough that recovery is near-immediate once the decode lands.
-PLAYBACK_BUFFER_PAUSE_S = 0.15
+# Frames past the current one (in the play direction) that must be buffered
+# before playback advances — it stalls briefly rather than stutters. Also the
+# look-ahead behind `FrameBuffer.buffer_ready`.
 PLAYBACK_BUFFER_AHEAD = 3
 BUFFER_MAX_BYTES = 1_000_000_000
 # Upper bound on how long a priority load waits for a pool decode of the same
 # frame that is already running (normally 5-40 ms). Past it we decode ourselves.
 PRIORITY_WAIT_S = 1.0
-
-
-def compute_play_step(current_frame, total_frames, direction):
-    """Pure play-step decision: (next_frame, stop). No Tk, no side effects.
-
-    stop=True when playback sits at the edge it is moving toward (frame 0
-    going backward, total_frames going forward) so the play loop doesn't
-    busy-spin against a boundary.
-    """
-    if (direction > 0 and current_frame >= total_frames) or \
-       (direction < 0 and current_frame <= 0):
-        return current_frame, True
-    return max(0, min(total_frames, current_frame + direction)), False
 
 
 def compute_target_size(orig_w, orig_h, display_w, display_h, downscale):
@@ -121,15 +97,6 @@ class BufferContext(NamedTuple):
     last_step_sign: int
 
 
-class PlaybackContext(NamedTuple):
-    """Per-tick snapshot of playback state for the play-advance thread."""
-    playing: bool
-    direction: int
-    current_frame: int
-    total_frames: int
-    frame_rate: Optional[float]
-
-
 class _NullPerf:
     """No-op stand-in for PerfLogger when none is injected."""
 
@@ -141,41 +108,27 @@ class _NullPerf:
 
 
 class FrameBuffer:
-    """Sliding-window JPEG frame buffer + playback pacing engine.
+    """Sliding-window JPEG frame buffer.
 
-    Constructed with the playback callbacks and config values; the frames
-    directory and all per-video numbers arrive via the context providers
-    because they change on every video load. The GUI learns about newly
-    decoded frames by polling (`get` / `in`), never by callback.
+    Constructed with config values only; the frames directory and all
+    per-video numbers arrive via the context provider because they change on
+    every video load. The GUI learns about newly decoded frames by polling
+    (`get` / `in` / `buffer_ready`), never by callback.
     """
 
     def __init__(
         self,
         *,
-        schedule_on_ui: Callable,
         get_buffer_context: Callable,
-        get_playback_context: Callable,
-        apply_play_advance: Callable,
-        on_playback_boundary: Callable,
-        on_playback_schedule_error: Callable,
         max_bytes: int = BUFFER_MAX_BYTES,
         playback_buffer_ahead: int = PLAYBACK_BUFFER_AHEAD,
-        playback_buffer_pause_s: float = PLAYBACK_BUFFER_PAUSE_S,
         perf=None,
     ):
-        # Injected boundary. schedule_on_ui is used by the PLAYBACK thread
-        # only; the buffering thread never reaches back into the GUI.
-        self._schedule_on_ui = schedule_on_ui
         self._get_buffer_context = get_buffer_context        # () -> BufferContext | None
-        self._get_playback_context = get_playback_context    # () -> PlaybackContext | None
-        self._apply_play_advance = apply_play_advance        # (next_frame, direction) on UI thread
-        self._on_playback_boundary = on_playback_boundary    # (current_frame, direction)
-        self._on_playback_schedule_error = on_playback_schedule_error  # (exc)
 
         # Config values.
         self._max_bytes = max_bytes
         self._playback_ahead = playback_buffer_ahead
-        self._playback_pause_s = playback_buffer_pause_s
         self._perf = perf if perf is not None else _NullPerf()
 
         # Buffer structures — ALL guarded by the one RLock.
@@ -207,13 +160,13 @@ class FrameBuffer:
         # loop ticks every 10 ms — logging each tick would flood the console).
         self._last_window_cap = None
 
-        # Playback gating.
+        # True while the current frame and the next PLAYBACK_BUFFER_AHEAD
+        # frames are buffered; written by the buffering thread only.
         self.buffer_ready = False
-        self._advance_pending = False   # a requested advance awaits the UI thread
 
-        # Shutdown latch. Both daemon loops below poll it, so `shutdown()`
-        # actually ENDS them instead of leaving them spinning against a
-        # destroyed Tk root (see shutdown()).
+        # Shutdown latch. The buffering loop polls it, so `shutdown()`
+        # actually ENDS it instead of leaving it spinning after the Tk root
+        # is gone (see shutdown()).
         self._stopped = Event()
 
     # === Buffer access (UI thread) ============================================
@@ -254,17 +207,15 @@ class FrameBuffer:
 
     @property
     def stopped(self) -> bool:
-        """True once `shutdown()` was called — both loops are winding down."""
+        """True once `shutdown()` was called — the buffering loop is winding down."""
         return self._stopped.is_set()
 
     def shutdown(self, *, wait=False, cancel_futures=True):
-        """Stop the two daemon loops, then the loader pool.
+        """Stop the buffering loop, then the loader pool.
 
         The latch is set FIRST and the buffering thread is woken immediately,
-        so both loops end promptly instead of idling against a destroyed Tk
-        root (the app calls this from `on_close()` one line before
-        `destroy()`; the playback thread still marshals through Tk until
-        SMOOTHNESS_PLAN.md step 3).
+        so the loop ends promptly (the app calls this from `on_close()` one
+        line before `destroy()`).
         """
         self._stopped.set()
         self._priority_event.set()  # break the 10 ms wait right away
@@ -428,7 +379,7 @@ class FrameBuffer:
                         self._remove_frame(k)
                     self._evict_to_budget(current_frame)
 
-                # 6) buffer_ready gates the playback thread.
+                # 6) buffer_ready: the window ahead is decoded (status for the GUI).
                 buffer_ready = current_frame_loaded
                 if buffer_ready:
                     max_check = min(ctx.total_frames, current_frame + self._playback_ahead)
@@ -437,71 +388,6 @@ class FrameBuffer:
                             buffer_ready = False
                             break
                 self.buffer_ready = buffer_ready
-
-    # === Playback thread ======================================================
-    def background_update_play(self):
-        while not self._stopped.is_set():
-            ctx = self._get_playback_context()
-            if ctx is not None and ctx.playing:
-                direction = 1 if ctx.direction >= 0 else -1
-                current_frame = ctx.current_frame
-                next_frame, stop = compute_play_step(
-                    current_frame, ctx.total_frames, direction
-                )
-                if stop:
-                    self._on_playback_boundary(current_frame, direction)
-                    continue
-                if current_frame not in self._buffer:
-                    self.buffer_ready = False
-                    time.sleep(self._playback_pause_s)
-                    continue
-                if next_frame not in self._buffer:
-                    self.buffer_ready = False
-                    time.sleep(self._playback_pause_s)
-                    continue
-                if not self.buffer_ready:
-                    time.sleep(self._playback_pause_s)
-                    continue
-                if self._advance_pending:
-                    # The previous requested advance hasn't run on the UI thread
-                    # yet — wait for it instead of double-stepping the same frame.
-                    time.sleep(0.001)
-                    continue
-                start = time.perf_counter()
-                # Single-writer rule (two-writer bug fix): REQUEST the advance;
-                # the UI thread applies current_frame + redraw in one callback.
-                if not self._request_advance(next_frame, direction):
-                    continue
-                if next_frame not in self._buffer:
-                    # Evicted between the check above and now — reload with priority.
-                    self._priority_event.set()
-                interval = 1.0 / ctx.frame_rate if ctx.frame_rate else 0.04
-                elapsed = time.perf_counter() - start
-                time.sleep(max(0.0, interval - elapsed))
-            else:
-                time.sleep(0.05)
-
-    def _request_advance(self, next_frame, direction):
-        """Marshal one playback advance to the UI thread. Returns False when
-        scheduling failed (Tk mainloop gone — close mid-playback)."""
-        self._advance_pending = True
-
-        def _apply():
-            try:
-                self._apply_play_advance(next_frame, direction)
-            finally:
-                self._advance_pending = False
-
-        try:
-            with self._perf.time("ui_marshal_play"):
-                self._schedule_on_ui(_apply)
-            return True
-        except Exception as e:
-            # Mirrors the old TclError/RuntimeError guard around the UI-marshal
-            # call, without this adapter knowing anything about the GUI toolkit.
-            self._advance_pending = False
-            self._on_playback_schedule_error(e)
-            return False
 
     # === Decode / store / evict ==============================================
     def _load_priority(self, frame_number, frames_dir, display_w, display_h, downscale, gen):

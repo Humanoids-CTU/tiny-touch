@@ -44,7 +44,8 @@ tiny-touch/
 │   │   ├── model.py              # FrameRecord / FrameBundle shapes, LIMBS, LimbView
 │   │   ├── project.py            # ProjectPaths -- the only place on-disk layout is built
 │   │   ├── touch.py              # Touch-annotation rules (zone hit test, open-onset scan)
-│   │   └── touch_stats.py        # Episode reconstruction + touch statistics (Analysis core)
+│   │   ├── touch_stats.py        # Episode reconstruction + touch statistics (Analysis core)
+│   │   └── playback.py           # Pure play-step rule (boundary stop + clamped advance)
 │   ├── adapters/                 # I/O edges: files, cv2/ffmpeg, plotly, config.json
 │   │   ├── sqlite_repo.py        # Working-state DB per video (SOURCE OF TRUTH)
 │   │   ├── export_writer.py      # Legacy export schema + metadata sidecar (write)
@@ -54,8 +55,9 @@ tiny-touch/
 │   │   ├── config.py             # config.json read / write, AppConfig snapshot
 │   │   ├── zone_masks.py         # Zone-mask PNG loading + zone-name listing
 │   │   ├── frame_extractor.py    # Frame extraction (ffmpeg → OpenCV fallback) + integrity
-│   │   ├── frame_buffer.py       # Sliding JPEG buffer + playback advance threads
+│   │   ├── frame_buffer.py       # Sliding JPEG buffer: buffering thread + decode pool
 │   │   ├── video_probe.py        # cv2 frame-count / fps probe
+│   │   ├── timer_resolution.py   # 1 ms Windows timer resolution while frames are paced
 │   │   └── atomic_io.py          # Write-temp-then-replace helper
 │   ├── service_layer/            # Use cases: orchestration only
 │   │   ├── save_service.py       # The save Unit of Work
@@ -105,7 +107,7 @@ TinyTouch is a single-process Tkinter app organized around one controller (`Labe
 
 - the `Video` model (raw video info + per-frame data dict),
 - the UI built by `ui_components.build_ui(app)` (frames, canvases, buttons, key bindings),
-- a `FrameBuffer` (`adapters.frame_buffer`) owning the read-ahead and playback threads,
+- a `FrameBuffer` (`adapters.frame_buffer`) owning the read-ahead thread and decode pool,
 - the working-state repository (`adapters.sqlite_repo`) plus the save / project
   services that orchestrate it.
 
@@ -149,9 +151,9 @@ Each `FrameRecord` holds aligned `X` / `Y` click lists, `Onset` (`"ON"`/`"OFF"`/
 
 ### Background processes
 
-[`adapters.frame_buffer.FrameBuffer`](src/adapters/frame_buffer.py) owns two daemon loops plus
+[`adapters.frame_buffer.FrameBuffer`](src/adapters/frame_buffer.py) owns one daemon loop plus
 an adaptive decode pool (`max(3, min(8, cpu_count // 2))` workers — PIL releases the GIL
-during decode/resize, so the parallelism is real); they start lazily after a video is loaded.
+during decode/resize, so the parallelism is real); the loop starts lazily after a video is loaded.
 No worker ever touches a Tk widget — the buffering loop reads a `BufferContext` snapshot
 instead of calling `winfo_width()`. The buffering thread and the decode pool also never
 *call* into Tk, not even `after()`: from another thread that call is a synchronous
@@ -159,8 +161,7 @@ round-trip that waits for the Tk thread, so every slow repaint used to stall buf
 Instead the Tk thread polls: `LabelingApp._display_pump` runs every `DISPLAY_PUMP_MS = 10`
 and paints the current frame when its buffered image is not the one on screen (a frame
 that finished decoding, or the buffer rebuilt after a resize); frames already buffered
-are painted immediately by the navigation handlers. Only the playback thread still
-marshals its advances through the injected `schedule_on_ui`.
+are painted immediately by the navigation handlers. No worker thread calls Tk at all.
 
 - **Decode pipeline** -- each frame load computes its target size from the JPEG header
   (`compute_target_size`: fit the source into `display / downscale` aspect-preserving,
@@ -179,9 +180,18 @@ marshals its advances through the injected `schedule_on_ui`.
   current frame is loaded synchronously ahead of the pool; if the pool already holds a
   decode of it, that decode is cancelled (queued) or awaited (running), never repeated.
   The on-screen `Buffer: Loaded` / `Buffer: Loading` chip is set by the display pump.
-- **Playback loop** -- when Play is pressed, advances `current_frame` only once the next
-  `PLAYBACK_BUFFER_AHEAD = 3` frames are buffered, pausing `PLAYBACK_BUFFER_PAUSE_S = 0.15` s
-  when they are not, so playback stalls briefly rather than stutters.
+- **Playback** -- not a thread: Play and arrow-hold playback are a chain of `after()`
+  callbacks on the Tk thread (`LabelingApp._play_tick`), paced against a running deadline
+  exactly like the mouse wheel (`_next_deadline`), so the redraw cost is absorbed into the
+  frame interval and a late tick never bursts. A step happens only once the current frame
+  and the next `PLAYBACK_BUFFER_AHEAD = 3` frames in the play direction are buffered; until
+  then it re-checks every `PLAYBACK_STALL_POLL_MS = 20` ms, so playback stalls briefly
+  rather than stutters. Every write to `current_frame` is therefore on the Tk thread.
+  Two Windows timing details make this precise: deadlines use `time.perf_counter()`
+  (`time.monotonic()` there is `GetTickCount64`, 15.6 ms steps), and while playback or
+  wheel scrolling runs, `adapters.timer_resolution.PreciseTimers` holds a 1 ms timer
+  resolution (`timeBeginPeriod`), without which Tk's `after()` is rounded to the 15.6 ms
+  system tick. Both are no-ops for correctness elsewhere.
 
 Frame extraction (`adapters.frame_extractor.create_frames`) runs synchronously inside a small Tk progress window the first time a video is opened:
 

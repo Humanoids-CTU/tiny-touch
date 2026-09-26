@@ -280,3 +280,47 @@ by the buffering thread no longer waits for its repaint to be accepted by Tk; th
 paints it within ≤ 10 ms), step median −36 % on 1080p-default. 4K full-screen shows no
 change beyond noise — there the UI-thread paint itself dominates (step 4's target).
 Playback is unchanged, as expected: it still goes through the playback thread (step 3).
+
+## Step 3 — playback on the Tk thread, no playback thread (A/B vs `34a4168`)
+
+Change: `FrameBuffer.background_update_play`, `_request_advance`, `_advance_pending`,
+`schedule_on_ui` and the playback callbacks are gone. Play and arrow-hold playback are an
+`after()` chain on the Tk thread (`LabelingApp._play_tick`), deadline-paced by the helper
+it shares with the wheel (`_next_deadline`), gated on the next `PLAYBACK_BUFFER_AHEAD`
+frames in the play direction (the old gate only ever looked forward). `compute_play_step`
+moved to `domain/playback.py`. Tests: `tests/unit/test_playback_pacing.py` (fake clock),
+`tests/unit/test_timer_resolution.py`.
+
+**First attempt made playback jitter WORSE** (1080p default 2.8 → 7.2 ms, interval p95
+44.5 → 50.9 ms, control flat). A paint-interval histogram showed two peaks, ~31 and
+~47 ms (2× and 3× 15.6 ms), averaging 40. Two Windows timing properties stacked:
+1. `time.monotonic()` on Windows is `GetTickCount64` — **15.625 ms resolution**. The
+   deadline math (inherited from the wheel code, which had the same bug) was quantized.
+   Fix: `time.perf_counter()` (0.1 µs). Regression test with a fake 15.625 ms monotonic:
+   red on `monotonic` (gaps 47/40/33/42/51/28 ms), green on `perf_counter`.
+2. Tk's `after(ms)` waits with a timeout Windows rounds to its 15.6 ms timer tick. The old
+   thread was precise only because Python's `time.sleep` uses a high-resolution timer
+   (3.11+). Fix: `adapters.timer_resolution.PreciseTimers` holds `timeBeginPeriod(1)`
+   while playback or wheel scrolling runs (named holders; no-op off Windows).
+Probe histograms (1080p, 5 s of Play): clock fix alone still bimodal; both fixes →
+35-45 ms, centred on 40.
+
+Results with both fixes (median of 3, A/B):
+
+| metric | 1080p default | 1080p full | 4K default | 4K full |
+|---|---|---|---|---|
+| playback jitter ms | 8.2 → **6.6** | 15.8 → **11.3** | 8.8 → **6.7** | 24.2 → **10.4** |
+| playback interval p95 ms (ideal 40) | 59.5 → **53.8** | 86.9 → **78.5** | 56.2 → **53.1** | 98.3 → **66.1** |
+| playback fps (target 25) | 23.9 → 24.4 | 17.0 → 16.9 | 24.2 → 24.1 | 17.0 → 22.5 |
+| UI lag p95 during playback ms | 24.8 → 26.6 | 47.9 → 72.7 | 21.7 → 36.4 | 57.6 → 57.1 |
+| control: `display_frame_photo` ms | 4.7 → 5.0 | 12.5 → 11.8 | 4.4 → 5.3 | 13.0 → 10.0 |
+
+Verdict: jitter and interval p95 improved in all four variants — the direction the plan
+predicted, once the timing bugs were fixed. The 4K columns are noise-dominated (the control
+moved +21 % and −23 % in opposite directions), so the 4K-full fps gain is not attributed.
+**UI lag during playback rose in 3 of 4 variants — at least partly a measurement artifact:**
+the heartbeat is itself an `after()` timer, and holding a 1 ms timer resolution changes how
+it samples. Synthetic check with identical Tk-thread work (15 ms busy every 40 ms): coarse
+timers p50 10.3 / p95 11.5 ms, precise timers p50 0.1 / p95 14.5 ms. The observed increase
+is larger than that, so not all of it is proven to be artifact. From step 4 on, both A/B
+sides hold precise timers during playback, so the lag metric is comparable again.

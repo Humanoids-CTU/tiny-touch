@@ -195,6 +195,14 @@ the Select Frame dialog pauses it; wheel input during playback behaves as define
 (advance + paint now happen in one deadline-paced callback instead of thread sleep +
 queued `after(0)`). M4 no worse.
 
+**Done 2026-09-26.** Implemented as a separate `_play_tick` sharing only the deadline
+helper with the wheel (one stepper with mode flags would have been harder to read than
+two small ones). The first version made jitter worse; the cause was two Windows timing
+properties (coarse `time.monotonic()`, 15.6 ms `after()` granularity) — fixed with
+`perf_counter` and `adapters.timer_resolution.PreciseTimers`. Final: jitter −20..−57 %
+and interval p95 −6..−33 % in all four variants; UI-lag metric rose, at least partly a
+heartbeat artifact of the timer-resolution change (see RESULTS.md).
+
 ---
 
 ## Step 4 — Reuse one `PhotoImage` (paste instead of recreate)

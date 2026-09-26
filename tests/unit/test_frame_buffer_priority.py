@@ -71,12 +71,7 @@ def decodes(monkeypatch):
 
 def _make_buffer(context):
     return FrameBuffer(
-        schedule_on_ui=lambda fn: fn(),
         get_buffer_context=lambda: context["ctx"],
-        get_playback_context=lambda: None,
-        apply_play_advance=lambda *a: None,
-        on_playback_boundary=lambda *a: None,
-        on_playback_schedule_error=lambda exc: None,
     )
 
 

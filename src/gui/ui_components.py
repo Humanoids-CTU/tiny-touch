@@ -39,7 +39,6 @@ def build_ui(app):
     # The frame cache itself lives in adapters.frame_buffer.FrameBuffer
     # (constructed in LabelingApp.__init__), not on the widget tree.
     app.play = False
-    app.play_thread_on = False
     app.progress = {}
     app.frame_rate = None
     app.last_mouse_x = 0

@@ -14,14 +14,11 @@ from PIL import Image, ImageTk
 
 from adapters import config
 from adapters import video_probe
-from adapters.frame_buffer import (
-    BufferContext,
-    FrameBuffer,
-    PlaybackContext,
-    compute_play_step,
-)
+from adapters.frame_buffer import PLAYBACK_BUFFER_AHEAD, BufferContext, FrameBuffer
 from adapters.frame_extractor import FrameExtractionCancelled, FrameExtractionError
+from adapters.timer_resolution import PreciseTimers
 from adapters.zone_masks import load_zone_masks
+from domain.playback import compute_play_step
 from domain.model import (
     FrameRecord,
     bundle_summary_str,
@@ -76,6 +73,12 @@ WHEEL_BUFFER_POLL_MS = 50
 # frame (LabelingApp._display_pump). Workers never call Tk, so this poll is
 # how background decodes reach the screen; 10 ms is below one video frame.
 DISPLAY_PUMP_MS = 10
+# Playback runs on the Tk thread (LabelingApp._play_tick), paced against a
+# running deadline like the wheel. When the next PLAYBACK_BUFFER_AHEAD frames
+# are not decoded yet it re-checks every PLAYBACK_STALL_POLL_MS: a cheap
+# dict lookup on the Tk thread, so it can poll much faster than the old
+# thread's 150 ms sleep and resume as soon as the frames land.
+PLAYBACK_STALL_POLL_MS = 20
 # Dev guard (H1): when True, the main render/timeline methods raise if called
 # off the Tk main thread, so any future thread-boundary regression fails loudly
 # at the offending call site instead of crashing Tcl intermittently.
@@ -358,12 +361,17 @@ class LabelingApp(tk.Tk):
         self._last_arrow_press_ms = 0.0       # heartbeat: time of most recent KeyPress
         self._hold_watchdog_id = None         # after() id for the release-detection watchdog
         self._hold_play_active = False        # True while arrow-hold-driven playback is running
+        self._play_tick_id = None             # after() id of the pending _play_tick
+        self._play_next_due = None            # perf_counter deadline of the next playback step
+        # 1 ms Windows timer resolution while frames are paced (playback,
+        # wheel); Tk's after() is otherwise rounded to the 15.6 ms tick.
+        self._precise_timers = PreciseTimers()
 
         # Mouse-wheel pacing state (see WHEEL_* constants).
         self._wheel_backlog = 0               # signed frames still to step (+ forward, - back)
         self._wheel_tick_id = None            # after() id of the paced stepper
         self._wheel_delta_accum = 0           # sub-notch <MouseWheel> delta carried over
-        self._wheel_next_due = None           # monotonic deadline of the next paced step
+        self._wheel_next_due = None           # perf_counter deadline of the next paced step
 
         # Thread → UI boundary (H1). Workers never touch Tk widgets directly:
         # they advance plain state and schedule redraws via self.after(0, ...).
@@ -382,30 +390,25 @@ class LabelingApp(tk.Tk):
         self._buffer_status_shown = None      # last state of the Loaded/Loading chip
         self._display_pump_id = None          # after() id of _display_pump
 
-        # While True, _buffer_context/_playback_context return None so the two
-        # worker threads idle. Held for the whole load_video swap: the workers
-        # must not observe (or repaint from) a half-published video, and their
-        # first tick for a new video only happens after load_video returned —
-        # the same ordering the very first load has by construction.
+        # While True, _buffer_context returns None so the buffering thread
+        # idles and the display pump paints nothing. Held for the whole
+        # load_video swap: neither may observe (or repaint from) a
+        # half-published video, and their first tick for a new video only
+        # happens after load_video returned — the same ordering the very
+        # first load has by construction.
         self._suspend_frame_workers = False
 
-        # Frame buffer + playback engine (adapters.frame_buffer). The engine
-        # owns the buffer lock/generation and the loader pool. The buffering
-        # thread never calls Tk: _display_pump polls the buffer from the event
-        # loop instead. Only the playback thread still marshals through
-        # schedule_on_ui, and ALL writes to video.current_frame happen on the
-        # Tk thread (_apply_play_advance and the UI handlers).
+        # Frame buffer (adapters.frame_buffer): owns the buffer lock and
+        # generation, the buffering thread and the decode pool. Nothing in it
+        # calls Tk. The Tk thread reads it from its own event loop: the
+        # display pump paints newly decoded frames and playback is paced by
+        # _play_tick, so EVERY write to video.current_frame happens on the Tk
+        # thread by construction.
         self.frame_buffer = FrameBuffer(
-            schedule_on_ui=lambda fn: self.after(0, fn),
             get_buffer_context=self._buffer_context,
-            get_playback_context=self._playback_context,
-            apply_play_advance=self._apply_play_advance,
-            on_playback_boundary=self._on_playback_boundary,
-            on_playback_schedule_error=self._on_playback_schedule_error,
             perf=self.perf,
         )
         self.background_thread = Thread(target=self.frame_buffer.background_update, daemon=True)
-        self.background_thread_play = Thread(target=self.frame_buffer.background_update_play, daemon=True)
         self._display_pump_id = self.after(DISPLAY_PUMP_MS, self._display_pump)
 
         # Diagram init
@@ -671,13 +674,8 @@ class LabelingApp(tk.Tk):
     def _begin_hold_playback(self, direction):
         if self._arrow_held_dir != direction or self.video is None:
             return
-        self.play_dir = direction
-        self.play = True
         self._hold_play_active = True
-        if not self.play_thread_on:
-            self.play_thread_on = True
-            if not self.background_thread_play.is_alive():
-                self.background_thread_play.start()
+        self._start_playback(direction)
         logger.debug("realtime hold started: direction=%s fps=%s", direction, self.frame_rate)
 
     def _cancel_arrow_hold_state(self):
@@ -727,6 +725,7 @@ class LabelingApp(tk.Tk):
         cap = self._wheel_backlog_cap()
         self._wheel_backlog = max(-cap, min(cap, self._wheel_backlog + notches))
         if self._wheel_tick_id is None:
+            self._precise_timers.hold("wheel")
             self._wheel_tick()  # first notch paints immediately (tap feel)
 
     def _wheel_notches(self, event) -> int:
@@ -760,34 +759,27 @@ class LabelingApp(tk.Tk):
         if self.video is None or self._wheel_backlog == 0:
             self._wheel_backlog = 0
             self._wheel_next_due = None
+            self._precise_timers.release("wheel")
             return
         direction = 1 if self._wheel_backlog > 0 else -1
         current = self.video.current_frame
         target = max(0, min(self.video.total_frames, current + direction))
         if target == current:
             self._wheel_backlog = 0  # at the first/last frame: nothing left to do
+            self._precise_timers.release("wheel")
             return
         if target not in self.frame_buffer:
             # Not decoded yet: ask for it and retry without consuming a notch.
             self.frame_buffer.request_priority(target)
             self._wheel_tick_id = self.after(WHEEL_BUFFER_POLL_MS, self._wheel_tick)
             return
-        # Pace against a running deadline, not "interval after the redraw":
-        # the redraw itself costs ~20 ms, and adding it to every wait would
-        # make a 25 fps video scroll at ~16 fps. An idle or badly lagging
-        # clock restarts from now so we never try to catch up with a burst.
-        now = time.monotonic()
-        interval_s = self._frame_interval_ms() / 1000.0
-        due = self._wheel_next_due
-        if due is None or due < now - interval_s:
-            due = now
-        due += interval_s
-        self._wheel_next_due = due
+        due = self._wheel_next_due = self._next_deadline(
+            self._wheel_next_due, self._frame_interval_ms() / 1000.0)
         self._wheel_backlog -= direction
         self.next_frame(direction)
         # Stay armed until the deadline even with an empty queue: notches
         # arriving inside that window are queued instead of painting at once.
-        delay_ms = max(1, round((due - time.monotonic()) * 1000.0))
+        delay_ms = max(1, round((due - time.perf_counter()) * 1000.0))
         self._wheel_tick_id = self.after(delay_ms, self._wheel_tick)
 
     def _cancel_wheel_scroll(self):
@@ -799,6 +791,93 @@ class LabelingApp(tk.Tk):
         self._wheel_backlog = 0
         self._wheel_delta_accum = 0
         self._wheel_next_due = None
+        self._precise_timers.release("wheel")
+
+    @staticmethod
+    def _next_deadline(due, interval_s):
+        """Deadline pacing shared by the wheel and playback.
+
+        The next step is due one interval after the PREVIOUS deadline, not
+        one interval after the redraw: the redraw itself costs ~20 ms, and
+        adding it to every wait would make a 25 fps video move at ~16 fps.
+        An idle or badly lagging clock restarts from now, so a late tick
+        never tries to catch up with a burst of steps.
+
+        perf_counter, NOT monotonic: on Windows time.monotonic() is
+        GetTickCount64 with a 15.6 ms resolution, which quantized every
+        deadline and made 25 fps steps alternate between ~31 and ~47 ms.
+        """
+        now = time.perf_counter()
+        if due is None or due < now - interval_s:
+            due = now
+        return due + interval_s
+
+    # --- Playback, paced on the Tk thread ------------------------------------
+    # Play / arrow-hold playback is a chain of after() callbacks on the Tk
+    # thread, like the wheel: advance one frame, schedule the next tick at
+    # the next deadline. There is no playback thread — the work per step is
+    # a paint, which must happen on the Tk thread anyway, and a thread that
+    # asks Tk for every step waits on a synchronous round-trip each time.
+    # At most one tick is pending (_play_tick_id); setting self.play = False
+    # ends the chain at the next tick.
+    def _frame_interval_s(self) -> float:
+        """Exact seconds per video frame (playback must not drift)."""
+        fps = getattr(self, "frame_rate", None)
+        if fps and fps > 0:
+            return 1.0 / fps
+        return WHEEL_DEFAULT_INTERVAL_MS / 1000.0
+
+    def _start_playback(self, direction):
+        """Play in `direction` (+1 / -1); arm the tick chain if it is idle."""
+        self.play_dir = direction
+        self.play = True
+        if self._play_tick_id is None:
+            self._play_next_due = None
+            self._precise_timers.hold("playback")
+            self._play_tick()
+
+    def _end_play_chain(self):
+        """The tick chain stops here: forget the clock, give back the timers."""
+        self._play_next_due = None
+        self._precise_timers.release("playback")
+
+    def _play_window_buffered(self, current, direction):
+        """True when `current` and the next PLAYBACK_BUFFER_AHEAD frames in
+        the play direction (clamped to the video) are all decoded."""
+        for k in range(PLAYBACK_BUFFER_AHEAD + 1):
+            frame = current + direction * k
+            if frame < 0 or frame > self.video.total_frames:
+                break
+            if frame not in self.frame_buffer:
+                return False
+        return True
+
+    def _play_tick(self):
+        self._play_tick_id = None
+        if self.video is None:
+            self.play = False  # the video went away (unload): playback is over
+        if not self.play:
+            self._end_play_chain()
+            return
+        direction = 1 if self.play_dir >= 0 else -1
+        current = self.video.current_frame
+        next_frame, stop = compute_play_step(current, self.video.total_frames, direction)
+        if stop:
+            self._end_play_chain()
+            self._on_playback_boundary(current, direction)
+            return
+        if not self._play_window_buffered(current, direction):
+            # Stall briefly rather than stutter: wait until the next frames
+            # are decoded, then restart the clock (no catch-up burst).
+            self.frame_buffer.request_priority(next_frame)
+            self._play_next_due = None
+            self._play_tick_id = self.after(PLAYBACK_STALL_POLL_MS, self._play_tick)
+            return
+        due = self._play_next_due = self._next_deadline(
+            self._play_next_due, self._frame_interval_s())
+        self._apply_play_advance(next_frame, direction)
+        delay_ms = max(1, round((due - time.perf_counter()) * 1000.0))
+        self._play_tick_id = self.after(delay_ms, self._play_tick)
 
     def _request_buffered_step(self, delta):
         if self.video is None:
@@ -821,7 +900,6 @@ class LabelingApp(tk.Tk):
         current_frame = self.video.current_frame
         next_frame = max(0, min(self.video.total_frames, current_frame + delta))
         if current_frame not in self.frame_buffer or next_frame not in self.frame_buffer:
-            self.frame_buffer.buffer_ready = False
             self.after(50, self._buffered_step_tick)
             return
         self._pending_buffer_step = None
@@ -1598,25 +1676,11 @@ class LabelingApp(tk.Tk):
             last_step_sign=self._last_step_sign,
         )
 
-    def _playback_context(self):
-        """Per-tick state snapshot for the playback thread."""
-        if self._suspend_frame_workers or self.video is None:
-            return None
-        return PlaybackContext(
-            playing=bool(self.play),
-            direction=1 if getattr(self, "play_dir", 1) >= 0 else -1,
-            current_frame=self.video.current_frame,
-            total_frames=self.video.total_frames,
-            frame_rate=self.frame_rate,
-        )
-
     def _apply_play_advance(self, next_frame, direction):
-        """Apply one playback advance ON THE TK THREAD (single-writer rule).
+        """Apply one playback step: move to `next_frame` and redraw.
 
-        The playback worker only REQUESTS the advance (via schedule_on_ui), so
-        every write to video.current_frame happens here or in the other
-        UI-thread writers (next_frame, timeline clicks, select_frame) — never
-        concurrently from two threads.
+        Called by _play_tick on the Tk thread, like every other writer of
+        video.current_frame (next_frame, timeline clicks, select_frame).
         """
         if self.video is None:
             logger.debug("play advance skipped: no video (shutdown/reload)")
@@ -1641,15 +1705,10 @@ class LabelingApp(tk.Tk):
         self.play_dir = 1
         logger.debug("playback stopped at boundary: frame=%s direction=%s", current_frame, direction)
 
-    def _on_playback_schedule_error(self, exc):
-        """UI marshaling failed — the Tk mainloop is gone (close mid-playback)."""
-        self.play = False
-        logger.debug("playback redraw scheduling stopped: Tk shutting down: %s", exc)
-
     @staticmethod
     def _compute_play_step(current_frame, total_frames, direction):
         """Pure play-step decision: (next_frame, stop). No Tk, no side effects.
-        Lives in adapters.frame_buffer.compute_play_step; kept here as the
+        Lives in domain.playback.compute_play_step; kept here as the
         stable entry point the H1 tests pin."""
         return compute_play_step(current_frame, total_frames, direction)
 
@@ -1992,14 +2051,8 @@ class LabelingApp(tk.Tk):
             return
         # Always play forward when the user clicks Play, regardless of any
         # prior arrow-hold state that may have left play_dir = -1.
-        self.play_dir = 1
         self._hold_play_active = False
-        if not self.play:
-            self.play = True
-            if not self.play_thread_on:
-                self.play_thread_on = True
-                if not self.background_thread_play.is_alive():
-                    self.background_thread_play.start()
+        self._start_playback(1)
 
     def stop_video(self):
         self.play = False
@@ -2568,11 +2621,21 @@ class LabelingApp(tk.Tk):
     def _cancel_pending_timers(self):
         """Cancel our own repeating `after()` timers before the root goes away.
 
-        Without this the diagram-refresh timer, the display pump (and any live
-        arrow-hold watchdog) fire into a destroyed interpreter and Tcl prints
+        Without this the diagram-refresh timer, the display pump, a running
+        playback tick (and any live arrow-hold watchdog) fire into a destroyed
+        interpreter and Tcl prints
         `invalid command name "...periodic_print_dot"` on every close.
         """
         self._cancel_arrow_hold_state()
+        self.play = False
+        self._precise_timers.release_all()
+        play_id = getattr(self, "_play_tick_id", None)
+        if play_id is not None:
+            try:
+                self.after_cancel(play_id)
+            except Exception:
+                logger.warning("could not cancel playback tick", exc_info=True)
+            self._play_tick_id = None
         pump_id = getattr(self, "_display_pump_id", None)
         if pump_id is not None:
             try:

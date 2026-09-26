@@ -92,12 +92,7 @@ def test_resize_for_buffer_keeps_the_degenerate_guard():
 # === 3. the decode path stores frames at final display size ===================
 def _make_buffer(get_buffer_context=lambda: None):
     return FrameBuffer(
-        schedule_on_ui=lambda fn: fn(),
         get_buffer_context=get_buffer_context,
-        get_playback_context=lambda: None,
-        apply_play_advance=lambda *a: None,
-        on_playback_boundary=lambda *a: None,
-        on_playback_schedule_error=lambda exc: None,
     )
 
 

@@ -28,20 +28,15 @@ SAMPLE_AT_S = 0.3      # ...and halfway through we look at the buffer
 MIN_PREFETCHED = 20    # the window is 80 frames; tiny JPEGs decode in ~1 ms
 
 
-def _make_buffer(root, frames_dir):
+def _make_buffer(frames_dir):
     context = BufferContext(
         frames_dir=frames_dir, current_frame=CURRENT, total_frames=TOTAL_FRAMES,
         display_w=100, display_h=100, downscale=1.0,
         jump_frame_count=1, last_step_sign=0,
     )
-    # Exactly how LabelingApp wires its thread -> UI boundary.
+    # Exactly how LabelingApp builds it: no callback into the GUI exists.
     return FrameBuffer(
-        schedule_on_ui=lambda fn: root.after(0, fn),
         get_buffer_context=lambda: context,
-        get_playback_context=lambda: None,
-        apply_play_advance=lambda *a: None,
-        on_playback_boundary=lambda *a: None,
-        on_playback_schedule_error=lambda exc: None,
     )
 
 
@@ -53,7 +48,7 @@ def test_prefetch_continues_while_the_ui_thread_is_busy(tmp_path):
 
     root = tk.Tk()
     root.withdraw()
-    fb = _make_buffer(root, str(frames_dir))
+    fb = _make_buffer(str(frames_dir))
     worker = threading.Thread(target=fb.background_update, daemon=True)
     observed = {}
 
