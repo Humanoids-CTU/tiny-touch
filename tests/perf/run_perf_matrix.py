@@ -24,6 +24,9 @@ drift, so the comparison stays fair. The reference label is then
 Without A/B mode the reference is COMPARE_WITH ("baseline"), recorded at a
 different time — only trust large differences there.
 
+Every run first checks the power source and the matrix stops on battery
+(Windows throttles the CPU then); TINYTOUCH_PERF_ALLOW_BATTERY=1 overrides.
+
 With TINYTOUCH_PERF_SUMMARY_ONLY=1 it skips running and only re-prints the
 summary of the JSONs already in tests/perf/results/.
 """
@@ -75,6 +78,33 @@ METRICS = [
 
 
 # === running ==================================================================
+def on_battery():
+    """True when the machine runs on battery (the OS throttles the CPU then).
+
+    None when unknown (desktop, no battery info) — that never blocks a run.
+    """
+    if sys.platform == "win32":
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "(Get-CimInstance Win32_Battery).BatteryStatus"],
+            capture_output=True, text=True,
+        )
+        status = proc.stdout.strip()
+        # Win32_Battery.BatteryStatus: 1 = discharging, 2 = on AC.
+        return None if not status.isdigit() else status == "1"
+    for path in glob.glob("/sys/class/power_supply/*/online"):
+        with open(path, encoding="ascii") as fh:
+            return fh.read().strip() == "0"
+    return None
+
+
+def require_mains_power():
+    """Stop the matrix on battery: those runs are not comparable."""
+    if on_battery() and not os.environ.get("TINYTOUCH_PERF_ALLOW_BATTERY"):
+        sys.exit("On battery power — plug in the charger (or set "
+                 "TINYTOUCH_PERF_ALLOW_BATTERY=1 to measure anyway).")
+
+
 def ensure_worktree(rev):
     """A detached checkout of `rev` outside the repo, reused across runs."""
     path = os.path.join(tempfile.gettempdir(), f"tinytouch-perf-{rev}")
@@ -127,6 +157,7 @@ def run_matrix(label, ab_rev):
                         if i % 2:
                             order.reverse()  # A B, B A, A B: no order bias
                     for run_label, repo in order:
+                        require_mains_power()
                         print(f"  {run_label}: {name}", flush=True)
                         run_one(run_label, video, panel, repo)
     finally:
