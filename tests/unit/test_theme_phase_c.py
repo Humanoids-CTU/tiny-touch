@@ -6,7 +6,7 @@ import pytest
 
 from adapters import config as config_utils
 from gui import theme
-from gui.cloth_app import ClothApp
+from gui.special_zones_app import SpecialZonesApp
 import labeling_app
 from labeling_app import LabelingApp
 
@@ -39,7 +39,7 @@ def test_hollow_dot_sprite_keeps_its_center_transparent(monkeypatch):
     assert sprite.getpixel((8, 8))[3] <= 5
 
 
-def test_clothes_dot_uses_sprite_and_preserves_stored_coordinates(monkeypatch):
+def test_special_zones_dot_uses_sprite_and_preserves_stored_coordinates(monkeypatch):
     sprite = object()
     calls = []
     canvas = SimpleNamespace(
@@ -48,7 +48,7 @@ def test_clothes_dot_uses_sprite_and_preserves_stored_coordinates(monkeypatch):
     app = SimpleNamespace(canvas2=canvas, dot_radius=7, dots={})
     monkeypatch.setattr(theme, "dot_sprite", lambda color, radius: sprite)
 
-    dot_id = ClothApp._create_dot(app, 12.5, 18.25)
+    dot_id = SpecialZonesApp._create_dot(app, 12.5, 18.25)
 
     assert dot_id == 42
     assert calls == [((12.5, 18.25), {"image": sprite})]

@@ -24,11 +24,12 @@ def write_export_metadata(meta_path: str,
                           video_name,
                           labeling_mode,
                           frame_rate,
-                          clothes_list,
+                          special_zones_list,
                           param_labels: dict | None = None,
                           limb_param_labels: dict | None = None,
                           labeling_time_seconds: float | None = None,
-                          *, template: str) -> None:
+                          *, template: str,
+                          special_zones_note: str | None = None) -> None:
     """
     Writes a JSON sidecar with all non-tabular export metadata that used to be
     stuffed into the first 5 lines of *_export.csv.
@@ -40,7 +41,8 @@ def write_export_metadata(meta_path: str,
         "Labeling Mode": labeling_mode,
         "template": template,
         "Frame Rate": frame_rate,
-        "Zones Covered With Clothes": clothes_list,
+        "Special Zones": special_zones_list,
+        "Special Zones Note": special_zones_note,
         "Param Labels": param_labels or {},
         "Limb Param Labels": limb_param_labels or {},
     }
@@ -55,7 +57,7 @@ def export_from_unified(frames: Dict[int, FrameBundle],
                         video_name: str,
                         labeling_mode: str,
                         frame_rate: float,
-                        clothes_list,
+                        special_zones_list,
                         total_frames: int,
                         param_labels: Dict[str, str] | None = None,
                         limb_param_labels: Dict[str, str] | None = None) -> None:

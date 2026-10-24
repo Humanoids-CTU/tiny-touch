@@ -141,7 +141,7 @@ def test_full_lifecycle_state_db_roundtrip_and_export(tmp_path):
     # here we only assert the seam produces a complete, well-formed table.)
     export_from_unified(
         loaded_b, export, program_version=8.0, video_name="vid",
-        labeling_mode="Normal", frame_rate=25.0, clothes_list=None,
+        labeling_mode="Normal", frame_rate=25.0, special_zones_list=None,
         total_frames=TOTAL_FRAMES,
     )
     repo.close()

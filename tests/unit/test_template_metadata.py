@@ -14,7 +14,7 @@ from service_layer.save_service import MetadataInputs, run_export
 def _write_metadata(path, template):
     write_export_metadata(
         path, program_version="test", video_name="vid", labeling_mode="Normal",
-        frame_rate=25, clothes_list=None, template=template,
+        frame_rate=25, special_zones_list=None, template=template,
     )
 
 

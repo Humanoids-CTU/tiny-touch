@@ -21,7 +21,8 @@ BASE_KEYS = [
     "Labeling Mode",
     "template",
     "Frame Rate",
-    "Zones Covered With Clothes",
+    "Special Zones",
+    "Special Zones Note",
     "Param Labels",
     "Limb Param Labels",
 ]
@@ -34,7 +35,8 @@ def _write(tmp_path, **overrides):
         labeling_mode="Normal",
         template="default",
         frame_rate=25.0,
-        clothes_list=["BELLY", "17L"],
+        special_zones_list=["BELLY", "17L"],
+        special_zones_note="diaper and socks",
         param_labels={"Par1": "Looking1"},
         limb_param_labels={"Par1": "Grasp"},
     )
@@ -69,7 +71,8 @@ def test_metadata_exact_values_roundtrip(tmp_path):
         "Labeling Mode": "Normal",
         "template": "default",
         "Frame Rate": 25.0,
-        "Zones Covered With Clothes": ["BELLY", "17L"],
+        "Special Zones": ["BELLY", "17L"],
+        "Special Zones Note": "diaper and socks",
         "Param Labels": {"Par1": "Looking1"},
         "Limb Param Labels": {"Par1": "Grasp"},
         "Total Labeling Time (hours)": 2.0,
@@ -83,17 +86,18 @@ def test_metadata_labeling_time_rounds_to_4dp(tmp_path):
     assert meta["Total Labeling Time (hours)"] == 1.0169
 
 
-def test_metadata_clothes_none_stays_null_and_labels_default_to_empty(tmp_path):
-    """No clothes dialog run -> clothes_list=None is serialized as JSON null
+def test_metadata_special_zones_none_stays_null_and_labels_default_to_empty(tmp_path):
+    """No Special Zones dialog run -> list and note are serialized as JSON null
     (NOT an empty list — downstream distinguishes 'never marked' from 'marked
     nothing'). Absent label dicts collapse to {}."""
-    path = _write(tmp_path, clothes_list=None, param_labels=None,
-                  limb_param_labels=None)
+    path = _write(tmp_path, special_zones_list=None, special_zones_note=None,
+                  param_labels=None, limb_param_labels=None)
     meta = json.loads(path.read_text(encoding="utf-8"))
-    assert meta["Zones Covered With Clothes"] is None
+    assert meta["Special Zones"] is None
+    assert meta["Special Zones Note"] is None
     assert meta["Param Labels"] == {}
     assert meta["Limb Param Labels"] == {}
-    assert '"Zones Covered With Clothes": null' in path.read_text(encoding="utf-8")
+    assert '"Special Zones": null' in path.read_text(encoding="utf-8")
 
 
 def test_metadata_is_indent2_json(tmp_path):
@@ -110,13 +114,15 @@ def test_metadata_is_indent2_json(tmp_path):
 def test_metadata_non_ascii_survives_as_utf8_not_escapes(tmp_path):
     """ensure_ascii=False is part of the contract: a Czech zone/param label must
     land in the file as literal UTF-8 bytes, never \\uXXXX escapes."""
-    path = _write(tmp_path, clothes_list=["Bříško"],
+    path = _write(tmp_path, special_zones_list=["Bříško"],
+                  special_zones_note="Plenka ěšč",
                   param_labels={"Par1": "Pohled ěšč"})
     raw = path.read_bytes()
     assert not raw.startswith(b"\xef\xbb\xbf"), "metadata grew a UTF-8 BOM"
     assert "Bříško".encode("utf-8") in raw
     assert "Pohled ěšč".encode("utf-8") in raw
+    assert "Plenka ěšč".encode("utf-8") in raw
     assert b"\\u" not in raw
     meta = json.loads(path.read_text(encoding="utf-8"))
-    assert meta["Zones Covered With Clothes"] == ["Bříško"]
+    assert meta["Special Zones"] == ["Bříško"]
     assert meta["Param Labels"]["Par1"] == "Pohled ěšč"

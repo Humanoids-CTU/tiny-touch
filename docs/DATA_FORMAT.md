@@ -160,7 +160,8 @@ literal UTF-8 (no `\uXXXX` escaping), keys in this exact order:
 | `Labeling Mode` | str | `"Normal"` or `"Reliability"`. |
 | `template` | str | `"default"` or `"alternate"`, selected for this project. Required by analysis; determines the body diagrams and zone masks. |
 | `Frame Rate` | float | Frames per second as probed from the video, rounded to one decimal. May be `0.0` — see "Zero frame rate". |
-| `Zones Covered With Clothes` | list of str \| null | Zone names the annotator marked as covered by clothing. `null` means the Clothes dialog was never used, which is **not** the same as `[]` ("opened, marked nothing"). Deduplicated but unsorted; a dot that resolved to several zones contributes one comma-joined string as a single entry. |
+| `Special Zones` | list of str \| null | Zone names the annotator marked in the Special Zones dialog. What the marks mean (e.g. covered by clothing) is described by `Special Zones Note`. `null` means no zone was marked. Deduplicated but unsorted; a dot that resolved to several zones contributes one comma-joined string as a single entry. Replaces `Zones Covered With Clothes` from exports written before this change. |
+| `Special Zones Note` | str \| null | Free-text, project-wide description of what the special zones mark, as typed in the Special Zones dialog. Leading and trailing whitespace is stripped. `null` when no note was written. |
 | `Param Labels` | object | Display labels of the three global parameter buttons, keyed `"Parameter_1"`, `"Parameter_2"`, `"Parameter_3"`. `{}` when unavailable. |
 | `Limb Param Labels` | object | Display labels of the three per-limb parameter buttons, keyed `"XX_Parameter_1"`, `"XX_Parameter_2"`, `"XX_Parameter_3"`. The `XX` is a placeholder standing for any of the four limbs — the same three labels apply to all of them. `{}` when unavailable. |
 | `Total Labeling Time (hours)` | float | Cumulative wall-clock time spent labeling this video, in hours, rounded to 4 decimals. Accumulated across sessions. **Present only when the app had a running labeling clock**; absent from files written without one. |
@@ -174,7 +175,8 @@ Example:
   "Labeling Mode": "Normal",
   "template": "default",
   "Frame Rate": 25.0,
-  "Zones Covered With Clothes": ["A", "B"],
+  "Special Zones": ["A", "B"],
+  "Special Zones Note": "Covered by clothing (diaper, socks)",
   "Param Labels": {
     "Parameter_1": "Looking1",
     "Parameter_2": "P2",

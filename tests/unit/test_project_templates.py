@@ -27,8 +27,8 @@ def test_empty_project_can_change_but_lock_survives_deletion_and_reopen(tmp_path
     repo = SqliteRepository(paths.state_db)
     repo.save_template(TemplateState(DEFAULT_TEMPLATE))
     repo.save_template(TemplateState(ALTERNATE_TEMPLATE))
-    repo.save_clothes([(1, 20, 30, "A")], 1.0)
-    repo.save_clothes([], 1.0)
+    repo.save_special_zones([(1, 20, 30, "A")], 1.0)
+    repo.save_special_zones([], 1.0)
     repo.close()
     repo = SqliteRepository(paths.state_db)
     try:
@@ -82,7 +82,7 @@ def legacy(paths):
         conn.execute("PRAGMA user_version=1")
 
 
-@pytest.mark.parametrize("schema", [0, 1, 999])
+@pytest.mark.parametrize("schema", [0, 1, 2, 999])
 def test_unsupported_schema_is_rejected_without_rewriting_or_backing_up(tmp_path, schema):
     paths = project(tmp_path)
     legacy(paths)

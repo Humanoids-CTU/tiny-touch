@@ -110,7 +110,7 @@ def test_M12_reader_accepts_real_and_legacy_export(tmp_path):
         video_name="vid",
         labeling_mode="Normal",
         frame_rate=30.0,
-        clothes_list=None,
+        special_zones_list=None,
         total_frames=1,
     )
     legacy.write_text(

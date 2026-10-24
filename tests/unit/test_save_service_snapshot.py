@@ -91,7 +91,7 @@ def test_full_save_pipeline_writes_state_and_export(tmp_path):
         program_version="8.0.0 (test)",
         video_name="vid",
         labeling_mode="Normal",
-        clothes_list=None,
+        special_zones_list=None,
         param_labels={"Parameter_1": "Looking1"},
         limb_param_labels=None,
         labeling_time_seconds=3600.0,
@@ -118,17 +118,17 @@ def test_full_save_pipeline_writes_state_and_export(tmp_path):
     assert not os.path.exists(os.path.join(paths.export_dir, "vid_project.json"))
 
 
-def test_clothes_zones_for_metadata_come_from_the_repo(tmp_path):
-    """The export metadata's "Zones Covered With Clothes" now reads the state
+def test_special_zones_zones_for_metadata_come_from_the_repo(tmp_path):
+    """The export metadata's "Special Zones" now reads the state
     DB instead of the retired clothes sidecar."""
     paths = ProjectPaths("vid", base_dir=str(tmp_path / "data"))
     repo = SqliteRepository(paths.state_db)
     try:
-        assert save_service.load_clothes_zones(None) is None
-        assert save_service.load_clothes_zones(repo) is None
+        assert save_service.load_special_zones(None) is None
+        assert save_service.load_special_zones(repo) is None
 
-        repo.save_clothes([(1, 10.0, 20.0, "L"), (2, 30.0, 40.0, "L")], 1.0)
+        repo.save_special_zones([(1, 10.0, 20.0, "L"), (2, 30.0, 40.0, "L")], 1.0)
 
-        assert save_service.load_clothes_zones(repo) == ["L"]
+        assert save_service.load_special_zones(repo) == ["L"]
     finally:
         repo.close()

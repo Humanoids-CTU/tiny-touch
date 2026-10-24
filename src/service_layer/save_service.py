@@ -45,22 +45,28 @@ class MetadataInputs:
     program_version: object
     video_name: str
     labeling_mode: str
-    clothes_list: Optional[list]
+    special_zones_list: Optional[list]
     param_labels: Optional[dict]
     limb_param_labels: Optional[dict]
     labeling_time_seconds: Optional[float]
     template: Optional[str] = None
+    special_zones_note: Optional[str] = None
 
 
-def load_clothes_zones(repo: Optional[SqliteRepository]):
-    """Clothes-zone list for the export metadata, or None without a repo.
+def load_special_zones(repo: Optional[SqliteRepository]):
+    """Special-zone list for the export metadata, or None without a repo.
 
     Reproduces the retired sidecar reader `extract_zones_from_file` exactly
     (set-deduplicated, UNSORTED, a multi-zone dot contributing its whole
     comma-joined string as one entry) because
     `export/<video>_metadata.json` is a frozen contract.
     """
-    return repo.clothes_zone_list() if repo is not None else None
+    return repo.special_zone_list() if repo is not None else None
+
+
+def load_special_zones_note(repo: Optional[SqliteRepository]) -> Optional[str]:
+    """Project-wide Special Zones note for the export metadata, or None."""
+    return repo.special_zones_note() if repo is not None else None
 
 
 def build_save_snapshot(frames: Dict[int, FrameBundle]) -> Dict[int, FrameBundle]:
@@ -97,7 +103,8 @@ def run_export(snapshot: Dict[int, FrameBundle],
         video_name=metadata.video_name,
         labeling_mode=metadata.labeling_mode,
         frame_rate=fps,
-        clothes_list=metadata.clothes_list,
+        special_zones_list=metadata.special_zones_list,
+        special_zones_note=metadata.special_zones_note,
         param_labels=metadata.param_labels,
         limb_param_labels=metadata.limb_param_labels,
         labeling_time_seconds=metadata.labeling_time_seconds,
@@ -109,7 +116,7 @@ def run_export(snapshot: Dict[int, FrameBundle],
         metadata.video_name,
         metadata.labeling_mode,
         fps,
-        metadata.clothes_list,
+        metadata.special_zones_list,
         total_frames=total_frames,
         param_labels=metadata.param_labels,
         limb_param_labels=metadata.limb_param_labels,

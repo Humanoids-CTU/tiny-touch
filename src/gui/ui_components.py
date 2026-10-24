@@ -141,14 +141,14 @@ def _build_controls(app):
     )
     settings_btn.pack(side="left", padx=5)
 
-    app.cloth_btn = ttk.Button(
+    app.special_zones_btn = ttk.Button(
         left_top,
-        text="Clothes",
-        command=app.open_cloth_app,
+        text="Special Zones",
+        command=app.open_special_zones_app,
         style="Tool.TButton",
         takefocus=0,
     )
-    app.cloth_btn.pack(side="left", padx=5)
+    app.special_zones_btn.pack(side="left", padx=5)
 
     app.analysis_btn = ttk.Button(
         left_top,

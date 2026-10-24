@@ -28,7 +28,7 @@ def test_M4_export_survives_zero_fps(tmp_path, one_touch_frames):
     # RED today: raises ZeroDivisionError and never writes the file.
     export_from_unified(
         one_touch_frames, str(out), program_version=7.8, video_name="vid",
-        labeling_mode="Normal", frame_rate=0.0, clothes_list=None, total_frames=5,
+        labeling_mode="Normal", frame_rate=0.0, special_zones_list=None, total_frames=5,
     )
 
     assert out.exists(), "export aborted on a 0-FPS video"

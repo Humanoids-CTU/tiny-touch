@@ -89,7 +89,7 @@ def _export_golden(tmp_path, frame_rate=GOLDEN_FPS):
     out = tmp_path / "vid_export.csv"
     export_from_unified(
         build_golden_frames(), str(out), program_version=8.0, video_name="vid",
-        labeling_mode="Normal", frame_rate=frame_rate, clothes_list=None,
+        labeling_mode="Normal", frame_rate=frame_rate, special_zones_list=None,
         total_frames=GOLDEN_TOTAL_FRAMES,
     )
     return out
@@ -170,7 +170,7 @@ def test_export_zero_frame_rate_zeroes_time_only(tmp_path):
     export_from_unified(
         build_golden_frames(), str(out_zero), program_version=8.0,
         video_name="vid", labeling_mode="Normal", frame_rate=0.0,
-        clothes_list=None, total_frames=GOLDEN_TOTAL_FRAMES,
+        special_zones_list=None, total_frames=GOLDEN_TOTAL_FRAMES,
     )
 
     df_fps = pd.read_csv(out_fps, dtype=str, keep_default_na=False)

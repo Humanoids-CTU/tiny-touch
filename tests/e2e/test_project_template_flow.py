@@ -1,4 +1,4 @@
-"""Researcher workflows for template choice, locking, clothing and reopening."""
+"""Researcher workflows for template choice, locking, special zones and reopening."""
 
 import json
 import shutil
@@ -32,7 +32,7 @@ def _metadata(paths):
     ("Default", "default", "zones3", "I"),
     ("Alternate", "alternate", "zones3_new_template", "G"),
 ])
-def test_clothes_displays_selected_template_and_permanently_locks_it(
+def test_special_zones_displays_selected_template_and_permanently_locks_it(
     app, workspace, choice, template, folder, zone,
 ):
     load_video(app, workspace, workspace.video, template=choice)
@@ -40,34 +40,34 @@ def test_clothes_displays_selected_template_and_permanently_locks_it(
     assert _metadata(paths)["template"] == template
     assert _metadata(paths)["template_locked"] == "0"
 
-    click(app, "Clothes")
+    click(app, "Special Zones")
     pump(app)
-    window = find_toplevel(app, "Clothes App")
+    window = find_toplevel(app, "Special Zones")
     canvas = find_widget(window, cls=tk.Canvas)
     # Inspect the image sent to Tk, rather than just its configured file path.
-    rendered = ImageTk.getimage(app._cloth_app.photo2).convert("RGB")
+    rendered = ImageTk.getimage(app._special_zones_app.photo2).convert("RGB")
     with Image.open(asset_path(f"icons/{folder}/LINE.png")) as outline:
         expected = outline.convert("RGB").resize(rendered.size, Image.Resampling.LANCZOS)
     assert ImageChops.difference(rendered, expected).getbbox() is None
 
-    scale = app._cloth_app.diagram_scale
+    scale = app._special_zones_app.diagram_scale
     point = (int(192 * scale), int(336 * scale))
     click_canvas(canvas, "<Button-1>", *point)
     pump(app)
-    # Lock is durable before the user presses Save in Clothes.
+    # Lock is durable before the user presses Save in Special Zones.
     assert _metadata(paths)["template_locked"] == "1"
-    app._cloth_app.on_close()  # same handler as the window's close button
+    app._special_zones_app.on_close()  # same handler as the window's close button
     connection = sqlite3.connect(paths.state_db)
     try:
-        assert connection.execute("SELECT zones FROM clothes_dots").fetchall() == [(zone,)]
+        assert connection.execute("SELECT zones FROM special_zone_dots").fetchall() == [(zone,)]
     finally:
         connection.close()
 
-    click(app, "Clothes")
+    click(app, "Special Zones")
     pump(app)
-    window = find_toplevel(app, "Clothes App")
+    window = find_toplevel(app, "Special Zones")
     click_canvas(find_widget(window, cls=tk.Canvas), "<Button-2>", *point)
-    app._cloth_app.on_close()
+    app._special_zones_app.on_close()
     assert _metadata(paths)["template_locked"] == "1"
     save(app)
     assert json.loads(Path(paths.export_metadata).read_text())["template"] == template
@@ -76,6 +76,32 @@ def test_clothes_displays_selected_template_and_permanently_locks_it(
     load_video(app, workspace, workspace.video, template=opposite)
     assert _metadata(paths)["template"] == template
     assert any(title == "Saved template restored" for _, title, _ in workspace.messages)
+    assert not workspace.errors()
+
+
+def test_special_zones_note_locks_template_exports_and_reopens(app, workspace):
+    load_video(app, workspace, workspace.video, template="Default")
+    paths = workspace.project()
+
+    click(app, "Special Zones")
+    pump(app)
+    app._special_zones_app.note_var.set("  diaper and socks ")
+    app._special_zones_app.on_close()
+
+    # A note alone locks the template but does not light the button.
+    assert _metadata(paths)["template_locked"] == "1"
+    assert _metadata(paths)["special_zones_note"] == "diaper and socks"
+    assert str(app.special_zones_btn.cget("style")) == "StateNeutral.TButton"
+
+    save(app)
+    meta = json.loads(Path(paths.export_metadata).read_text(encoding="utf-8"))
+    assert meta["Special Zones"] is None
+    assert meta["Special Zones Note"] == "diaper and socks"
+
+    click(app, "Special Zones")
+    pump(app)
+    assert app._special_zones_app.note_var.get() == "diaper and socks"
+    app._special_zones_app.on_close()
     assert not workspace.errors()
 
 

@@ -36,7 +36,7 @@ pytestmark = pytest.mark.gui
 _REQUIRED_ATTRIBUTES = (
     "video_frame", "timeline_frame", "control_frame", "diagram_frame",
     "diagram_canvas", "timeline_canvas", "timeline2_canvas",
-    "note_entry", "load_video_btn", "analysis_btn", "cloth_btn",
+    "note_entry", "load_video_btn", "analysis_btn", "special_zones_btn",
     "par1_btn", "par2_btn", "par3_btn",
     "limb_par1_btn", "limb_par2_btn", "limb_par3_btn",
     "select_frame_button", "frame_counter_label", "time_counter_label", "name_label",
@@ -44,13 +44,13 @@ _REQUIRED_ATTRIBUTES = (
 )
 
 _EXPECTED_BUTTON_LABELS = (
-    "Load Video", "Settings", "Clothes", "Analysis", "Save",
+    "Load Video", "Settings", "Special Zones", "Analysis", "Save",
     "<<", "<", "Select Frame", ">", ">>", "Play", "Stop",
     "Save Note",
 )
 
 _EXPECTED_TOP_BUTTON_ORDER = (
-    "Load Video", "Settings", "Clothes", "Analysis", "Save",
+    "Load Video", "Settings", "Special Zones", "Analysis", "Save",
 )
 
 
@@ -101,9 +101,9 @@ def test_app_builds_wires_and_closes_cleanly(app, capfd):
     _assert_top_buttons_are_ordered(app)
     _assert_zone_masks_loaded(app)
 
-    # Analysis / Clothes stay disabled until a video is loaded.
+    # Analysis / Special Zones stay disabled until a video is loaded.
     assert str(app.analysis_btn.cget("state")) == "disabled"
-    assert str(app.cloth_btn.cget("state")) == "disabled"
+    assert str(app.special_zones_btn.cget("state")) == "disabled"
     assert str(app.select_frame_button.cget("state")) == "disabled"
 
     # The periodic diagram repaint (after(300, ...)) must survive a few ticks

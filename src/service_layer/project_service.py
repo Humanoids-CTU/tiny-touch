@@ -235,14 +235,14 @@ def extract_frames(video_path: str, paths: ProjectPaths, labeling_mode: str,
     )
 
 
-# === Clothes ==================================================================
-def rescale_clothes_points(points: list, stored_scale: Optional[float],
+# === Special Zones ============================================================
+def rescale_special_zone_points(points: list, stored_scale: Optional[float],
                            display_scale: float, default_scale: float) -> list:
     """Rescale dot coordinates from the scale they were STORED at to the
     current display scale.
 
-    Shared by the DB path (`SqliteRepository.load_clothes_rows` +
-    `clothes_diagram_scale`) and the legacy TXT reader below, so both keep the
+    Shared by the DB path (`SqliteRepository.load_special_zone_rows` +
+    `special_zones_diagram_scale`) and the legacy TXT reader below, so both keep the
     identical fallback chain: a missing scale means 0.5 (the historical default
     the sidecar was written at), and a non-positive one falls back to the
     display scale.
@@ -256,11 +256,11 @@ def rescale_clothes_points(points: list, stored_scale: Optional[float],
     return [(x * scale_ratio, y * scale_ratio) for x, y in points]
 
 
-def load_clothes_points_from_repo(repo, display_scale: float,
+def load_special_zone_points_from_repo(repo, display_scale: float,
                                   default_scale: float) -> list:
-    """Live path: clothes dot coordinates from the state DB, rescaled exactly
+    """Live path: special zone dot coordinates from the state DB, rescaled exactly
     as the legacy sidecar reader did."""
-    points = [(row[1], row[2]) for row in repo.load_clothes_rows()]
-    return rescale_clothes_points(
-        points, repo.clothes_diagram_scale(), display_scale, default_scale
+    points = [(row[1], row[2]) for row in repo.load_special_zone_rows()]
+    return rescale_special_zone_points(
+        points, repo.special_zones_diagram_scale(), display_scale, default_scale
     )

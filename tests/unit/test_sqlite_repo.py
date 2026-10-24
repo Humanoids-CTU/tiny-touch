@@ -10,7 +10,7 @@ equality check (`save -> load == the in-memory original`).
 
 Also pinned here: the SQLite properties that REPLACED the journal's mechanisms
 (idempotent re-save, dirty-only writes, `user_version`, FK cascade), the
-Tk-thread ownership guard, and the byte-compatibility of the clothes zone list
+Tk-thread ownership guard, and the byte-compatibility of the special zone list
 with the retired `extract_zones_from_file`.
 
 Black-box, tmp_path only — never touches the real data/ tree.
@@ -27,6 +27,7 @@ import pytest
 
 from adapters.sqlite_repo import SCHEMA_VERSION, SchemaVersionError, SqliteRepository
 from domain.model import empty_bundle, empty_record
+from domain.templates import DEFAULT_TEMPLATE, TemplateState
 
 
 @pytest.fixture
@@ -516,20 +517,20 @@ def test_labeling_time_survives_a_corrupt_meta_value(repo):
     assert repo.load_labeling_time_seconds() == 0.0
 
 
-def test_clothes_round_trip_and_full_replace(repo):
-    repo.save_clothes([(2, 145.0, 287.0, "L"), (3, 206.0, 295.0, "K")], 1.0)
-    assert repo.has_clothes() is True
-    assert repo.load_clothes_rows() == [(2, 145.0, 287.0, "L"), (3, 206.0, 295.0, "K")]
-    assert repo.clothes_diagram_scale() == 1.0
+def test_special_zones_round_trip_and_full_replace(repo):
+    repo.save_special_zones([(2, 145.0, 287.0, "L"), (3, 206.0, 295.0, "K")], 1.0)
+    assert repo.has_special_zones() is True
+    assert repo.load_special_zone_rows() == [(2, 145.0, 287.0, "L"), (3, 206.0, 295.0, "K")]
+    assert repo.special_zones_diagram_scale() == 1.0
 
     # A second dialog save REPLACES the set (dots can be deleted).
-    repo.save_clothes([(1, 10.0, 20.0, "A,B")], 0.5)
+    repo.save_special_zones([(1, 10.0, 20.0, "A,B")], 0.5)
 
-    assert repo.load_clothes_rows() == [(1, 10.0, 20.0, "A,B")]
-    assert repo.clothes_diagram_scale() == 0.5
+    assert repo.load_special_zone_rows() == [(1, 10.0, 20.0, "A,B")]
+    assert repo.special_zones_diagram_scale() == 0.5
 
 
-def test_clothes_zone_list_keeps_the_frozen_sidecar_tokenization(repo):
+def test_special_zone_list_keeps_the_frozen_sidecar_tokenization(repo):
     """`export/<video>_metadata.json` is a frozen contract, so the DB's zone
     list must keep the shape the retired `extract_zones_from_file` produced:
     set-deduplicated, UNSORTED, and a multi-zone dot contributing its whole
@@ -541,21 +542,41 @@ def test_clothes_zone_list_keeps_the_frozen_sidecar_tokenization(repo):
     """
     dots = [(2, 145.0, 287.0, "L"), (3, 206.0, 295.0, "K"),
             (4, 144.0, 367.0, "L"), (5, 212.0, 387.0, "A,B")]
-    repo.save_clothes(dots, 1.0)
+    repo.save_special_zones(dots, 1.0)
 
     # Dot 4 repeats "L" -> de-duplicated; dot 5's "A,B" stays ONE entry.
-    assert sorted(repo.clothes_zone_list()) == ["A,B", "K", "L"]
-    assert "A,B" in repo.clothes_zone_list()
+    assert sorted(repo.special_zone_list()) == ["A,B", "K", "L"]
+    assert "A,B" in repo.special_zone_list()
 
 
-def test_clothes_zone_list_is_none_without_dots(repo):
-    assert repo.clothes_zone_list() is None
+def test_special_zone_list_is_none_without_dots(repo):
+    assert repo.special_zone_list() is None
+
+
+def test_special_zones_note_round_trip_and_blank_clears(repo):
+    assert repo.special_zones_note() is None
+
+    repo.save_special_zones([], 1.0, "  diaper and socks  ")
+    assert repo.special_zones_note() == "diaper and socks"
+    assert repo.has_special_zones() is False
+
+    repo.save_special_zones([], 1.0, "   ")
+    assert repo.special_zones_note() is None
+
+
+def test_special_zones_note_alone_locks_the_template(repo):
+    repo.save_template(TemplateState(DEFAULT_TEMPLATE))
+    repo.save_special_zones([], 1.0, None)
+    assert repo.load_template().locked is False
+
+    repo.save_special_zones([], 1.0, "socks")
+    assert repo.load_template().locked is True
 
 
 # === helpers ==================================================================
 def _row_counts(repo):
     tables = ("frames", "frame_params", "limb_records", "clicks", "limb_params",
-              "clothes_dots")
+              "special_zone_dots")
     return {
         t: repo._conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
         for t in tables

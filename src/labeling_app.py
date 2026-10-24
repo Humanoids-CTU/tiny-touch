@@ -28,7 +28,7 @@ from domain.project import ProjectPaths
 from domain.touch import NO_ZONE, find_last_open_onset, zones_at
 from domain.templates import ALTERNATE_TEMPLATE, TEMPLATE_LABELS, DEFAULT_TEMPLATE
 from gui import theme
-from gui.cloth_app import ClothApp, DEFAULT_CLOTH_DIAGRAM_SCALE
+from gui.special_zones_app import SpecialZonesApp, DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE
 from gui.frame_dialog import FrameDialog
 from gui.template_dialog import choose_template, template_diagram
 from gui.resource_utils import asset_path
@@ -79,6 +79,11 @@ DISPLAY_PUMP_MS = 10
 # dict lookup on the Tk thread, so it can poll much faster than the old
 # thread's 150 ms sleep and resume as soon as the frames land.
 PLAYBACK_STALL_POLL_MS = 20
+# A video-panel resize rebuilds the frame buffer only after no new size has
+# arrived for this long (LabelingApp.on_resize). Longer than the gap between
+# <Configure> events of a window-edge drag (~16 ms) and the perf scenario's
+# 50 ms resize steps; every extra millisecond delays the sharp frame.
+RESIZE_SETTLE_MS = 100
 # Dev guard (H1): when True, the main render/timeline methods raise if called
 # off the Tk main thread, so any future thread-boundary regression fails loudly
 # at the offending call site instead of crashing Tcl intermittently.
@@ -314,8 +319,9 @@ class LabelingApp(tk.Tk):
         self.video_name = None
         self.minimal_touch_length = None
         self.template = DEFAULT_TEMPLATE
-        self.clothes_diagram_scale = DEFAULT_CLOTH_DIAGRAM_SCALE
-        self._cloth_app = None
+        self.special_zones_diagram_scale = DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE
+        self.special_zones_note = None
+        self._special_zones_app = None
         # Working-state repository (state/<video>.db). Opened by load_video,
         # held for as long as that project is open, closed by _close_state_repo.
         # Tk-thread-bound by contract — never hand it to a worker thread.
@@ -378,6 +384,8 @@ class LabelingApp(tk.Tk):
         self._ui_thread_ident = get_ident()   # Tk main thread (this __init__)
         self._display_w = 0                   # video_frame geometry, cached on the main
         self._display_h = 0                   # thread (workers must not call winfo_*)
+        self._resize_target = None            # latest panel size from <Configure>
+        self._resize_after_id = None          # after() id of the pending _apply_resize
         self._last_step_sign = 0              # +1 forward / -1 backward / 0 none
 
         # What is ACTUALLY on screen, as opposed to what is buffered: set only
@@ -433,8 +441,8 @@ class LabelingApp(tk.Tk):
         state = tk.NORMAL if has_video else tk.DISABLED
         if getattr(self, "analysis_btn", None):
             self.analysis_btn.config(state=state)
-        if getattr(self, "cloth_btn", None):
-            self.cloth_btn.config(state=state)
+        if getattr(self, "special_zones_btn", None):
+            self.special_zones_btn.config(state=state)
 
     # === UI Rebuild & Annotation Controls =====================================
     def _reset_zone_cache(self):
@@ -705,10 +713,30 @@ class LabelingApp(tk.Tk):
         self.last_mouse_y = event.y
 
     def on_resize(self, event):
-        logger.debug("window resized to %sx%s", event.width, event.height)
+        """<Configure> on the video panel: rebuild the buffer once it settles.
+
+        A rebuild throws away every decoded frame, so it must not run per
+        event: Tk also sends <Configure> for moves and re-layouts that keep
+        the size, and a window-edge drag sends dozens of sizes per second.
+        Same-size events are ignored; real changes restart a RESIZE_SETTLE_MS
+        timer and only the final size is applied. The old frame stays on
+        screen meanwhile.
+        """
+        size = (event.width, event.height)
+        if size == self._resize_target:
+            return
+        self._resize_target = size
+        if self._resize_after_id is not None:
+            self.after_cancel(self._resize_after_id)
+        self._resize_after_id = self.after(RESIZE_SETTLE_MS, self._apply_resize)
+
+    def _apply_resize(self):
+        self._resize_after_id = None
+        if self._resize_target == (self._display_w, self._display_h):
+            return  # the drag ended where it started
+        logger.debug("video panel resized to %sx%s", *self._resize_target)
         # Refresh the geometry cache the buffer thread reads instead of winfo_* (H1).
-        self._display_w = event.width
-        self._display_h = event.height
+        self._display_w, self._display_h = self._resize_target
         self._buffer_reset()
         if self.video:
             self.display_first_frame()
@@ -1984,7 +2012,8 @@ class LabelingApp(tk.Tk):
             program_version=self.video.program_version,
             video_name=self.video_name,
             labeling_mode=self.labeling_mode,
-            clothes_list=save_service.load_clothes_zones(self.state_repo),
+            special_zones_list=save_service.load_special_zones(self.state_repo),
+            special_zones_note=save_service.load_special_zones_note(self.state_repo),
             param_labels={
                 "Parameter_1": (self.par1_btn.cget("text") or "Par1"),
                 "Parameter_2": (self.par2_btn.cget("text") or "Par2"),
@@ -2110,8 +2139,8 @@ class LabelingApp(tk.Tk):
         if state.locked:
             messagebox.showinfo("Template locked", "This project's body template is locked.", parent=self)
             return
-        if self._cloth_app and self._cloth_app.top_level.winfo_exists():
-            messagebox.showinfo("Close Clothes", "Close the Clothes window before changing the template.", parent=self)
+        if self._special_zones_app and self._special_zones_app.top_level.winfo_exists():
+            messagebox.showinfo("Close Special Zones", "Close the Special Zones window before changing the template.", parent=self)
             return
         selected = choose_template(self, state.template, center=center_over_parent)
         if selected is None:
@@ -2218,12 +2247,12 @@ class LabelingApp(tk.Tk):
         self._cancel_arrow_hold_state()
         self._cancel_wheel_scroll()
 
-        # A leftover Clothes window writes its dots through the CURRENT repo
+        # A leftover Special Zones window writes its dots through the CURRENT repo
         # on close, so close it now, while that repo is still the right one.
-        if self._cloth_app and self._cloth_app.top_level.winfo_exists():
-            logger.debug("closing Clothes window before unloading")
-            self._cloth_app.on_close()
-        self._cloth_app = None
+        if self._special_zones_app and self._special_zones_app.top_level.winfo_exists():
+            logger.debug("closing Special Zones window before unloading")
+            self._special_zones_app.on_close()
+        self._special_zones_app = None
 
         try:
             ok = self.save_data()
@@ -2254,7 +2283,7 @@ class LabelingApp(tk.Tk):
         # UI bits tied to the old project.
         self.update_frame_counter()
         self._set_note_entry_text("")
-        theme.set_button_state(self.cloth_btn, None)
+        theme.set_button_state(self.special_zones_btn, None)
         self.name_label.config(text="Video Name: -----")
         self.framerate_label.config(text="Frame Rate: -----")
         self._refresh_jump_label()
@@ -2506,13 +2535,13 @@ class LabelingApp(tk.Tk):
 
         self.update_note_entry()
 
-        # Clothes presence => colorize button
-        theme.set_button_state(self.cloth_btn, None)
-        if self.state_repo.has_clothes():
-            theme.set_button_state(self.cloth_btn, "ON")
-        # NOTE: self.clothes_diagram_scale stays the DISPLAY scale. The scale the
-        # dots were stored at lives in meta.clothes_diagram_scale and is only
-        # used as the rescale source (project_service.rescale_clothes_points),
+        # Special Zones presence => colorize button
+        theme.set_button_state(self.special_zones_btn, None)
+        if self.state_repo.has_special_zones():
+            theme.set_button_state(self.special_zones_btn, "ON")
+        # NOTE: self.special_zones_diagram_scale stays the DISPLAY scale. The scale the
+        # dots were stored at lives in meta.special_zones_diagram_scale and is only
+        # used as the rescale source (project_service.rescale_special_zone_points),
         # exactly as the sidecar's DiagramScale line was.
 
         for b in self.video.frames.values():
@@ -2528,75 +2557,79 @@ class LabelingApp(tk.Tk):
             video.current_frame,
         )
 
-    # === Clothes Side Window ===================================================
-    def open_cloth_app(self):
+    # === Special Zones Side Window =============================================
+    def open_special_zones_app(self):
         if self.video is None:
-            logger.error("cannot open Clothes: select a video first")
+            logger.error("cannot open Special Zones: select a video first")
         else:
-            if self._cloth_app and self._cloth_app.top_level.winfo_exists():
-                self._cloth_app.top_level.lift()
-                self._cloth_app.top_level.focus_force()
+            if self._special_zones_app and self._special_zones_app.top_level.winfo_exists():
+                self._special_zones_app.top_level.lift()
+                self._special_zones_app.top_level.focus_force()
                 return
-            scale = self.clothes_diagram_scale or DEFAULT_CLOTH_DIAGRAM_SCALE
-            initial_points = project_service.load_clothes_points_from_repo(
-                self.state_repo, scale, DEFAULT_CLOTH_DIAGRAM_SCALE
+            scale = self.special_zones_diagram_scale or DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE
+            initial_points = project_service.load_special_zone_points_from_repo(
+                self.state_repo, scale, DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE
             )
-            self.cloth_btn.config(state=tk.DISABLED)
+            self.special_zones_btn.config(state=tk.DISABLED)
 
-            def on_save(dots, diagram_scale=None):
-                self.update_data_clothes(dots, diagram_scale)
+            def on_save(dots, diagram_scale=None, note=None):
+                self.update_data_special_zones(dots, diagram_scale, note)
 
-            def on_close(dots, diagram_scale=None):
-                self.update_data_clothes(dots, diagram_scale)
-                self.cloth_btn.config(state=tk.NORMAL)
-                self._cloth_app = None
+            def on_close(dots, diagram_scale=None, note=None):
+                self.update_data_special_zones(dots, diagram_scale, note)
+                self.special_zones_btn.config(state=tk.NORMAL)
+                self._special_zones_app = None
 
             try:
-                self._cloth_app = ClothApp(
+                self._special_zones_app = SpecialZonesApp(
                     self,
                     on_save,
                     on_close,
                     initial_points=initial_points,
+                    initial_note=self.state_repo.special_zones_note(),
                     diagram_scale=scale,
                     diagram_path=template_diagram(self.state_repo.load_template().template),
                     on_first_mark=self._lock_before_annotation,
                 )
             except Exception:
-                self.cloth_btn.config(state=tk.NORMAL)
-                self._cloth_app = None
-                logger.exception("failed to open Clothes window")
+                self.special_zones_btn.config(state=tk.NORMAL)
+                self._special_zones_app = None
+                logger.exception("failed to open Special Zones window")
 
-    def update_data_clothes(self, dots, diagram_scale=None):
-        self.data_clothes = dots
+    def update_data_special_zones(self, dots, diagram_scale=None, note=None):
+        self.data_special_zones = dots
+        self.special_zones_note = note
         if diagram_scale:
-            self.clothes_diagram_scale = float(diagram_scale)
-        annotation_logger.info("clothes updated dots=%s", len(self.data_clothes))
-        self.save_clothes()
-        theme.set_button_state(self.cloth_btn, "ON")
+            self.special_zones_diagram_scale = float(diagram_scale)
+        annotation_logger.info(
+            "special zones updated dots=%s note=%s", len(self.data_special_zones), bool(note)
+        )
+        self.save_special_zones()
+        theme.set_button_state(self.special_zones_btn, "ON" if dots else None)
 
-    def save_clothes(self):
-        """Full replace of the clothes dots in the state DB (was the
-        `state/<video>_clothes.txt` sidecar).
+    def save_special_zones(self):
+        """Full replace of the special zone dots and the project note in the
+        state DB (the dots were the `state/<video>_clothes.txt` sidecar).
 
         The per-dot `zones` value stays the COMMA-JOINED string the sidecar
-        held, because the export metadata's "Zones Covered With Clothes" list is
+        held, because the export metadata's "Special Zones" list is
         a frozen contract built on that tokenization (see
-        `SqliteRepository.clothes_zone_list`).
+        `SqliteRepository.special_zone_list`).
         """
         if self.state_repo is None:
-            logger.error("cannot save clothes: no state database is open")
+            logger.error("cannot save special zones: no state database is open")
             return
-        scale = self.clothes_diagram_scale or DEFAULT_CLOTH_DIAGRAM_SCALE
+        scale = self.special_zones_diagram_scale or DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE
 
         rows = []
-        for dot_id, (x, y) in self.data_clothes.items():
+        for dot_id, (x, y) in self.data_special_zones.items():
             if scale == 0:
-                scale = DEFAULT_CLOTH_DIAGRAM_SCALE
+                scale = DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE
             zones = self.find_image_with_white_pixel(x / scale, y / scale)
             rows.append((dot_id, x, y, ','.join(zones)))
 
-        self.state_repo.save_clothes(rows, scale)
-        logger.info("clothes saved: dots=%s", len(rows))
+        self.state_repo.save_special_zones(rows, scale, self.special_zones_note)
+        logger.info("special zones saved: dots=%s", len(rows))
 
     
 
@@ -2639,13 +2672,20 @@ class LabelingApp(tk.Tk):
         """Cancel our own repeating `after()` timers before the root goes away.
 
         Without this the diagram-refresh timer, the display pump, a running
-        playback tick (and any live arrow-hold watchdog) fire into a destroyed
-        interpreter and Tcl prints
+        playback tick, a pending resize (and any live arrow-hold watchdog) fire
+        into a destroyed interpreter and Tcl prints
         `invalid command name "...periodic_print_dot"` on every close.
         """
         self._cancel_arrow_hold_state()
         self.play = False
         self._precise_timers.release_all()
+        resize_id = getattr(self, "_resize_after_id", None)
+        if resize_id is not None:
+            try:
+                self.after_cancel(resize_id)
+            except Exception:
+                logger.warning("could not cancel pending resize", exc_info=True)
+            self._resize_after_id = None
         play_id = getattr(self, "_play_tick_id", None)
         if play_id is not None:
             try:

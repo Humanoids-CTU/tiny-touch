@@ -29,7 +29,8 @@ chmod +x TinyTouch-v9.0.0
 
 1. Click **Load Video**, choose **Normal**, select a body diagram and open your
    video. Preparing it may take a few minutes the first time.
-2. Use **Clothes** to mark body areas covered by clothing.
+2. Use **Special Zones** to mark body areas of interest (e.g. covered by clothing) and
+   describe them in its **Note** field.
 3. Select the hand or leg you are labeling. (It’s easier to focus on one limb at a time.)
 4. At the **first frame of a touch**, **left-click** its location on the body
    diagram. A green dot marks the start.

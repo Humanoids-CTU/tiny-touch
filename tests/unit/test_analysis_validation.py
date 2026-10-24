@@ -40,7 +40,7 @@ def write_real_export(path, frames=None, total_frames=3, frame_rate=25.0):
         video_name="vid",
         labeling_mode="Normal",
         frame_rate=frame_rate,
-        clothes_list=None,
+        special_zones_list=None,
         total_frames=total_frames,
     )
     return path

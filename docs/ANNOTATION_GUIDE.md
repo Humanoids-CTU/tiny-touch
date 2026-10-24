@@ -10,7 +10,7 @@ the files it produces, read [DATA_FORMAT.md](DATA_FORMAT.md) instead.
 2. [Labeling modes: Normal and Reliability](#2-labeling-modes-normal-and-reliability)
 3. [Loading a video](#3-loading-a-video)
 4. [The window](#4-the-window)
-5. [Marking clothing](#5-marking-clothing)
+5. [Marking special zones](#5-marking-special-zones)
 6. [Coding a touch](#6-coding-a-touch)
 7. [Zones](#7-zones)
 8. [Gaze and parameters](#8-gaze-and-parameters)
@@ -84,11 +84,11 @@ or projects without a recorded template are rejected without conversion. Keep ea
 annotations as archives and start new work in a fresh data folder.
 
 **Settings** displays the active project template. You may change it while the project
-has never contained annotations or clothing marks. The first annotation (including a
-note or parameter) or clothing mark locks it permanently; deleting marks does not unlock
-it. Linking a Reliability pass locks both projects. Clothes uses the same body outline
-and zones as the annotation view. Close the Clothes window before changing an empty
-project's template.
+has never contained annotations or special zone marks. The first annotation (including a
+note or parameter), special zone mark or Special Zones note locks it permanently; deleting
+marks does not unlock it. Linking a Reliability pass locks both projects. Special Zones
+uses the same body outline and zones as the annotation view. Close the Special Zones
+window before changing an empty project's template.
 
 On saving, keep the CSV and metadata JSON together. The metadata records `"template"`
 as `"default"` or `"alternate"`; see [the metadata specification](DATA_FORMAT.md#2-the-metadata-sidecar).
@@ -118,7 +118,7 @@ Clicking either timeline jumps to that frame.
 
 **Right** — the body diagram, the limb selector, the parameter buttons and the note box.
 
-**Top bar** — Load Video, Settings, Clothes, Analysis, Save on the left; the navigation
+**Top bar** — Load Video, Settings, Special Zones, Analysis, Save on the left; the navigation
 buttons, Play/Stop and the frame/time counters on the right.
 
 **Bottom strip** — the mode chip, the buffer indicator, the minimal-touch-length readout,
@@ -151,18 +151,21 @@ contains a `d` or an arrow key does not move you off the frame.
 
 ---
 
-## 5. Marking clothing
+## 5. Marking special zones
 
-Click **Clothes** to open the clothing dialog. It shows the whole-body diagram.
+Click **Special Zones** to open the dialog. It shows the whole-body diagram and a
+**Note** field. Use it to mark any project-wide set of body zones, for example zones
+covered by clothing.
 
-- **Left-click** places a dot on a covered zone.
+- **Left-click** places a dot on a zone.
 - **Middle-click** removes the nearest dot.
-- Closing the window stores the current dots.
+- Type in **Note** what the marked zones mean (e.g. "covered by diaper and socks").
+- Closing the window stores the current dots and the note.
 
-The zones under the dots are resolved with the same masks used for touch coding, and the
-resulting list is written to the export metadata as `Zones Covered With Clothes`. Do this
-once, before you start coding, so downstream analysis knows which contacts were
-skin-to-skin and which were through clothing.
+The zones under the dots are resolved with the same masks used for touch coding. The
+resulting list is written to the export metadata as `Special Zones`, and the note as
+`Special Zones Note`. Do this once, before you start coding, so downstream analysis
+knows, for example, which contacts were skin-to-skin and which were through clothing.
 
 ---
 

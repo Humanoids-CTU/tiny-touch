@@ -67,7 +67,7 @@ tiny-touch/
 │   ├── gui/                      # Tkinter only
 │   │   ├── ui_components.py      # Layout, widgets, key/mouse bindings
 │   │   ├── theme.py              # Colors / fonts / widget styling
-│   │   ├── cloth_app.py          # Clothing-zone selector dialog (Toplevel)
+│   │   ├── special_zones_app.py  # Special-zone selector + note dialog (Toplevel)
 │   │   └── resource_utils.py     # PyInstaller-aware asset path resolution
 │   └── resources/                # RUNTIME assets -- everything here ships in the exe
 │       └── icons/                # Body diagrams, limb images, zone masks
@@ -165,6 +165,10 @@ are painted immediately by the navigation handlers. No worker thread calls Tk at
 Painting pastes the frame into the `PhotoImage` already on the video label when the size
 matches (`_show_frame_image`) instead of creating a new photo per frame — 12-22 % less
 UI-thread time per paint; a resize still gets a new photo.
+A resize of the video panel rebuilds the buffer (all frames are stored at display size),
+so `LabelingApp.on_resize` ignores `<Configure>` events that keep the size and applies a
+real change only after `RESIZE_SETTLE_MS = 100` without a newer one — a window-edge drag
+costs one rebuild instead of one per event. The old frame stays on screen meanwhile.
 
 - **Decode pipeline** -- each frame load computes its target size from the JPEG header
   (`compute_target_size`: fit the source into `display / downscale` aspect-preserving,
@@ -220,16 +224,16 @@ override the picker selection; conflicting existing pairs are rejected.
 
 `domain.templates.TemplateState` owns template names (`default`, `alternate`) and the
 permanent lock rule. The SQLite `meta` keys `template` and `template_locked` own the
-project choice. This release creates schema 2 databases; other schema versions and
+project choice. This release creates schema 3 databases; other schema versions and
 existing projects missing a template ID are rejected. There is no migration, historical
 template confirmation, or import of previously coded data. Reopening projects created
 by this release restores their saved template normally.
 
-The controller durably locks before the first annotation mutation; Clothes locks before
-adding its first dot. Repository saves also retain locks for non-GUI consumers. Deletion
+The controller durably locks before the first annotation mutation; Special Zones locks
+before adding its first dot, and saving a non-blank Special Zones note also locks. Repository saves also retain locks for non-GUI consumers. Deletion
 never unlocks. A linked Reliability pair locks both projects. Settings permits changing
-only an unlocked project with no open Clothes dialog. All diagram and mask consumers use
-the active project choice, and project changes clear the mask cache. Clothes and previews
+only an unlocked project with no open Special Zones dialog. All diagram and mask consumers use
+the active project choice, and project changes clear the mask cache. Special Zones and previews
 use each template's neutral `LINE.png` outline, which matches its mask coordinates.
 
 The CSV format is unchanged. Export metadata includes `"template": "default"` or
@@ -259,7 +263,7 @@ data/<video_name>/
 │   └── <video>.db                    # SQLite — THE source of truth (see below)
 ├── export/                           # Final, "publication-ready" artifacts
 │   ├── <video>_export.csv            # Flat schema (see below) -- the file analysis reads
-│   ├── <video>_metadata.json         # Program version, FPS, mode, clothes zones, param labels,
+│   ├── <video>_metadata.json         # Program version, FPS, mode, special zones + note, param labels,
 │   │                                 # total labeling time (hours)
 ├── frames/                           # frame0.jpg ... frameN.jpg (one per video frame)
 └── plots/                            # Plotly HTMLs from "Analysis"
@@ -271,7 +275,7 @@ them.
 
 ### Supported data layout (no migration path)
 
-This release is for new projects and resumes only its own schema 2 databases with
+This release is for new projects and resumes only its own schema 3 databases with
 recorded template IDs. Other working-state formats are not imported or converted.
 Project loading rejects existing exports with no working database, preventing them
 from being opened as an empty project and overwritten on Save. Use a fresh data
@@ -284,18 +288,18 @@ The app's Analysis workflow requires the template recorded in the accompanying m
 
 One SQLite database per video ([src/adapters/sqlite_repo.py](src/adapters/sqlite_repo.py))
 holds everything the app used to spread over six files: the frames store, notes,
-per-frame and per-limb parameters, clothes dots, resume position and the
+per-frame and per-limb parameters, special zone dots and note, resume position and the
 labeling-time accumulator.
 
 | Table | Holds |
 | --- | --- |
-| `meta` | `video_name`, `fps`, `last_frame`, `total_frames`, `labeling_time_seconds`, `clothes_diagram_scale`, `template`, `template_locked` |
+| `meta` | `video_name`, `fps`, `last_frame`, `total_frames`, `labeling_time_seconds`, `special_zones_diagram_scale`, `special_zones_note`, `template`, `template_locked` |
 | `frames` | one row per frame present in the store (its EXISTENCE is data) + `note` |
 | `frame_params` | global `Par1..3`; absent row = key absent, `state IS NULL` = key present but None |
 | `limb_records` | per-limb `onset` + a `has_limb_params` flag; a limb with nothing to store has NO row and is rebuilt as `empty_record(limb)` |
 | `clicks` | `click_index` IS the `X`/`Y`/`Zones` alignment; `x`/`y` NULL = zone bucket with no click, `zones` NULL = click with no bucket |
 | `limb_params` | per-limb `Par1..3`, same NULL semantics as `frame_params` |
-| `clothes_dots` | dot id, x, y, comma-joined zone string (frozen sidecar tokenization) |
+| `special_zone_dots` | dot id, x, y, comma-joined zone string (frozen sidecar tokenization) |
 
 Databases created during 9.0 development may also carry two now-unused tables,
 `legacy_notes` and `legacy_limb_params`, plus `migrated_at` / `migrated_sources`
@@ -325,7 +329,7 @@ then re-stamps the provenance meta (`video_name`, `fps`,
 self-describing. `repo.load_frames()` stays a separate step so the GUI can start
 its labeling timer between the two.
 
-`SCHEMA_VERSION` is 2. Existing databases must match exactly; the version is checked
+`SCHEMA_VERSION` is 3. Existing databases must match exactly; the version is checked
 before changing database settings or writing state. There is no migration or backup
 path for older projects. The template metadata uses the existing `meta` table, and
 older app builds cannot open these databases and bypass the template lock.
@@ -395,7 +399,7 @@ annotation activity uses the dedicated `annot` logger and performance summaries 
 `perf`. The root logger accepts `DEBUG`, while handler levels decide where records go:
 
 - The console defaults to `INFO`. It shows lifecycle messages and deliberate annotation
-  actions (clicks, deletions, limb/parameter selections, notes, clothes, mode and settings),
+  actions (clicks, deletions, limb/parameter selections, notes, special zones, mode and settings),
   so an annotator can see that input was registered. Automatic frame movement and buffer
   detail stay at `DEBUG`.
 - A UTF-8 session file always receives `DEBUG` and above. Source runs write under
@@ -415,7 +419,7 @@ exception to otherwise pure computation.
 ## Application Workflow
 
 1. **Load Video** -- pick `Normal` / `Reliability`, choose a template for new projects, then select a video file (mp4/mov/avi/mkv/flv/wmv). The video is copied into `videos/` and the project tree is created under `data/<video>/` so the working set is self-contained, frames are extracted (or copied for Reliability), prior state is loaded, and the buffering thread starts. Loading **another video mid-session** is supported: `LabelingApp._unload_current_video` first persists the open project exactly like Close does (save, last position, labeling time), then detaches it in the one order that cannot mix two projects' data — video dropped (idling the worker threads) → frame buffer emptied (generation bump) → state DB closed — before the new project is opened. The new session is built against a local `Video` and published only after its frames exist; a failure mid-load falls back to the clean "no video loaded" state, and cancelling the mode, template or file dialog leaves the open project untouched.
-2. **Clothes** -- mark which body zones are covered with clothes; stored in the state DB's `clothes_dots` and surfaced in the export metadata.
+2. **Special Zones** -- mark a project-wide set of body zones (e.g. covered with clothes) and describe them in a note; stored in the state DB's `special_zone_dots` and `meta.special_zones_note` and surfaced in the export metadata as `Special Zones` / `Special Zones Note`.
 3. **Annotate** -- pick a limb, click onsets/offsets, set gaze and parameters, type notes. Edits stay in memory until Save.
 4. **Save** -- `Save` button (or auto on Close / before Load) writes the dirty frames to the state DB (one transaction), then the export CSV (full) and the metadata sidecar. The `Changed` flags are cleared.
 5. **Analysis** -- runs `analysis_service.run_analysis` over the export CSV: per-limb summary stats, transition heatmaps, touch-trajectory plots, histograms, and a master HTML. Output lands in `plots/`; the service returns the master HTML path and `LabelingApp.analysis` opens it in the browser. See "Analysis conventions" below.

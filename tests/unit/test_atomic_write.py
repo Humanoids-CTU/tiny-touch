@@ -42,7 +42,7 @@ def _one_changed(frame, note="v1"):
 def _export(out_csv, frames):
     export_from_unified(
         frames, out_csv, program_version=8.0, video_name="vid",
-        labeling_mode="Normal", frame_rate=25.0, clothes_list=None,
+        labeling_mode="Normal", frame_rate=25.0, special_zones_list=None,
         total_frames=3,
     )
 

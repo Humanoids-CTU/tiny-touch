@@ -78,13 +78,13 @@ def write_project(tmp_path, frames, total_frames=CAT3_TOTAL_FRAMES - 1,
     export_from_unified(
         frames, paths.export_csv,
         program_version=8.0, video_name=name, labeling_mode="Normal",
-        frame_rate=fps, clothes_list=None, total_frames=total_frames,
+        frame_rate=fps, special_zones_list=None, total_frames=total_frames,
     )
     if with_metadata:
         write_export_metadata(
             meta_path=paths.export_metadata,
             program_version=8.0, video_name=name, labeling_mode="Normal",
-            frame_rate=fps, clothes_list=None, template="default",
+            frame_rate=fps, special_zones_list=None, template="default",
         )
     else:
         with open(paths.export_metadata, "w", encoding="utf-8") as stream:

@@ -36,7 +36,7 @@ def test_touch_export_schema_is_frozen(tmp_path):
     out = tmp_path / "vid_export.csv"
     export_from_unified(
         {}, str(out), program_version=7.8, video_name="vid",
-        labeling_mode="Normal", frame_rate=30.0, clothes_list=None, total_frames=2,
+        labeling_mode="Normal", frame_rate=30.0, special_zones_list=None, total_frames=2,
     )
     cols = list(pd.read_csv(out).columns)
     assert cols == TOUCH_EXPORT_COLUMNS, (

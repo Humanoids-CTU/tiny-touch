@@ -63,7 +63,7 @@ def test_M1_export_writes_empty_for_none_string(tmp_path):
         video_name="vid",
         labeling_mode="Normal",
         frame_rate=30.0,
-        clothes_list=None,
+        special_zones_list=None,
         total_frames=0,
     )
 

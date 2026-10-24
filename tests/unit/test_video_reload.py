@@ -33,11 +33,11 @@ class _FrameBufferStub:
         self.buffer_ready = True
 
 
-def _app(events, save_result=True, cloth_app=None):
+def _app(events, save_result=True, special_zones_app=None):
     app = SimpleNamespace(
         video=object(),
         video_name="old_video",
-        _cloth_app=cloth_app,
+        _special_zones_app=special_zones_app,
         _last_step_sign=1,
         stop_video=lambda: events.append("stop_play"),
         _cancel_arrow_hold_state=lambda: events.append("cancel_hold"),
@@ -50,7 +50,7 @@ def _app(events, save_result=True, cloth_app=None):
         _refresh_jump_label=lambda: None,
         update_frame_counter=lambda: None,
         _set_mode_button_states=lambda: events.append("mode_buttons"),
-        cloth_btn=object(),
+        special_zones_btn=object(),
         name_label=SimpleNamespace(config=lambda **kw: None),
         framerate_label=SimpleNamespace(config=lambda **kw: None),
     )
@@ -86,21 +86,21 @@ def test_unload_writes_first_then_detaches_then_clears(monkeypatch):
     assert app.frame_buffer.buffer_ready is False
 
 
-def test_unload_closes_the_clothes_window_before_saving(monkeypatch):
+def test_unload_closes_the_special_zones_window_before_saving(monkeypatch):
     events = []
-    cloth = SimpleNamespace(
+    special_zones = SimpleNamespace(
         top_level=SimpleNamespace(winfo_exists=lambda: True),
-        on_close=lambda: events.append("cloth_close"),
+        on_close=lambda: events.append("special_zones_close"),
     )
-    app = _app(events, cloth_app=cloth)
+    app = _app(events, special_zones_app=special_zones)
     monkeypatch.setattr(labeling_app.theme, "set_button_state", lambda *a: None)
 
     assert LabelingApp._unload_current_video(app) is True
 
-    # The clothes dots must be written through the OLD repo, i.e. before the
+    # The special zone dots must be written through the OLD repo, i.e. before the
     # final save and long before the repo closes.
-    assert events.index("cloth_close") < events.index("save")
-    assert app._cloth_app is None
+    assert events.index("special_zones_close") < events.index("save")
+    assert app._special_zones_app is None
 
 
 def test_unload_aborts_on_save_failure_and_keeps_the_session(monkeypatch):

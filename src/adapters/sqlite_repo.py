@@ -88,7 +88,7 @@ from domain.templates import TemplateState, bundle_has_annotation
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 LIMB_KEYS = ("LH", "RH", "LL", "RL")
 
@@ -148,8 +148,8 @@ CREATE TABLE IF NOT EXISTS limb_params (
     PRIMARY KEY (frame, limb, key)
 );
 
--- Clothes dots are project-wide, not per-frame: no FK to frames.
-CREATE TABLE IF NOT EXISTS clothes_dots (
+-- Special zone dots are project-wide, not per-frame: no FK to frames.
+CREATE TABLE IF NOT EXISTS special_zone_dots (
     dot_id INTEGER PRIMARY KEY,
     x      REAL,
     y      REAL,
@@ -166,7 +166,8 @@ META_FPS = "fps"
 META_LAST_FRAME = "last_frame"
 META_TOTAL_FRAMES = "total_frames"
 META_LABELING_TIME = "labeling_time_seconds"
-META_CLOTHES_SCALE = "clothes_diagram_scale"
+META_SPECIAL_ZONES_SCALE = "special_zones_diagram_scale"
+META_SPECIAL_ZONES_NOTE = "special_zones_note"
 META_TEMPLATE = "template"
 META_TEMPLATE_LOCKED = "template_locked"
 
@@ -272,7 +273,7 @@ class SqliteRepository:
 
     def transaction(self) -> "SqliteRepository._Transaction":
         """One explicit `BEGIN IMMEDIATE ... COMMIT`, rolled back on any
-        exception. Public so a caller can wrap several writes (e.g. clothes
+        exception. Public so a caller can wrap several writes (e.g. special zones
         rows plus their scale) in a single transaction."""
         self._check_thread()
         return self._Transaction(self._conn)
@@ -645,55 +646,69 @@ class SqliteRepository:
         self._check_thread()
         self.set_meta(META_LABELING_TIME, round(float(total_seconds), 3))
 
-    # === clothes (was state/<name>_clothes.txt) ===============================
-    def save_clothes(self, rows: Iterable[Tuple[int, float, float, str]],
-                     diagram_scale: float) -> None:
-        """Full replace of the clothes dots plus the scale they were drawn at.
+    # === special zones (was state/<name>_clothes.txt) =========================
+    def save_special_zones(self, rows: Iterable[Tuple[int, float, float, str]],
+                           diagram_scale: float, note: Optional[str] = None) -> None:
+        """Full replace of the special zone dots, the scale they were drawn at
+        and the project-wide note.
 
         `rows` are `(dot_id, x, y, zones_str)`. `zones_str` keeps the frozen
         sidecar semantics: the comma-JOINED zone names for that dot, because
         `extract_zones_from_file` treated the whole `Zones=` tail as a single
-        token and the export metadata contract is built on that.
+        token and the export metadata contract is built on that. A blank note
+        is stored as no note. Any dot or a non-blank note locks the template.
         """
         self._check_thread()
         rows = list(rows)
+        note = (note or "").strip()
         with self.transaction():
-            self._conn.execute("DELETE FROM clothes_dots")
-            if rows:
+            self._conn.execute("DELETE FROM special_zone_dots")
+            if rows or note:
                 self._set_meta_unlocked(META_TEMPLATE_LOCKED, 1)
             self._conn.executemany(
-                "INSERT INTO clothes_dots (dot_id, x, y, zones) VALUES (?, ?, ?, ?)",
+                "INSERT INTO special_zone_dots (dot_id, x, y, zones) VALUES (?, ?, ?, ?)",
                 [(int(d), float(x), float(y), str(z or "")) for d, x, y, z in rows],
             )
-            self._set_meta_unlocked(META_CLOTHES_SCALE, float(diagram_scale))
+            self._set_meta_unlocked(META_SPECIAL_ZONES_SCALE, float(diagram_scale))
+            if note:
+                self._set_meta_unlocked(META_SPECIAL_ZONES_NOTE, note)
+            else:
+                self._conn.execute(
+                    "DELETE FROM meta WHERE key = ?", (META_SPECIAL_ZONES_NOTE,)
+                )
         logger.debug(
-            "sqlite_repo: saved clothes dots=%d scale=%s -> %s",
+            "sqlite_repo: saved special zone dots=%d scale=%s note=%s -> %s",
             len(rows),
             diagram_scale,
+            bool(note),
             self._path,
         )
 
-    def load_clothes_rows(self) -> List[Tuple[int, float, float, str]]:
+    def load_special_zone_rows(self) -> List[Tuple[int, float, float, str]]:
         self._check_thread()
         return [
             (row["dot_id"], row["x"], row["y"], row["zones"])
             for row in self._conn.execute(
-                "SELECT dot_id, x, y, zones FROM clothes_dots ORDER BY dot_id"
+                "SELECT dot_id, x, y, zones FROM special_zone_dots ORDER BY dot_id"
             )
         ]
 
-    def clothes_diagram_scale(self) -> Optional[float]:
+    def special_zones_diagram_scale(self) -> Optional[float]:
         self._check_thread()
-        return self._get_meta_float(META_CLOTHES_SCALE, None)
+        return self._get_meta_float(META_SPECIAL_ZONES_SCALE, None)
 
-    def has_clothes(self) -> bool:
+    def special_zones_note(self) -> Optional[str]:
+        """The project-wide Special Zones note, or None when none was written."""
+        return self.get_meta(META_SPECIAL_ZONES_NOTE)
+
+    def has_special_zones(self) -> bool:
         self._check_thread()
         return bool(
-            self._conn.execute("SELECT 1 FROM clothes_dots LIMIT 1").fetchone()
+            self._conn.execute("SELECT 1 FROM special_zone_dots LIMIT 1").fetchone()
         )
 
-    def clothes_zone_list(self) -> Optional[List[str]]:
-        """Zone names for the export metadata's "Zones Covered With Clothes".
+    def special_zone_list(self) -> Optional[List[str]]:
+        """Zone names for the export metadata's "Special Zones".
 
         Deliberately reproduces the retired sidecar reader
         (`extract_zones_from_file`) byte-for-byte: de-duplicated via a set,
@@ -702,7 +717,7 @@ class SqliteRepository:
         contract — sorting or splitting here would change published sidecars.
         """
         self._check_thread()
-        zones = {row[3] for row in self.load_clothes_rows()}
+        zones = {row[3] for row in self.load_special_zone_rows()}
         return list(zones) if zones else None
 
 # === helpers ==================================================================
