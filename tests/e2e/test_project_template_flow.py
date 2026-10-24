@@ -56,7 +56,7 @@ def test_clothes_displays_selected_template_and_permanently_locks_it(
     pump(app)
     # Lock is durable before the user presses Save in Clothes.
     assert _metadata(paths)["template_locked"] == "1"
-    click(window, "Save & Close")
+    app._cloth_app.on_close()  # same handler as the window's close button
     connection = sqlite3.connect(paths.state_db)
     try:
         assert connection.execute("SELECT zones FROM clothes_dots").fetchall() == [(zone,)]
@@ -67,7 +67,7 @@ def test_clothes_displays_selected_template_and_permanently_locks_it(
     pump(app)
     window = find_toplevel(app, "Clothes App")
     click_canvas(find_widget(window, cls=tk.Canvas), "<Button-2>", *point)
-    click(window, "Save & Close")
+    app._cloth_app.on_close()
     assert _metadata(paths)["template_locked"] == "1"
     save(app)
     assert json.loads(Path(paths.export_metadata).read_text())["template"] == template

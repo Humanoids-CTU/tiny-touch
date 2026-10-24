@@ -37,23 +37,11 @@ class ClothApp:
         self.top_level.columnconfigure(0, weight=1)
         self.top_level.rowconfigure(0, weight=1)
         self.content.columnconfigure(0, weight=1)
-        self.content.rowconfigure(1, weight=1)
+        self.content.rowconfigure(0, weight=1)
 
-        self.controls = ttk.Frame(self.content)
-        self.controls.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        self.controls.columnconfigure(0, weight=1)
-
-        save_close_btn = ttk.Button(
-            self.controls,
-            text="Save & Close",
-            command=self.on_close,
-            style="Tool.TButton",
-            takefocus=0,
-        )
-        save_close_btn.pack(side="left", padx=5)
-
+        # Closing the window saves the dots (see WM_DELETE_WINDOW below).
         self.f = ttk.Frame(self.content)
-        self.f.grid(row=1, column=0, sticky="nsew")
+        self.f.grid(row=0, column=0, sticky="nsew")
 
         self.dots = {}
         self.img = Image.open(diagram_path or asset_path("icons/diagram.png"))
