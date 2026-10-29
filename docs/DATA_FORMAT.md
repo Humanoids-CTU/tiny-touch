@@ -158,15 +158,28 @@ literal UTF-8 (no `\uXXXX` escaping), keys in this exact order:
 | `Program Version` | str | The TinyTouch build that wrote the export, e.g. `"9.0.0 (Windows)"`. Matches the release tag. |
 | `Video Name` | str | Project folder name. Carries the `_reliability` suffix when the file came from a Reliability pass. |
 | `Labeling Mode` | str | `"Normal"` or `"Reliability"`. |
-| `template` | str | `"default"` or `"alternate"`, selected for this project. Required by analysis; determines the body diagrams and zone masks. |
+| `template` | str | `"default"`, `"alternate"`, or `"general"`, selected for this project. Required by analysis; determines the diagrams and zone masks. |
 | `Frame Rate` | float | Frames per second as probed from the video, rounded to one decimal. May be `0.0` — see "Zero frame rate". |
 | `Special Zones` | list of str \| null | Zone names the annotator marked in the Special Zones dialog. What the marks mean (e.g. covered by clothing) is described by `Special Zones Note`. `null` means no zone was marked. Deduplicated but unsorted; a dot that resolved to several zones contributes one comma-joined string as a single entry. Replaces `Zones Covered With Clothes` from exports written before this change. |
 | `Special Zones Note` | str \| null | Free-text, project-wide description of what the special zones mark, as typed in the Special Zones dialog. Leading and trailing whitespace is stripped. `null` when no note was written. |
 | `Param Labels` | object | Display labels of the three global parameter buttons, keyed `"Parameter_1"`, `"Parameter_2"`, `"Parameter_3"`. `{}` when unavailable. |
 | `Limb Param Labels` | object | Display labels of the three per-limb parameter buttons, keyed `"XX_Parameter_1"`, `"XX_Parameter_2"`, `"XX_Parameter_3"`. The `XX` is a placeholder standing for any of the four limbs — the same three labels apply to all of them. `{}` when unavailable. |
+| `Channel Labels` | object | **General only.** Maps the existing CSV prefixes to channel labels, in selector order: `"RH": "Channel 1"`, `"LH": "Channel 2"`, `"RL": "Channel 3"`, `"LL": "Channel 4"`. Absent for Default and Alternate. |
 | `Total Labeling Time (hours)` | float | Cumulative wall-clock time spent labeling this video, in hours, rounded to 4 decimals. Accumulated across sessions. **Present only when the app had a running labeling clock**; absent from files written without one. |
 
-Example:
+General retains the same 34 CSV columns and cell encoding. The `LH`, `LL`, `RH`, and
+`RL` prefixes identify annotation channels; they carry no anatomical meaning for this
+template. `Channel Labels` applies to both the coordinate/onset/zone blocks and the
+per-channel parameter columns. Its key order follows the selector, while CSV column
+order remains **LH, LL, RH, RL**. The metadata key `Limb Param Labels` keeps its existing
+name and describes per-channel parameter buttons for General too.
+
+General metadata written before this extension can lack `Channel Labels`. The mapping
+above is fixed by the `general` template; reopening and saving the project adds the
+field. No database migration or CSV conversion is required. Default and Alternate
+metadata keep their existing key set and order.
+
+Example for Default (General additionally includes `Channel Labels` before labeling time):
 
 ```json
 {
@@ -268,9 +281,10 @@ extension. Adding a PNG to the mask directory adds a zone; nothing else needs to
 | --- | --- | --- |
 | Default | [`src/resources/icons/zones3/`](../src/resources/icons/zones3/) | 38 masks: `A`–`Z`, `WB`, `XB`, `YB`, `ZB`, `BOX1`–`BOX6`, `LINE`, `OUTSIDE` |
 | Alternate | [`src/resources/icons/zones3_new_template/`](../src/resources/icons/zones3_new_template/) | 32 masks: `A`–`T`, `QB`, `RB`, `SB`, `TB`, `BOX1`–`BOX6`, `LINE`, `OUTSIDE` |
+| General | [`src/resources/icons/zones_general/`](../src/resources/icons/zones_general/) | 10 masks: `1`–`8`, `LINE`, `OUTSIDE`. Eight square targets, numbered left-to-right, top-to-bottom in two columns. |
 
-Select Default or Alternate in the template picker before selecting a video. The saved
-project choice determines the body diagram, clothing outline, and four limb images. **The zone name alone does not tell you which
+Select Default, Alternate, or General in the template picker before selecting a video. The saved
+project choice determines the annotation diagram, Special Zones outline, and channel images. **The zone name alone does not tell you which
 template produced it** — `A` means different anatomy in the two sets. Keep the metadata JSON with your dataset: its `template` field identifies the set.
 
 Special names:

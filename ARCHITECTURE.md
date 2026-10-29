@@ -248,8 +248,12 @@ only an unlocked project with no open Special Zones dialog. All diagram and mask
 the active project choice, and project changes clear the mask cache. Special Zones and previews
 use each template's neutral `LINE.png` outline, which matches its mask coordinates.
 
-The CSV format is unchanged. Export metadata includes `"template": "default"` or
-`"alternate"`. Analysis requires this field and rejects missing, invalid, or conflicting choices. See
+The CSV format is unchanged. Export metadata includes `"template": "default"`,
+`"alternate"`, or `"general"`. General metadata also includes `Channel Labels`, derived
+from its template definition: `RH` → Channel 1, `LH` → Channel 2, `RL` → Channel 3,
+`LL` → Channel 4. Default and Alternate metadata retain their existing format.
+Template identity uses the existing SQLite metadata and locking rules; no schema change
+is needed. Analysis requires the template field and rejects missing, invalid, or conflicting choices. See
 [docs/DATA_FORMAT.md#2-the-metadata-sidecar](docs/DATA_FORMAT.md#2-the-metadata-sidecar).
 
 ### Touch Annotation

@@ -18,7 +18,7 @@ def _write_metadata(path, template):
     )
 
 
-@pytest.mark.parametrize("template", ["default", "alternate"])
+@pytest.mark.parametrize("template", ["default", "alternate", "general"])
 def test_metadata_round_trip(tmp_path, template):
     path = str(tmp_path / "vid_metadata.json")
     _write_metadata(path, template)
@@ -36,7 +36,7 @@ def test_bad_metadata_does_not_fall_back_to_explicit_choice(tmp_path, content):
         resolve_template(str(path), template="default")
 
 
-@pytest.mark.parametrize("template", [None, "default", "alternate"])
+@pytest.mark.parametrize("template", [None, "default", "alternate", "general"])
 def test_export_without_metadata_is_rejected_even_with_explicit_template(tmp_path, template):
     path = str(tmp_path / "absent.json")
     with pytest.raises(ValueError, match="metadata"):

@@ -106,19 +106,26 @@ def test_special_zones_note_locks_template_exports_and_reopens(app, workspace):
     assert not workspace.errors()
 
 
-def test_reliability_inherits_template_and_locks_both_empty_projects(app, workspace):
-    load_video(app, workspace, workspace.video, template="Alternate")
+@pytest.mark.parametrize("choice,template", [("Alternate", "alternate"), ("General", "general")])
+def test_reliability_inherits_template_and_locks_both_empty_projects(app, workspace, choice, template):
+    load_video(app, workspace, workspace.video, template=choice)
     assert _metadata(workspace.project())["template_locked"] == "0"
     load_video(app, workspace, workspace.video, mode="Reliability", template="Default")
     assert app.video_name == "tiny_reliability"
     assert app.video.frames == {}
     for name in ("tiny", "tiny_reliability"):
         meta = _metadata(workspace.project(name))
-        assert meta["template"] == "alternate"
+        assert meta["template"] == template
         assert meta["template_locked"] == "1"
     save(app)
     metadata = Path(workspace.project("tiny_reliability").export_metadata)
-    assert json.loads(metadata.read_text())["template"] == "alternate"
+    exported = json.loads(metadata.read_text())
+    assert exported["template"] == template
+    if template == "general":
+        assert exported["Channel Labels"] == {
+            "RH": "Channel 1", "LH": "Channel 2", "RL": "Channel 3", "LL": "Channel 4",
+        }
+        assert find_widget(app.mode_controls_frame, text="Channel 1") is not None
     assert not workspace.errors()
 
 
@@ -230,6 +237,19 @@ def test_general_channels_annotate_all_squares_and_restore_limb_controls(app, wo
     assert find_widget(app.mode_controls_frame, text="Right Hand") is not None
     assert find_widget(app.mode_controls_frame, text="Channel 1") is None
     assert app.limb_parameter_heading.cget("text") == "Limb-specific"
+    # Loading another video closes the original DB; reopening restores the
+    # saved General choice even when the picker asks for an anatomical one.
+    load_video(app, workspace, workspace.video, template="Alternate")
+    assert app.template == "general"
+    assert find_widget(app.mode_controls_frame, text="Channel 1") is not None
+    assert _metadata(workspace.project())["template_locked"] == "1"
+    for key in ("RH", "LH", "RL", "LL"):
+        assert app.video.frames[0][key]["Zones"] == [[str(n)] for n in range(1, 9)]
+    save(app)
+    exported = json.loads(Path(workspace.project().export_metadata).read_text())
+    assert exported["Channel Labels"] == {
+        "RH": "Channel 1", "LH": "Channel 2", "RL": "Channel 3", "LL": "Channel 4",
+    }
     assert not workspace.errors()
 
 

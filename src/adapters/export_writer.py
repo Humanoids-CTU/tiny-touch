@@ -12,7 +12,7 @@ import pandas as pd
 from typing import Dict
 
 from adapters.atomic_io import atomic_write
-from domain.templates import validate_template
+from domain.templates import GENERAL_TEMPLATE, get_template, validate_template
 from domain.model import FrameBundle, _normalize_param_state, empty_bundle
 
 
@@ -46,6 +46,10 @@ def write_export_metadata(meta_path: str,
         "Param Labels": param_labels or {},
         "Limb Param Labels": limb_param_labels or {},
     }
+    if template == GENERAL_TEMPLATE:
+        meta["Channel Labels"] = {
+            channel.key: channel.label for channel in get_template(template).channels
+        }
     if labeling_time_seconds is not None:
         meta["Total Labeling Time (hours)"] = round(float(labeling_time_seconds) / 3600.0, 4)
     atomic_write(meta_path, lambda f: json.dump(meta, f, indent=2, ensure_ascii=False))

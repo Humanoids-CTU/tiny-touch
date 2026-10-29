@@ -11,6 +11,7 @@ json.load preserves the file's key order in the returned dict (Python dicts are
 insertion-ordered), so `list(d.keys())` asserts the on-disk order exactly.
 """
 import json
+import pytest
 
 from adapters.export_writer import write_export_metadata
 
@@ -46,11 +47,27 @@ def _write(tmp_path, **overrides):
     return path
 
 
-def test_metadata_key_set_and_order_without_labeling_time(tmp_path):
-    path = _write(tmp_path)
+@pytest.mark.parametrize("template", ["default", "alternate"])
+def test_metadata_key_set_and_order_without_labeling_time(tmp_path, template):
+    path = _write(tmp_path, template=template)
     with open(path, encoding="utf-8") as fh:
         meta = json.load(fh)
     assert list(meta.keys()) == BASE_KEYS
+
+
+@pytest.mark.parametrize("labeling_time", [None, 3600.0])
+def test_general_metadata_maps_stored_keys_to_channel_labels(tmp_path, labeling_time):
+    path = _write(tmp_path, template="general", labeling_time_seconds=labeling_time)
+    meta = json.loads(path.read_text(encoding="utf-8"))
+    assert meta["template"] == "general"
+    assert meta["Channel Labels"] == {
+        "RH": "Channel 1", "LH": "Channel 2", "RL": "Channel 3", "LL": "Channel 4",
+    }
+    assert list(meta["Channel Labels"]) == ["RH", "LH", "RL", "LL"]
+    expected_keys = BASE_KEYS + ["Channel Labels"]
+    if labeling_time is not None:
+        expected_keys.append("Total Labeling Time (hours)")
+    assert list(meta) == expected_keys
 
 
 def test_metadata_labeling_time_appends_as_last_key(tmp_path):

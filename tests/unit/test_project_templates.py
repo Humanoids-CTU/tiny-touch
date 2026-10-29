@@ -7,7 +7,7 @@ import pytest
 
 from adapters.sqlite_repo import SqliteRepository, SchemaVersionError
 from domain.project import ProjectPaths
-from domain.templates import TemplateState, DEFAULT_TEMPLATE, ALTERNATE_TEMPLATE
+from domain.templates import TemplateState, DEFAULT_TEMPLATE, ALTERNATE_TEMPLATE, GENERAL_TEMPLATE
 from service_layer.project_service import plan_project_template, apply_project_template
 
 
@@ -22,53 +22,61 @@ def create(paths, template=DEFAULT_TEMPLATE):
     repo.close()
 
 
-def test_empty_project_can_change_but_lock_survives_deletion_and_reopen(tmp_path):
+@pytest.mark.parametrize("template,zone", [(ALTERNATE_TEMPLATE, "A"), (GENERAL_TEMPLATE, "1")])
+def test_empty_project_can_change_but_lock_survives_deletion_and_reopen(tmp_path, template, zone):
     paths = project(tmp_path)
     repo = SqliteRepository(paths.state_db)
     repo.save_template(TemplateState(DEFAULT_TEMPLATE))
-    repo.save_template(TemplateState(ALTERNATE_TEMPLATE))
-    repo.save_special_zones([(1, 20, 30, "A")], 1.0)
+    repo.save_template(TemplateState(template))
+    repo.save_special_zones([(1, 20, 30, zone)], 1.0)
     repo.save_special_zones([], 1.0)
     repo.close()
     repo = SqliteRepository(paths.state_db)
     try:
-        assert repo.load_template() == TemplateState(ALTERNATE_TEMPLATE, True)
+        assert repo.load_template() == TemplateState(template, True)
         with pytest.raises(ValueError, match="locked"):
             repo.save_template(TemplateState(DEFAULT_TEMPLATE))
     finally:
         repo.close()
 
 
-def test_saved_project_overrides_new_project_preference(tmp_path):
+@pytest.mark.parametrize("template", [DEFAULT_TEMPLATE, GENERAL_TEMPLATE])
+def test_saved_project_overrides_new_project_preference(tmp_path, template):
     paths = project(tmp_path)
-    create(paths)
+    create(paths, template)
     plan = plan_project_template(paths, ALTERNATE_TEMPLATE)
-    assert plan.template == DEFAULT_TEMPLATE
+    assert plan.template == template
 
 
-def test_reliability_inherits_and_locks_both_passes(tmp_path):
-    paths = project(tmp_path, "baby_reliability")
-    create(paths.original, ALTERNATE_TEMPLATE)
+@pytest.mark.parametrize("template", [ALTERNATE_TEMPLATE, GENERAL_TEMPLATE])
+@pytest.mark.parametrize("first_mode", ["Normal", "Reliability"])
+def test_reliability_inherits_and_locks_both_passes(tmp_path, template, first_mode):
+    normal = project(tmp_path)
+    reliability = project(tmp_path, "baby_reliability")
+    first, paths = (normal, reliability) if first_mode == "Normal" else (reliability, normal)
+    create(first, template)
     plan = plan_project_template(paths, DEFAULT_TEMPLATE)
-    assert plan.template == ALTERNATE_TEMPLATE
+    assert plan.template == template
     repo = SqliteRepository(paths.state_db)
     apply_project_template(repo, plan)
     repo.close()
-    for candidate in (paths, paths.original):
-        assert SqliteRepository.inspect_template(candidate.state_db) == TemplateState(ALTERNATE_TEMPLATE, True)
+    for candidate in (normal, reliability):
+        assert SqliteRepository.inspect_template(candidate.state_db) == TemplateState(template, True)
 
 
-def test_reliability_without_original_uses_explicit_selection(tmp_path):
+@pytest.mark.parametrize("template", [ALTERNATE_TEMPLATE, GENERAL_TEMPLATE])
+def test_reliability_without_original_uses_explicit_selection(tmp_path, template):
     paths = project(tmp_path, "baby_reliability")
-    plan = plan_project_template(paths, ALTERNATE_TEMPLATE)
-    assert plan.template == ALTERNATE_TEMPLATE
+    plan = plan_project_template(paths, template)
+    assert plan.template == template
     assert plan.linked_project is None
 
 
-def test_conflicting_passes_are_rejected_without_changes(tmp_path):
+@pytest.mark.parametrize("template", [ALTERNATE_TEMPLATE, GENERAL_TEMPLATE])
+def test_conflicting_passes_are_rejected_without_changes(tmp_path, template):
     paths = project(tmp_path, "baby_reliability")
     create(paths)
-    create(paths.original, ALTERNATE_TEMPLATE)
+    create(paths.original, template)
     before = {p.state_db: open(p.state_db, "rb").read() for p in (paths, paths.original)}
     with pytest.raises(ValueError, match="different body templates"):
         plan_project_template(paths, DEFAULT_TEMPLATE)
