@@ -4,6 +4,8 @@ from tkinter import ttk
 
 from PIL import Image, ImageDraw, ImageTk
 
+from gui.native_title_bar import apply_title_bar
+
 THEME_NAME = "cosmo"
 DIAGRAM_BG = "#ffffff"
 
@@ -84,6 +86,7 @@ DARK_PALETTE = {
     "STATUS_OK": "#75c69b", "STATUS_BAD": "#e79599", "STATUS_WARN": "#dec17b",
 }
 PALETTES = {"light": LIGHT_PALETTE, "dark": DARK_PALETTE}
+_appearance = "light"
 
 
 def bind_colors(widget, **roles):
@@ -97,8 +100,23 @@ def _refresh_colors(widget):
     roles = getattr(widget, "_theme_color_roles", {})
     if roles:
         widget.configure(**{option: globals()[role] for option, role in roles.items()})
+    _sync_title_bar(widget)
     for child in widget.winfo_children():
         _refresh_colors(child)
+
+
+def _sync_title_bar(widget):
+    if widget.winfo_toplevel() is widget:
+        apply_title_bar(widget, dark=_appearance == "dark",
+                        background=SURFACE, foreground=TEXT)
+
+
+def _on_window_map(event):
+    # Map fires for child controls too; only root/Toplevel windows have captions.
+    # Tcl-owned popups (for example a combobox list) have no Python widget object.
+    if isinstance(event.widget, str):
+        return
+    _sync_title_bar(event.widget)
 
 
 _dot_cache = {}
@@ -193,12 +211,15 @@ def init_style(root, appearance="light"):
         name="tinytouch-dark", themetype="dark", colors=colors,
     ))
     bind_colors(root, bg="SURFACE")
+    root.bind_all("<Map>", _on_window_map, add="+")
     apply_appearance(root, style, appearance)
     return style
 
 
 def apply_appearance(root, style, appearance):
     """Switch themed controls and explicitly colored widgets together."""
+    global _appearance
+    _appearance = appearance
     globals().update(PALETTES.get(appearance, LIGHT_PALETTE))
     style.theme_use("tinytouch-dark" if appearance == "dark" else THEME_NAME)
     _flat_button(style, "Tool.TButton", NEUTRAL, TL_EMPTY)

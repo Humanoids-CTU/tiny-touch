@@ -67,6 +67,7 @@ tiny-touch/
 │   ├── gui/                      # Tkinter only
 │   │   ├── ui_components.py      # Layout, widgets, key/mouse bindings
 │   │   ├── theme.py              # Colors / fonts / widget styling
+│   │   ├── native_title_bar.py   # Windows title-bar colors; no-op on Linux
 │   │   ├── special_zones_app.py  # Special-zone selector + note dialog (Toplevel)
 │   │   └── resource_utils.py     # PyInstaller-aware asset path resolution
 │   └── resources/                # RUNTIME assets -- everything here ships in the exe
