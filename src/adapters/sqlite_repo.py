@@ -84,6 +84,8 @@ from domain.model import (
     empty_record,
 )
 from domain.templates import TemplateState, bundle_has_annotation
+from domain.templates import validate_template
+from domain.zone_display import ZoneDisplaySettings
 
 
 logger = logging.getLogger(__name__)
@@ -313,17 +315,39 @@ class SqliteRepository:
             raise ValueError("Invalid project template lock")
         return TemplateState(self.get_meta(META_TEMPLATE), raw == "1")
 
-    def save_template(self, state: TemplateState) -> None:
+    def save_template(self, state: TemplateState, *, zone_display: ZoneDisplaySettings | None = None) -> None:
         current = self.load_template()
         if state.template is None:
             raise ValueError("Choose the project's body template first")
         chosen = current.choose(state.template)
-        self.set_meta_many({META_TEMPLATE: chosen.template,
-                            META_TEMPLATE_LOCKED: int(current.locked or state.locked)})
+        values = {META_TEMPLATE: chosen.template,
+                  META_TEMPLATE_LOCKED: int(current.locked or state.locked)}
+        if zone_display is not None:
+            values[f"zone_display:{chosen.template}"] = self._encode_zone_display(zone_display)
+        self.set_meta_many(values)
 
     def lock_template(self) -> None:
         if not self.load_template().locked:
             self.set_meta(META_TEMPLATE_LOCKED, 1)
+
+    def load_zone_display(self, template: str) -> ZoneDisplaySettings:
+        raw = self.get_meta(f"zone_display:{validate_template(template)}")
+        if raw is None:
+            return ZoneDisplaySettings()
+        try:
+            value = json.loads(raw)
+            return ZoneDisplaySettings(labels=value["labels"], show_names=value["show_names"])
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ValueError(f"Invalid saved zone names for {template}") from exc
+
+    def save_zone_display(self, template: str, settings: ZoneDisplaySettings) -> None:
+        self.set_meta(f"zone_display:{validate_template(template)}", self._encode_zone_display(settings))
+
+    @staticmethod
+    def _encode_zone_display(settings: ZoneDisplaySettings) -> str:
+        return json.dumps({
+            "labels": dict(settings.labels), "show_names": settings.show_names,
+        }, ensure_ascii=False)
 
     def get_meta(self, key: str, default=None) -> Optional[str]:
         self._check_thread()

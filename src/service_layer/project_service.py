@@ -170,14 +170,20 @@ def plan_project_template(paths: ProjectPaths, selected: str) -> TemplatePlan:
 
 def apply_project_template(repo: SqliteRepository, plan: TemplatePlan) -> None:
     """Persist the selection and lock both projects when linking a pair."""
+    is_new = repo.load_template().template is None
     selected = repo.load_template().choose(plan.template)
-    repo.save_template(selected.lock() if plan.linked_project else selected)
-    if plan.linked_project:
-        linked = SqliteRepository(plan.linked_project.state_db)
-        try:
-            linked.save_template(linked.load_template().choose(plan.template).lock())
-        finally:
-            linked.close()
+    if not plan.linked_project:
+        repo.save_template(selected)
+        return
+    linked = SqliteRepository(plan.linked_project.state_db)
+    try:
+        inherited = linked.load_zone_display(plan.template) if is_new else None
+        # Selection and inherited names commit together, so a failed write
+        # cannot leave a half-initialized project that skips inheritance later.
+        repo.save_template(selected.lock(), zone_display=inherited)
+        linked.save_template(linked.load_template().choose(plan.template).lock())
+    finally:
+        linked.close()
 
 
 def prepare_project(raw_video_name: str, labeling_mode: str) -> ProjectPaths:

@@ -5,6 +5,8 @@ from PIL import Image, ImageTk
 
 from gui.resource_utils import asset_path
 from gui import theme
+from domain.zone_display import ZoneDisplaySettings
+from gui.zone_labels import draw_zone_labels
 
 DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE = 1.0
 DEFAULT_SPECIAL_ZONES_DOT_RADIUS = 7
@@ -23,6 +25,8 @@ class SpecialZonesApp:
         dot_radius=DEFAULT_SPECIAL_ZONES_DOT_RADIUS,
         diagram_path=None,
         on_first_mark=None,
+        zone_display=None,
+        zone_positions=None,
     ):
         self.top_level = tk.Toplevel(master)
         self.top_level.title("Special Zones")
@@ -68,7 +72,8 @@ class SpecialZonesApp:
         self.note_entry = ttk.Entry(self.f, textvariable=self.note_var)
         self.note_entry.pack(fill="x", padx=10, pady=(0, 10))
 
-        self.canvas2.create_image(0, 0, anchor="nw", image=self.photo2)
+        self.canvas2.create_image(0, 0, anchor="nw", image=self.photo2, tags=("diagram",))
+        self.set_zone_display(zone_display or ZoneDisplaySettings(), zone_positions or {})
         self.canvas2.bind("<Button-1>", self.add_dot)    # Left click to add a dot
         self.canvas2.bind("<Button-2>", self.remove_dot) # Middle click to remove a dot
         self.top_level.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -81,6 +86,9 @@ class SpecialZonesApp:
         win_w = self.content.winfo_reqwidth()
         win_h = self.content.winfo_reqheight()
         self.top_level.geometry(f"{win_w}x{win_h}")
+
+    def set_zone_display(self, settings, positions):
+        draw_zone_labels(self.canvas2, settings, positions, self.diagram_scale)
 
     def note(self):
         return self.note_var.get().strip()

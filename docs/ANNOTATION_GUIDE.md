@@ -248,6 +248,22 @@ to sort first.
 
 ---
 
+### Custom zone names
+
+With a video loaded, open **Settings → Zone names**. This works for **Default**,
+**Alternate**, and **General**. Enter names beside the zone IDs: for example,
+General's `1` could become `Light on`. Names can contain up to 40 characters on one
+line. Leave a name blank to use the original ID again. `LINE` and `NN` remain fixed.
+
+Enable **Show zone names on diagrams** to show names on the annotation diagram and
+in **Special Zones**. Names are hidden by default. **Apply** saves the names and
+visibility with this project and updates its export. **Cancel** discards the edits.
+You can change names after coding starts; the selected template remains locked.
+
+Names are separate for each project and template. A new Reliability pass inherits the
+original pass's names when created, then keeps its own settings. CSV zone IDs and mask
+files stay unchanged; the export metadata's **Zone Labels** maps IDs to custom names.
+
 ## 8. Gaze and parameters
 
 Below the diagram there are two groups of three buttons.

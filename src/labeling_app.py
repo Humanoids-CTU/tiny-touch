@@ -17,7 +17,7 @@ from adapters import video_probe
 from adapters.frame_buffer import PLAYBACK_BUFFER_AHEAD, BufferContext, FrameBuffer
 from adapters.frame_extractor import FrameExtractionCancelled, FrameExtractionError
 from adapters.timer_resolution import PreciseTimers
-from adapters.zone_masks import load_zone_masks
+from adapters.zone_masks import load_zone_masks, editable_zone_names, zone_label_positions
 from domain.playback import compute_play_step
 from domain.model import (
     FrameRecord,
@@ -27,10 +27,13 @@ from domain.model import (
 from domain.project import ProjectPaths
 from domain.touch import NO_ZONE, find_last_open_onset, zones_at
 from domain.templates import TEMPLATE_LABELS, DEFAULT_TEMPLATE, get_template
+from domain.zone_display import ZoneDisplaySettings
 from gui import theme
 from gui.special_zones_app import SpecialZonesApp, DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE
 from gui.frame_dialog import FrameDialog
 from gui.template_dialog import choose_template, template_diagram
+from gui.zone_names_dialog import edit_zone_names
+from gui.zone_labels import draw_zone_labels
 from gui.resource_utils import asset_path
 from gui.ui_components import build_ui
 from log_setup import open_logs_folder
@@ -320,6 +323,7 @@ class LabelingApp(tk.Tk):
         self.video_name = None
         self.minimal_touch_length = None
         self.template = DEFAULT_TEMPLATE
+        self.zone_display = ZoneDisplaySettings()
         self.special_zones_diagram_scale = DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE
         self.special_zones_note = None
         self._special_zones_app = None
@@ -445,6 +449,7 @@ class LabelingApp(tk.Tk):
     def _reset_zone_cache(self):
         self._zone_masks = []
         self._zone_dir = None
+        self._zone_label_positions = {}
 
     def _clear_frame_children(self, frame):
         for child in frame.winfo_children():
@@ -1134,7 +1139,8 @@ class LabelingApp(tk.Tk):
                 )
             photo = cache[(image_path, scale)] = ImageTk.PhotoImage(resized)
         self.photo = photo
-        self.diagram_canvas.create_image(0, 0, anchor="nw", image=self.photo)
+        self.diagram_canvas.create_image(0, 0, anchor="nw", image=self.photo, tags=("diagram",))
+        draw_zone_labels(self.diagram_canvas, self.zone_display, self._zone_label_positions, scale)
         self.draw_timeline()
         self.draw_timeline2()
         self.update_limb_parameter_buttons()
@@ -1146,6 +1152,7 @@ class LabelingApp(tk.Tk):
             return
         self._zone_dir = directory
         self._zone_masks = load_zone_masks(directory)
+        self._zone_label_positions = zone_label_positions(self._zone_masks)
 
     def find_image_with_white_pixel(self, x, y):
         # NOTE: historically misleading name — the masks are BLACK shapes on
@@ -2012,6 +2019,7 @@ class LabelingApp(tk.Tk):
             limb_param_labels=self._limb_param_labels_for_export(),
             labeling_time_seconds=self._current_video_time_s(),
             template=self.state_repo.load_template().template,
+            zone_labels=dict(self.zone_display.labels),
         )
 
         # 2) Snapshot BEFORE the worker-thread export so concurrent edits can
@@ -2118,10 +2126,40 @@ class LabelingApp(tk.Tk):
 
     def _apply_active_template(self, template):
         self.template = template
+        self.zone_display = self.state_repo.load_zone_display(template)
         self._reset_zone_cache()
         self._load_zone_masks()
         self.rebuild_annotation_controls()
         self._render_diagram_dots()
+
+    def edit_project_zone_names(self):
+        if self.video is None or self.state_repo is None:
+            return
+
+        def apply(settings):
+            try:
+                self.state_repo.save_zone_display(self.template, settings)
+            except (OSError, ValueError, sqlite3.Error) as exc:
+                logger.exception("Could not save project zone names")
+                messagebox.showerror("Cannot save zone names", str(exc), parent=self)
+                return False
+            self.zone_display = settings
+            self._render_diagram_dots()
+            if self._special_zones_app and self._special_zones_app.top_level.winfo_exists():
+                self._special_zones_app.set_zone_display(settings, self._zone_label_positions)
+            # The DB is authoritative; a failed export is retryable via Save.
+            try:
+                if self.save_data() is False:
+                    messagebox.showerror("Export not updated", "Zone names were saved. Retry Save to update the export.", parent=self)
+            except Exception:
+                logger.exception("Zone names saved, but export failed")
+                messagebox.showerror("Export not updated", "Zone names were saved. Retry Save to update the export.", parent=self)
+            return True
+
+        edit_zone_names(
+            self._settings_win, editable_zone_names(self.template), self.zone_display,
+            apply, center=center_over_parent,
+        )
 
     def change_project_template(self):
         if self.video is None:
@@ -2580,6 +2618,8 @@ class LabelingApp(tk.Tk):
                     diagram_scale=scale,
                     diagram_path=template_diagram(self.state_repo.load_template().template),
                     on_first_mark=self._lock_before_annotation,
+                    zone_display=self.zone_display,
+                    zone_positions=self._zone_label_positions,
                 )
             except Exception:
                 self.special_zones_btn.config(state=tk.NORMAL)
@@ -2769,6 +2809,9 @@ class LabelingApp(tk.Tk):
             row += 1
             ttk.Button(content, text="Change project template", command=self.change_project_template,
                        state=tk.DISABLED if template_state.locked else tk.NORMAL).grid(
+                row=row, column=0, columnspan=2, sticky="w", padx=8, pady=4)
+            row += 1
+            ttk.Button(content, text="Zone names", command=self.edit_project_zone_names).grid(
                 row=row, column=0, columnspan=2, sticky="w", padx=8, pady=4)
             row += 1
         ttk.Label(content, text="Display", font=theme.FONT_BOLD).grid(

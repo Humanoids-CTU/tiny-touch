@@ -251,10 +251,23 @@ use each template's neutral `LINE.png` outline, which matches its mask coordinat
 The CSV format is unchanged. Export metadata includes `"template": "default"`,
 `"alternate"`, or `"general"`. General metadata also includes `Channel Labels`, derived
 from its template definition: `RH` → Channel 1, `LH` → Channel 2, `RL` → Channel 3,
-`LL` → Channel 4. Default and Alternate metadata retain their existing format.
+`LL` → Channel 4. All templates can add optional `Zone Labels` metadata when customized.
 Template identity uses the existing SQLite metadata and locking rules; no schema change
 is needed. Analysis requires the template field and rejects missing, invalid, or conflicting choices. See
 [docs/DATA_FORMAT.md#2-the-metadata-sidecar](docs/DATA_FORMAT.md#2-the-metadata-sidecar).
+
+Settings → Zone names edits project display aliases and the per-template “Show zone names
+on diagrams” preference (off by default). `domain.zone_display.ZoneDisplaySettings` validates
+the immutable name mapping. SQLite `meta.zone_display:<template>` stores its JSON, so an
+unlocked template switch can restore that template's own names without mixing vocabularies.
+New linked projects inherit a snapshot of the original's active-template settings; subsequent
+edits remain local to each pass. Initial template selection and inherited names commit in one
+transaction. Missing settings mean original IDs and hidden names; no database migration is needed.
+
+`adapters.zone_masks.zone_label_positions` finds an interior point in each winning mask region.
+The shared `gui.zone_labels` overlay renders the effective names above the image and below dots
+on both annotation and Special Zones canvases. Masks, coordinates, stored zone IDs, and CSV
+encoding never change. `LINE` and `NN` have no editable display name.
 
 ### Touch Annotation
 
@@ -309,7 +322,7 @@ labeling-time accumulator.
 
 | Table | Holds |
 | --- | --- |
-| `meta` | `video_name`, `fps`, `last_frame`, `total_frames`, `labeling_time_seconds`, `special_zones_diagram_scale`, `special_zones_note`, `template`, `template_locked` |
+| `meta` | `video_name`, `fps`, `last_frame`, `total_frames`, `labeling_time_seconds`, `special_zones_diagram_scale`, `special_zones_note`, `template`, `template_locked`, optional `zone_display:<template>` |
 | `frames` | one row per frame present in the store (its EXISTENCE is data) + `note` |
 | `frame_params` | global `Par1..3`; absent row = key absent, `state IS NULL` = key present but None |
 | `limb_records` | per-limb `onset` + a `has_limb_params` flag; a limb with nothing to store has NO row and is rebuilt as `empty_record(limb)` |

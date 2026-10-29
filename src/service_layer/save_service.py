@@ -51,6 +51,7 @@ class MetadataInputs:
     labeling_time_seconds: Optional[float]
     template: Optional[str] = None
     special_zones_note: Optional[str] = None
+    zone_labels: Optional[dict] = None
 
 
 def load_special_zones(repo: Optional[SqliteRepository]):
@@ -108,6 +109,7 @@ def run_export(snapshot: Dict[int, FrameBundle],
         param_labels=metadata.param_labels,
         limb_param_labels=metadata.limb_param_labels,
         labeling_time_seconds=metadata.labeling_time_seconds,
+        zone_labels=metadata.zone_labels,
     )
     export_from_unified(
         snapshot,

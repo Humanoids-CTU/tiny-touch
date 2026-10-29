@@ -165,6 +165,7 @@ literal UTF-8 (no `\uXXXX` escaping), keys in this exact order:
 | `Param Labels` | object | Display labels of the three global parameter buttons, keyed `"Parameter_1"`, `"Parameter_2"`, `"Parameter_3"`. `{}` when unavailable. |
 | `Limb Param Labels` | object | Display labels of the three per-limb parameter buttons, keyed `"XX_Parameter_1"`, `"XX_Parameter_2"`, `"XX_Parameter_3"`. The `XX` is a placeholder standing for any of the four limbs — the same three labels apply to all of them. `{}` when unavailable. |
 | `Channel Labels` | object | **General only.** Maps the existing CSV prefixes to channel labels, in selector order: `"RH": "Channel 1"`, `"LH": "Channel 2"`, `"RL": "Channel 3"`, `"LL": "Channel 4"`. Absent for Default and Alternate. |
+| `Zone Labels` | object | Optional for every template. Maps customized zone IDs to display names, e.g. `{"1": "Light on"}` or `{"I": "Target"}`. Omitted when no names are customized. An unlisted ID uses its own text as its display name. |
 | `Total Labeling Time (hours)` | float | Cumulative wall-clock time spent labeling this video, in hours, rounded to 4 decimals. Accumulated across sessions. **Present only when the app had a running labeling clock**; absent from files written without one. |
 
 General retains the same 34 CSV columns and cell encoding. The `LH`, `LL`, `RH`, and
@@ -177,7 +178,16 @@ name and describes per-channel parameter buttons for General too.
 General metadata written before this extension can lack `Channel Labels`. The mapping
 above is fixed by the `general` template; reopening and saving the project adds the
 field. No database migration or CSV conversion is required. Default and Alternate
-metadata keep their existing key set and order.
+metadata keep their existing key set and order when no zone names are customized.
+
+Zone renaming changes display names only. CSV `{limb}_Zones` cells, `Special Zones`,
+and mask filenames retain their original IDs. Join them to `Zone Labels` for display;
+never replace IDs with names when combining datasets. Names are project-specific and
+template-specific, can be edited after annotation starts, and are independent of the
+diagram visibility toggle. The `LINE` boundary marker and `NN` unassigned marker are
+not renameable. Names use one line of at most 40 characters. Blank names restore the ID.
+Older metadata without `Zone Labels` remains valid. When present, this key follows
+`Channel Labels` (if any) and precedes `Total Labeling Time (hours)` (if any).
 
 Example for Default (General additionally includes `Channel Labels` before labeling time):
 

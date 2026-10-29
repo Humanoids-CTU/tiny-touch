@@ -13,6 +13,7 @@ from typing import Dict
 
 from adapters.atomic_io import atomic_write
 from domain.templates import GENERAL_TEMPLATE, get_template, validate_template
+from domain.zone_display import ZoneDisplaySettings
 from domain.model import FrameBundle, _normalize_param_state, empty_bundle
 
 
@@ -29,12 +30,14 @@ def write_export_metadata(meta_path: str,
                           limb_param_labels: dict | None = None,
                           labeling_time_seconds: float | None = None,
                           *, template: str,
-                          special_zones_note: str | None = None) -> None:
+                          special_zones_note: str | None = None,
+                          zone_labels: dict | None = None) -> None:
     """
     Writes a JSON sidecar with all non-tabular export metadata that used to be
     stuffed into the first 5 lines of *_export.csv.
     """
     template = validate_template(template)
+    zone_labels = ZoneDisplaySettings(labels=zone_labels if zone_labels is not None else {}).labels
     meta = {
         "Program Version": program_version,
         "Video Name": video_name,
@@ -50,6 +53,8 @@ def write_export_metadata(meta_path: str,
         meta["Channel Labels"] = {
             channel.key: channel.label for channel in get_template(template).channels
         }
+    if zone_labels:
+        meta["Zone Labels"] = dict(zone_labels)
     if labeling_time_seconds is not None:
         meta["Total Labeling Time (hours)"] = round(float(labeling_time_seconds) / 3600.0, 4)
     atomic_write(meta_path, lambda f: json.dump(meta, f, indent=2, ensure_ascii=False))

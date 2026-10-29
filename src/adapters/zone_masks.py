@@ -14,6 +14,7 @@ import cv2
 
 from domain.touch_stats import NO_ZONE, zone_sort_key
 from domain.templates import DEFAULT_TEMPLATE, get_template
+from domain.touch import LINE_ZONE, zone_precedence
 from gui.resource_utils import asset_path
 
 
@@ -77,3 +78,27 @@ def load_zone_masks(directory):
             masks.append((zone_name, image))
     logger.debug("Loaded touch zone masks from %s: %d masks", directory, len(masks))
     return masks
+
+
+def editable_zone_names(template: str) -> list[str]:
+    """Target names, including OUTSIDE; boundary/unassigned markers keep their IDs."""
+    return [name for name in list_zone_names(template) if name not in {LINE_ZONE, NO_ZONE}]
+
+
+def zone_label_positions(masks) -> dict[str, tuple[int, int]]:
+    """Place labels inside the widest part of each winning mask region."""
+    positions = {}
+    claimed = None
+    for name, mask in sorted(masks, key=lambda item: zone_precedence(item[0])):
+        if name in {LINE_ZONE, NO_ZONE}:
+            continue
+        region = mask == 0
+        available = region if claimed is None else region & ~claimed
+        claimed = region.copy() if claimed is None else claimed | region
+        if not available.any():
+            continue
+        distances = cv2.distanceTransform(available.astype("uint8"), cv2.DIST_L2, 5)
+        index = int(distances.argmax())
+        y, x = divmod(index, mask.shape[1])
+        positions[name] = (x, y)
+    return positions
