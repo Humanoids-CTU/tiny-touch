@@ -497,7 +497,20 @@ These rules are also stated for external readers in
 The written artifacts and their file names are a contract too (the master page links
 them and users bookmark them): `heatmap_<LIMB>.html`, `touch_trajectory.html`,
 `analysis_table_frames.csv`, `analysis_table_seconds.csv`, `table.html`, `histogram.html`,
-`histogram_2.html`, `master_<name>.html`.
+`histogram_2.html`, `master_<name>.html`. The additional `zone_table.html` shows zone
+touch counts with readable names and separate stable IDs.
+
+Analysis resolves `domain.report_labels.ReportLabels` from export metadata before
+creating the output directory. Optional `Zone Labels` and `Channel Labels` are validated;
+older exports fall back to zone IDs and template channel names. Labels affect only
+presentation: renamed zones display as `Name (ID)` so duplicate names remain distinct.
+Heatmap ticks and hover data, trajectory hovers, summary/zone tables, and histogram
+legends use the same labels. User text is escaped before entering Plotly text fields.
+Calculations, matrix axes, existing file names, and both analysis CSVs keep their IDs.
+
+General channel images include a footer highlighting the owning channel in annotation
+and report trajectory panels. `generate_general_template.py` rebuilds the neutral and
+four highlighted images without moving the eight squares or changing any masks.
 
 The master page inlines every figure `<div>` into ONE scrolling document and loads a
 single shared `plots/plotly.min.js` (written by plotly via `include_plotlyjs="directory"`).

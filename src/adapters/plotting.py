@@ -17,6 +17,7 @@ users bookmark them):
     analysis_table_frames.csv frame-based per-limb table
     analysis_table_seconds.csv seconds-based per-limb table
     table.html                rendered summary table
+    zone_table.html           zone touch counts with display labels and stable IDs
     histogram.html            touch length distribution (in onsets)
     histogram_2.html          touch duration distribution
     plotly.min.js             ONE shared plotly bundle (written by plotly via
@@ -33,6 +34,7 @@ master page never links a file that was not written.
 import base64
 import logging
 import math
+from html import escape
 import os
 from typing import Dict, Sequence, Tuple
 
@@ -44,6 +46,8 @@ from plotly.subplots import make_subplots
 
 from adapters.report_page import ReportFigure
 from domain.model import LIMBS
+from domain.report_labels import ReportLabels
+from domain.touch_stats import zone_sort_key
 from domain.templates import DEFAULT_TEMPLATE, get_template
 from domain.touch_stats import (
     Episode,
@@ -121,6 +125,11 @@ def display_limb_order(limbs: Sequence[str] = LIMBS, *, template: str = DEFAULT_
     return ordered + [limb for limb in limbs if limb not in ordered]
 
 
+def _display_stats(stats: Sequence[LimbStats], labels: ReportLabels) -> list[LimbStats]:
+    by_limb = {item.limb: item for item in stats}
+    return [by_limb[key] for key in display_limb_order(list(by_limb), template=labels.template)]
+
+
 def heatmap_height(n_zones: int) -> int:
     """Figure height for an `n_zones` x `n_zones` transition matrix, clamped so
     tiny matrices are not postage stamps and huge ones do not dwarf the page."""
@@ -150,7 +159,7 @@ def _write_figure(fig, output_folder: str, filename: str, *,
 def write_transition_heatmap(transition_df: pd.DataFrame,
                              zones: Sequence[str],
                              limb: str,
-                             output_folder: str, *, template: str = DEFAULT_TEMPLATE) -> ReportFigure:
+                             output_folder: str, *, labels: ReportLabels = ReportLabels()) -> ReportFigure:
     """One start-zone x end-zone heatmap. The subtitle states the pairwise rule
     because the totals legitimately exceed the touch count (see
     `domain.touch_stats.transitions`)."""
@@ -170,11 +179,12 @@ def write_transition_heatmap(transition_df: pd.DataFrame,
         template=PLOTLY_TEMPLATE,
     )
     fig.update_traces(
-        hovertemplate="Start Zone: %{y}<br>End Zone: %{x}<br>Number of Touches: %{z}<extra></extra>"
+        customdata=[[[escape(labels.zone(start)), escape(labels.zone(end))] for end in zones] for start in zones],
+        hovertemplate="Start Zone: %{customdata[0]}<br>End Zone: %{customdata[1]}<br>Number of Touches: %{z}<extra></extra>"
     )
     fig.update_layout(
         title=(
-            f"Touch Transition Heatmap {limb}<br>"
+            f"Touch Transition Heatmap {escape(labels.channel(limb))}<br>"
             "<sup>Multi-zone start/end clicks contribute one count per zone pair.</sup>"
         ),
         height=heatmap_height(len(zones)),
@@ -183,7 +193,8 @@ def write_transition_heatmap(transition_df: pd.DataFrame,
         coloraxis_colorbar=dict(dtick=max(1, math.ceil(max_count / 8))),
     )
     ticks = dict(
-        tickmode="array", tickvals=list(range(len(zones))), ticktext=zones,
+        type="category", categoryorder="array", categoryarray=zones,
+        tickmode="array", tickvals=list(range(len(zones))), ticktext=[escape(labels.zone(zone)) for zone in zones],
         tickfont=dict(size=10), automargin=True, fixedrange=True,
     )
     # Vertical x labels: at half-page width a ~38-column axis leaves ~15px per
@@ -192,7 +203,7 @@ def write_transition_heatmap(transition_df: pd.DataFrame,
     fig.update_yaxes(**ticks)
     return _write_figure(
         fig, output_folder, heatmap_file(limb),
-        title=f"Transition heatmap — {get_template(template).channel_label(limb)} ({limb})",
+        title=f"Transition heatmap — {labels.channel(limb)} ({limb})",
         group=GROUP_TRANSITIONS,
         half_width=True,
         config=_STATIC_FIGURE_CONFIG,
@@ -219,10 +230,11 @@ def _point_style(point, is_open_tail: bool):
     return _MID_COLOR, _MID_SIZE, _MID_SYMBOL
 
 
-def _hover_text(point, episode) -> str:
-    zone_text = ", ".join(point.zones) if point.zones else _MISSING
+def _hover_text(point, episode, labels: ReportLabels = ReportLabels()) -> str:
+    zone_text = ", ".join(escape(labels.zone(zone)) for zone in point.zones) if point.zones else _MISSING
     state = "OPEN (no offset)" if not episode.closed else (point.onset or "-")
     return (
+        f"{escape(get_template(labels.template).channel_noun)}: {escape(labels.channel(episode.limb))}<br>"
         f"Frame: {point.frame}<br>"
         f"Point: {point.click_index}/{point.clicks_in_frame}<br>"
         f"X: {point.x}<br>Y: {point.y}<br>"
@@ -230,7 +242,7 @@ def _hover_text(point, episode) -> str:
     )
 
 
-def _episode_trace(episode: Episode, name: str):
+def _episode_trace(episode: Episode, name: str, labels: ReportLabels = ReportLabels()):
     """One scatter trace per episode, or None when the episode has no clicks.
 
     Hover text is built in the SAME loop as the coordinates, so `text` can never
@@ -249,7 +261,7 @@ def _episode_trace(episode: Episode, name: str):
         colors.append(color)
         sizes.append(size)
         symbols.append(symbol)
-        texts.append(_hover_text(point, episode))
+        texts.append(_hover_text(point, episode, labels))
     return go.Scatter(
         x=xs,
         y=ys,
@@ -265,7 +277,7 @@ def _episode_trace(episode: Episode, name: str):
 
 def write_trajectory_plot(episodes_by_limb: Dict[str, Sequence[Episode]],
                           image_paths: Sequence[str],
-                          output_folder: str, *, template: str = DEFAULT_TEMPLATE) -> ReportFigure:
+                          output_folder: str, *, labels: ReportLabels = ReportLabels()) -> ReportFigure:
     """2x2 trajectory grid, one trace per episode, drawn over the limb
     diagrams. Open episodes get an `(open)` trace name and a diamond tail
     marker; every click that counts toward the statistics appears here.
@@ -274,13 +286,13 @@ def write_trajectory_plot(episodes_by_limb: Dict[str, Sequence[Episode]],
     background image at any container width (plotly letterboxes the rest).
     """
     rows, cols = TRAJECTORY_GRID
-    definition = get_template(template)
-    panel_limbs = display_limb_order(LIMBS, template=template)
+    definition = get_template(labels.template)
+    panel_limbs = display_limb_order(LIMBS, template=labels.template)
     image_by_limb = dict(zip(LIMBS, image_paths))
     fig = make_subplots(
         rows=rows,
         cols=cols,
-        subplot_titles=tuple(definition.channel(limb).label for limb in panel_limbs),
+        subplot_titles=tuple(escape(labels.channel(limb)) for limb in panel_limbs),
         horizontal_spacing=0.04,
         vertical_spacing=0.08,
     )
@@ -298,7 +310,7 @@ def write_trajectory_plot(episodes_by_limb: Dict[str, Sequence[Episode]],
 
         for n, episode in enumerate(episodes_by_limb.get(limb, ()), start=1):
             suffix = "" if episode.closed else " (open)"
-            trace = _episode_trace(episode, f"{limb} touch {n}{suffix}")
+            trace = _episode_trace(episode, f"{escape(labels.channel(limb))} touch {n}{suffix}", labels)
             if trace is not None:
                 fig.add_trace(trace, row=row, col=col)
 
@@ -343,7 +355,7 @@ def write_trajectory_plot(episodes_by_limb: Dict[str, Sequence[Episode]],
     )
     return _write_figure(
         fig, output_folder, TRAJECTORY_FILE,
-        title="Touch trajectories over the limb diagrams",
+        title=f"Touch trajectories over the {definition.channel_noun.lower()} diagrams",
         group=GROUP_TRAJECTORY,
     )
 
@@ -424,15 +436,16 @@ def _fmt(value, integer: bool = False) -> str:
 def write_summary_table(stats: Sequence[LimbStats],
                         total_frames: int,
                         fps,
-                        output_folder: str) -> ReportFigure:
+                        output_folder: str, *, labels: ReportLabels = ReportLabels()) -> ReportFigure:
     """Rendered summary table (table.html).
 
     The title reports the video length in seconds, or `unknown` when the frame
     rate is unusable. A non-zero open-touch count is called out in the subtitle
     so a censored episode cannot be missed.
     """
+    stats = _display_stats(stats, labels)
     columns = {
-        "Limb": [s.limb for s in stats],
+        get_template(labels.template).channel_noun: [escape(labels.channel(s.limb)) for s in stats],
         "Total Touches": [_fmt(s.total_touches, integer=True) for s in stats],
         "Open (Unterminated)": [_fmt(s.open_touches, integer=True) for s in stats],
         "Total Duration [Seconds]": [_fmt(s.total_duration_seconds) for s in stats],
@@ -480,9 +493,33 @@ def write_summary_table(stats: Sequence[LimbStats],
     )
 
 
+# --- zone counts ------------------------------------------------------------
+
+def write_zone_table(stats: Sequence[LimbStats], output_folder: str, *,
+                     labels: ReportLabels = ReportLabels()) -> ReportFigure:
+    """Display precomputed zone counts without renaming the machine CSV columns."""
+    rows = [
+        (escape(labels.channel(item.limb)), escape(zone), escape(labels.zone(zone)), count)
+        for item in _display_stats(stats, labels)
+        for zone, count in sorted(item.zone_touch_count.items(), key=lambda pair: zone_sort_key(pair[0]))
+    ]
+    values = [list(column) for column in zip(*rows)] if rows else [[], [], [], []]
+    figure = go.Figure(data=[go.Table(
+        header=dict(values=[get_template(labels.template).channel_noun, "Zone ID", "Zone", "Touches"],
+                    fill_color=TABLE_HEADER_FILL, align="left"),
+        cells=dict(values=values, fill_color=TABLE_CELL_FILL, align="left", height=26),
+    )])
+    figure.update_layout(
+        template=PLOTLY_TEMPLATE, height=max(230, min(1000, 100 + len(rows) * 26)),
+        margin=dict(l=10, r=10, t=40, b=10), title="Zone touch counts (closed touches)",
+    )
+    return _write_figure(figure, output_folder, "zone_table.html", title="Zone touch counts",
+                         group=GROUP_SUMMARY, config=_STATIC_FIGURE_CONFIG)
+
+
 # --- histograms -------------------------------------------------------------
 
-def _stacked_bar_figure(distributions, limbs, hover_unit):
+def _stacked_bar_figure(distributions, limbs, hover_unit, labels: ReportLabels = ReportLabels()):
     all_keys = sorted({key for d in distributions for key in d})
     fig = go.Figure()
     for limb, d in zip(limbs, distributions):
@@ -490,11 +527,11 @@ def _stacked_bar_figure(distributions, limbs, hover_unit):
             go.Bar(
                 x=list(all_keys),
                 y=[d.get(key, 0) for key in all_keys],
-                name=limb,
+                name=escape(labels.channel(limb)),
                 marker=dict(color=LIMB_COLORS.get(limb),
                             line=dict(width=1, color="#ffffff")),
                 hovertext=[
-                    f"{limb}<br>Length: {key}{hover_unit}<br>Number of touches: {d.get(key, 0)}"
+                    f"{escape(labels.channel(limb))}<br>Length: {key}{hover_unit}<br>Number of touches: {d.get(key, 0)}"
                     for key in all_keys
                 ],
                 hoverinfo="text",
@@ -504,10 +541,11 @@ def _stacked_bar_figure(distributions, limbs, hover_unit):
     return fig
 
 
-def write_onset_histogram(stats: Sequence[LimbStats], output_folder: str) -> ReportFigure:
+def write_onset_histogram(stats: Sequence[LimbStats], output_folder: str, *, labels: ReportLabels = ReportLabels()) -> ReportFigure:
     """Distribution of onsets-per-touch, closed episodes only."""
+    stats = _display_stats(stats, labels)
     fig = _stacked_bar_figure(
-        [s.onset_count_distribution for s in stats], [s.limb for s in stats], ""
+        [s.onset_count_distribution for s in stats], [s.limb for s in stats], "", labels
     )
     fig.update_layout(
         barmode="stack",
@@ -523,7 +561,7 @@ def write_onset_histogram(stats: Sequence[LimbStats], output_folder: str) -> Rep
     )
 
 
-def write_duration_histogram(stats: Sequence[LimbStats], fps, output_folder: str) -> ReportFigure:
+def write_duration_histogram(stats: Sequence[LimbStats], fps, output_folder: str, *, labels: ReportLabels = ReportLabels()) -> ReportFigure:
     """Distribution of touch durations, closed episodes only.
 
     Buckets are whole seconds (rounded up) when the frame rate is usable; with
@@ -531,9 +569,10 @@ def write_duration_histogram(stats: Sequence[LimbStats], fps, output_folder: str
     dividing by zero (which is exactly where the old code crashed).
     """
     usable = fps_is_usable(fps)
+    stats = _display_stats(stats, labels)
     distributions = [duration_histogram_buckets(s, fps) for s in stats]
     unit = " sec" if usable else " frames"
-    fig = _stacked_bar_figure(distributions, [s.limb for s in stats], unit)
+    fig = _stacked_bar_figure(distributions, [s.limb for s in stats], unit, labels)
     if usable:
         title = "Touch Duration Distribution"
         xaxis_title = "Touch Duration [second]"

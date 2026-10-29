@@ -191,7 +191,7 @@ def test_cat3_heatmap_reflects_pairwise_transitions(tmp_path):
     )
 
     html = (out / "heatmap_RH.html").read_text(encoding="utf-8")
-    assert "Touch Transition Heatmap RH" in html
+    assert "Touch Transition Heatmap Right Hand" in html
     assert "one count per zone pair" in html
 
 

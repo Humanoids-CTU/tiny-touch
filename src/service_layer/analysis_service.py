@@ -39,6 +39,7 @@ from adapters.zone_masks import list_zone_names
 from domain.model import LIMBS
 from domain.project import ProjectPaths
 from domain.templates import validate_template
+from domain.report_labels import ReportLabels
 from domain.touch_stats import (
     Episode,
     ExportSchemaError,
@@ -128,7 +129,12 @@ def resolve_frame_rate(caller_frame_rate, metadata_path: str):
 
 
 def resolve_template(metadata_path: str, template=None) -> str:
-    """Read the export's template and check it against the active project."""
+    """Compatibility helper for callers that only need the recorded template ID."""
+    return resolve_report_labels(metadata_path, template).template
+
+
+def resolve_report_labels(metadata_path: str, template=None) -> ReportLabels:
+    """Read and validate exported labels; older exports use template defaults."""
     try:
         with open(metadata_path, encoding="utf-8") as stream:
             metadata = json.load(stream)
@@ -142,7 +148,7 @@ def resolve_template(metadata_path: str, template=None) -> str:
             raise ValueError(
                 f"Export uses template {recorded}; the requested template is {template}."
             )
-    return recorded
+    return ReportLabels(recorded, metadata.get("Zone Labels", {}), metadata.get("Channel Labels", {}))
 
 
 def run_analysis(paths: ProjectPaths,
@@ -175,7 +181,8 @@ def run_analysis(paths: ProjectPaths,
     df = read_export_df(export_path)
     data = parse_export_data(df, limbs)
 
-    resolved_template = resolve_template(paths.export_metadata, template)
+    labels = resolve_report_labels(paths.export_metadata, template)
+    resolved_template = labels.template
 
     fps, fps_source = resolve_frame_rate(frame_rate, paths.export_metadata)
     if fps is None:
@@ -208,7 +215,7 @@ def run_analysis(paths: ProjectPaths,
     open_total = sum(s.open_touches for s in stats)
     if open_total:
         detail = ", ".join(
-            f"{s.limb}@{list(s.open_start_frames)}" for s in stats if s.open_touches
+            f"{labels.channel(s.limb)}@{list(s.open_start_frames)}" for s in stats if s.open_touches
         )
         message = (
             f"{open_total} open/unterminated touch(es) found ({detail}); reported "
@@ -224,16 +231,17 @@ def run_analysis(paths: ProjectPaths,
     figures = [
         plotting.write_trajectory_plot(
             data.episodes, plotting.limb_image_paths(resolved_template), output_folder,
-            template=resolved_template,
+            labels=labels,
         ),
-        plotting.write_summary_table(stats, data.total_frames, fps, output_folder),
-        plotting.write_onset_histogram(stats, output_folder),
-        plotting.write_duration_histogram(stats, fps, output_folder),
+        plotting.write_summary_table(stats, data.total_frames, fps, output_folder, labels=labels),
+        plotting.write_zone_table(stats, output_folder, labels=labels),
+        plotting.write_onset_histogram(stats, output_folder, labels=labels),
+        plotting.write_duration_histogram(stats, fps, output_folder, labels=labels),
     ]
     for limb in plotting.display_limb_order(limbs, template=resolved_template):
         matrix, zones = matrices[limb]
         figures.append(plotting.write_transition_heatmap(
-            matrix, zones, limb, output_folder, template=resolved_template,
+            matrix, zones, limb, output_folder, labels=labels,
         ))
 
     written: List[str] = [figure.path for figure in figures]

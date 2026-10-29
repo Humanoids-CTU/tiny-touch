@@ -63,7 +63,7 @@ TEMPLATES = MappingProxyType({
         diagram="icons/zones_general/LINE.png",
         masks_directory="icons/zones_general",
         channels=tuple(
-            ChannelDefinition(key, f"Channel {index}", "icons/general.png")
+            ChannelDefinition(key, f"Channel {index}", f"icons/general_{key}.png")
             for index, key in enumerate(("RH", "LH", "RL", "LL"), start=1)
         ),
         startup_diagram="icons/general.png",

@@ -356,8 +356,16 @@ interactive dashboard to `data/<video>/plots/`, opening the index page
   diagram — green for the onset, red for the offset, black for mid-touch waypoints;
 - a **summary table**: touch counts, total and mean duration, standard deviation, percentage
   of the video spent touching, touch rate per minute;
+- a **zone-count table**: readable zone names, original IDs, and counts of closed touches;
 - **transition heatmaps**, one per limb, counting start zone → end zone;
 - two **histograms**: number of onsets per touch, and touch duration.
+
+Reports use names from the exported metadata. Renamed zones appear as **Name (ID)**
+in heatmaps and trajectory hovers, keeping zones distinct even if they share a name.
+General uses channel names in titles, legends, and tables. Its diagram footer highlights
+the corresponding channel in both the app and each report trajectory panel.
+Older exports without custom names use the original IDs and template defaults.
+The two analysis CSV files retain their original headers and channel IDs.
 
 Two things to read carefully:
 

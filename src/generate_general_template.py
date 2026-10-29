@@ -16,6 +16,22 @@ HORIZONTAL_GAP = 32
 VERTICAL_GAP = 20
 OUTLINE_WIDTH = 3
 LABEL_SIZE = 28
+CHANNEL_KEYS = ("RH", "LH", "RL", "LL")
+CHANNEL_HIGHLIGHT = "#1bafd0"
+FOOTER_Y = 674
+
+
+def with_channel_footer(diagram: Image.Image, selected: str | None) -> Image.Image:
+    result = diagram.copy()
+    draw = ImageDraw.Draw(result)
+    font = ImageFont.load_default(size=12)
+    for index, key in enumerate(CHANNEL_KEYS):
+        x = 17 + index * 105
+        draw.rectangle((x, FOOTER_Y, x + 99, FOOTER_Y + 19),
+                       fill=CHANNEL_HIGHLIGHT if key == selected else "white", outline="black")
+        draw.text((x + 50, FOOTER_Y + 9), f"Channel {index + 1}", font=font,
+                  fill="black", anchor="mm")
+    return result
 
 
 def main() -> None:
@@ -50,7 +66,9 @@ def main() -> None:
             mask.save(MASKS_DIR / f"{zone}.png")
             outside_draw.rectangle(bounds, fill=255)
 
-    diagram.save(ICONS_DIR / "general.png")
+    with_channel_footer(diagram, None).save(ICONS_DIR / "general.png")
+    for key in CHANNEL_KEYS:
+        with_channel_footer(diagram, key).save(ICONS_DIR / f"general_{key}.png")
     # LINE doubles as the preview, matching the existing template convention.
     # Zone interiors take precedence over the number glyphs during hit testing.
     diagram.convert("L").point(lambda pixel: 0 if pixel < 128 else 255).save(

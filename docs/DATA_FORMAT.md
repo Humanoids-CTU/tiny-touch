@@ -189,6 +189,14 @@ not renameable. Names use one line of at most 40 characters. Blank names restore
 Older metadata without `Zone Labels` remains valid. When present, this key follows
 `Channel Labels` (if any) and precedes `Total Labeling Time (hours)` (if any).
 
+HTML analysis reports use these exported mappings for display. A renamed zone appears
+as `Name (ID)`, including in heatmap hover text and the additional `zone_table.html`.
+Metadata mappings do not rename matrix axes used for calculations or columns/values
+in `analysis_table_frames.csv` and `analysis_table_seconds.csv`. Report file names,
+including `heatmap_RH.html` for General's Channel 1, remain unchanged. Exports without
+the optional mappings use template defaults. Invalid mappings are rejected before
+report files are written.
+
 Example for Default (General additionally includes `Channel Labels` before labeling time):
 
 ```json

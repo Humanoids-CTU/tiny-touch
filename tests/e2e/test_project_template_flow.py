@@ -209,13 +209,13 @@ def test_general_channels_annotate_all_squares_and_restore_limb_controls(app, wo
     assert app.limb_parameter_heading.cget("text") == "Channel-specific"
     assert find_widget(app.mode_controls_frame, text="Right Hand") is None
     scale = app.diagram_scale
-    with Image.open(asset_path("icons/general.png")) as source:
-        expected = source.convert("RGB").resize(
-            (int(450 * scale), int(696 * scale)), Image.Resampling.LANCZOS,
-        )
     for index, key in enumerate(("RH", "LH", "RL", "LL"), start=1):
         select_radio(app, f"Channel {index}")
         assert app.option_var_1.get() == key
+        with Image.open(asset_path(f"icons/general_{key}.png")) as source:
+            expected = source.convert("RGB").resize(
+                (int(450 * scale), int(696 * scale)), Image.Resampling.LANCZOS,
+            )
         rendered = ImageTk.getimage(app.photo).convert("RGB")
         assert ImageChops.difference(rendered, expected).getbbox() is None
         for row in range(4):
