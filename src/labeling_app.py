@@ -1119,6 +1119,9 @@ class LabelingApp(tk.Tk):
         self.on_radio_click()
 
     def on_radio_click(self):
+        if self.video is None:
+            self.diagram_canvas.delete("all")
+            return
         definition = get_template(self.template)
         expected_dir = asset_path(definition.masks_directory)
         if getattr(self, "_zone_dir", None) != expected_dir:
@@ -2302,6 +2305,7 @@ class LabelingApp(tk.Tk):
         # context and go idle instead of touching a half-swapped state.
         self.video = None
         self.video_name = None
+        self._render_diagram_dots()
         self.displayed_frame = None
         self._displayed_image = None
         self._last_step_sign = 0
@@ -2331,6 +2335,7 @@ class LabelingApp(tk.Tk):
         self._reset_zone_cache()
         self.video = None
         self.video_name = None
+        self._render_diagram_dots()
         self.displayed_frame = None
         self._displayed_image = None
         self._buffer_reset()

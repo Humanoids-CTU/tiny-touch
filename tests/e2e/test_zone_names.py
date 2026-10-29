@@ -114,7 +114,9 @@ def test_zone_names_save_reopen_reset_and_keep_annotation_ids(app, workspace, tm
 ])
 def test_named_template_full_workflow_and_reliability(app, workspace, tmp_path, choice, zone, point):
     """Exercise Settings -> annotate -> reopen -> Analysis in both labeling passes."""
+    assert not app.diagram_canvas.find_all()
     load_video(app, workspace, workspace.video, template=choice)
+    assert app.diagram_canvas.find_withtag("diagram")
     click(app, "Settings")
     settings = find_toplevel(app, "Settings")
     _edit(app, settings, zone, "Acceptance target", True)

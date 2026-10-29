@@ -27,7 +27,7 @@ import tkinter as tk
 
 import pytest
 
-from gui_driver import click_canvas, close, find_button, pump, walk
+from gui_driver import click_canvas, close, find_button, pump, select_radio, walk
 
 pytestmark = pytest.mark.gui
 
@@ -110,6 +110,10 @@ def test_app_builds_wires_and_closes_cleanly(app, capfd):
     # with no video loaded — that is the state the app starts in.
     pump(app, 0.7)
     assert isinstance(app.diagram_canvas, tk.Canvas)
+    assert not app.diagram_canvas.find_all()
+    select_radio(app, "Left Hand")
+    pump(app, 0.35)
+    assert not app.diagram_canvas.find_all()
     app.focus_force()
     app.event_generate("<KeyPress-d>", when="now")
     app.event_generate("<KeyRelease-d>", when="now")
