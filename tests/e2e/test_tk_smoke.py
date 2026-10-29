@@ -27,7 +27,7 @@ import tkinter as tk
 
 import pytest
 
-from gui_driver import close, find_button, pump, walk
+from gui_driver import click_canvas, close, find_button, pump, walk
 
 pytestmark = pytest.mark.gui
 
@@ -110,6 +110,12 @@ def test_app_builds_wires_and_closes_cleanly(app, capfd):
     # with no video loaded — that is the state the app starts in.
     pump(app, 0.7)
     assert isinstance(app.diagram_canvas, tk.Canvas)
+    app.focus_force()
+    app.event_generate("<KeyPress-d>", when="now")
+    app.event_generate("<KeyRelease-d>", when="now")
+    click_canvas(app.diagram_canvas, "<Button-2>", 10, 10)
+    pump(app)
+    assert app.video is None
 
     # --- the close path, and the timer bug it used to leak -------------------
     # `periodic_print_dot` reschedules itself forever. Before the fix it was

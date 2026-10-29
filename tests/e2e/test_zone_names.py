@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from gui_driver import click, click_canvas, find_toplevel, find_widget, load_video, walk
+from gui_driver import click, click_canvas, find_toplevel, find_widget, goto_frame, load_video, save, walk
 
 
 pytestmark = pytest.mark.gui
@@ -105,3 +105,65 @@ def test_zone_names_save_reopen_reset_and_keep_annotation_ids(app, workspace, tm
     assert not app._special_zones_app.canvas2.find_withtag("zone-label")
     app._special_zones_app.on_close()
     assert not workspace.errors()
+
+
+@pytest.mark.parametrize("choice,zone,point", [
+    ("Default", "I", (192, 336)),
+    ("Alternate", "G", (192, 336)),
+    ("General", "1", (137, 102)),
+])
+def test_named_template_full_workflow_and_reliability(app, workspace, tmp_path, choice, zone, point):
+    """Exercise Settings -> annotate -> reopen -> Analysis in both labeling passes."""
+    load_video(app, workspace, workspace.video, template=choice)
+    click(app, "Settings")
+    settings = find_toplevel(app, "Settings")
+    _edit(app, settings, zone, "Acceptance target", True)
+    settings.destroy()
+    position = tuple(int(value * app.diagram_scale) for value in point)
+
+    def annotate_and_analyze(paths):
+        goto_frame(app, 0)
+        click_canvas(app.diagram_canvas, "<Button-1>", *position)
+        goto_frame(app, 2)
+        click_canvas(app.diagram_canvas, "<Button-3>", *position)
+        save(app)
+        metadata = json.loads(Path(paths.export_metadata).read_text(encoding="utf-8"))
+        assert metadata["Zone Labels"] == {zone: "Acceptance target"}
+        assert metadata["template"] == choice.lower()
+        if choice == "General":
+            assert metadata["Channel Labels"] == {
+                "RH": "Channel 1", "LH": "Channel 2", "RL": "Channel 3", "LL": "Channel 4",
+            }
+        click(app, "Analysis")
+        assert workspace.opened_urls
+        report = Path(workspace.opened_urls[-1])
+        assert report.is_file()
+        assert report.parent == Path(paths.plots_dir)
+        assert "Acceptance target" in (report.parent / "zone_table.html").read_text(encoding="utf-8")
+        with (report.parent / "analysis_table_frames.csv").open(encoding="utf-8", newline="") as stream:
+            rows = list(csv.DictReader(stream))
+        rh = next(row for row in rows if row["Limb"] == "RH")
+        assert float(rh["Total Duration [Frames]"]) == 2
+        assert not workspace.errors()
+
+    original = workspace.project()
+    annotate_and_analyze(original)
+    original_csv = Path(original.export_csv).read_bytes()
+    other = tmp_path / "other.mp4"
+    shutil.copy(workspace.video, other)
+    load_video(app, workspace, other, template=choice)
+    load_video(app, workspace, workspace.video, template=choice)
+    assert app.zone_display.show_names
+    assert "Acceptance target" in _texts(app.diagram_canvas)
+    assert app.video.frames[0]["RH"]["Zones"] == [[zone]]
+    assert app.video.frames[2]["RH"]["Onset"] == "OFF"
+    assert Path(original.export_csv).read_bytes() == original_csv
+
+    # A different picker preference must not override the linked original.
+    load_video(app, workspace, workspace.video, mode="Reliability", template="Default")
+    assert app.state_repo.load_template().template == choice.lower()
+    assert app.zone_display.show_names
+    assert "Acceptance target" in _texts(app.diagram_canvas)
+    assert not app.video.frames
+    annotate_and_analyze(workspace.project("tiny_reliability"))
+    assert Path(original.export_csv).read_bytes() == original_csv

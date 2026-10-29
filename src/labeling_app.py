@@ -933,6 +933,8 @@ class LabelingApp(tk.Tk):
         self.next_frame(delta)
 
     def on_middle_click(self, event=None):
+        if self.video is None:
+            return
         # mouse position in display coords; convert to data coords using diagram_scale
         if event is None or isinstance(event, tk.Event):
             x_disp, y_disp = self.last_mouse_x, self.last_mouse_y

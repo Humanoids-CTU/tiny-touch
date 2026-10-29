@@ -230,7 +230,8 @@ boolean. The stored channel keys and CSV column order are independent of display
 
 General uses eight numbered square zones and four channels in selector order:
 Channel 1 (`RH`), Channel 2 (`LH`), Channel 3 (`RL`), Channel 4 (`LL`). Every channel
-uses the same diagram and masks under `icons/zones_general`. Its annotation and Settings
+uses the same eight-square geometry and masks under `icons/zones_general`, with a
+footer highlighting the selected channel. Its annotation and Settings
 headings use channel terminology; configured parameter labels remain user-owned.
 Activating a template refreshes both the masks and annotation controls.
 
@@ -521,7 +522,7 @@ the mouse wheel scrolls the page; zooming is an explicit drag-select.
 ## Testing
 
 ```bash
-uv run pytest                 # 298 passed, 7 deselected
+uv run pytest                 # complete non-GUI suite
 uv run pytest -m gui          # the excluded end-to-end GUI tests (needs a display)
 ```
 
@@ -533,6 +534,11 @@ default run is headless. The suite is a pyramid:
 | `tests/unit/` | Pure rules and single adapters: export encoding, config, SQLite repository, touch statistics, zone detection, thread-boundary guards, theme. |
 | `tests/integration/` | Several layers together: the analysis pipeline end to end, the load/save lifecycle. |
 | `tests/e2e/` | A real Tk root driven through `tests/e2e/gui_driver.py` — smoke test, annotate/save/export, loading a second video mid-session, close during extraction. Marked `gui` and deselected by default. |
+
+`test_zone_names.py` exercises all three templates through Settings, annotation,
+save, reopen, and Analysis, then checks inherited names and reports in Reliability
+without changing the original export. The startup smoke test also exercises delete
+input with no video loaded; the shared handler treats this as a no-op.
 
 The guarantee worth knowing: the three export-lock test files described above pin the
 published format. Note what is NOT pinned any more — with
