@@ -38,7 +38,7 @@ from adapters.export_reader import read_export_df
 from adapters.zone_masks import list_zone_names
 from domain.model import LIMBS
 from domain.project import ProjectPaths
-from domain.templates import ALTERNATE_TEMPLATE, validate_template
+from domain.templates import validate_template
 from domain.touch_stats import (
     Episode,
     ExportSchemaError,
@@ -176,7 +176,6 @@ def run_analysis(paths: ProjectPaths,
     data = parse_export_data(df, limbs)
 
     resolved_template = resolve_template(paths.export_metadata, template)
-    new_template = resolved_template == ALTERNATE_TEMPLATE
 
     fps, fps_source = resolve_frame_rate(frame_rate, paths.export_metadata)
     if fps is None:
@@ -196,7 +195,7 @@ def run_analysis(paths: ProjectPaths,
     # 3) COMPUTE everything first (see module docstring).
     stats: List[LimbStats] = []
     matrices: Dict[str, tuple] = {}
-    zones_default = list_zone_names(new_template)
+    zones_default = list_zone_names(resolved_template)
     for limb in limbs:
         episodes = data.episodes.get(limb, [])
         limb_stats = summarize(episodes, fps=fps, total_frames=data.total_frames, limb=limb)
@@ -224,15 +223,18 @@ def run_analysis(paths: ProjectPaths,
     os.makedirs(output_folder, exist_ok=True)
     figures = [
         plotting.write_trajectory_plot(
-            data.episodes, plotting.limb_image_paths(new_template), output_folder
+            data.episodes, plotting.limb_image_paths(resolved_template), output_folder,
+            template=resolved_template,
         ),
         plotting.write_summary_table(stats, data.total_frames, fps, output_folder),
         plotting.write_onset_histogram(stats, output_folder),
         plotting.write_duration_histogram(stats, fps, output_folder),
     ]
-    for limb in plotting.display_limb_order(limbs):
+    for limb in plotting.display_limb_order(limbs, template=resolved_template):
         matrix, zones = matrices[limb]
-        figures.append(plotting.write_transition_heatmap(matrix, zones, limb, output_folder))
+        figures.append(plotting.write_transition_heatmap(
+            matrix, zones, limb, output_folder, template=resolved_template,
+        ))
 
     written: List[str] = [figure.path for figure in figures]
     written.extend(plotting.write_analysis_tables(stats, fps, output_folder))

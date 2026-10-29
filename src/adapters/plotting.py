@@ -44,6 +44,7 @@ from plotly.subplots import make_subplots
 
 from adapters.report_page import ReportFigure
 from domain.model import LIMBS
+from domain.templates import DEFAULT_TEMPLATE, get_template
 from domain.touch_stats import (
     Episode,
     LimbStats,
@@ -54,15 +55,6 @@ from gui.resource_utils import asset_path
 
 
 logger = logging.getLogger(__name__)
-
-# Panel titles, in `domain.model.LIMBS` order.
-LIMB_TITLES = {"LH": "Left Hand", "RH": "Right Hand", "LL": "Left Leg", "RL": "Right Leg"}
-
-# On-screen panel order (trajectory grid and heatmap grid): mirrored, because
-# the limb diagrams face the viewer — the subject's RIGHT hand is on the
-# viewer's LEFT, so each panel sits on the side of the page its limb occupies
-# on the diagram. Data/CSV order stays `domain.model.LIMBS`; this is display only.
-DISPLAY_LIMB_ORDER = ("RH", "LH", "RL", "LL")
 
 TRAJECTORY_FILE = "touch_trajectory.html"
 TABLE_FILE = "table.html"
@@ -117,16 +109,15 @@ def heatmap_file(limb: str) -> str:
     return f"heatmap_{limb}.html"
 
 
-def limb_image_paths(new_template: bool = False) -> list:
+def limb_image_paths(template: str = DEFAULT_TEMPLATE) -> list:
     """The four limb diagrams the trajectory panels are drawn on, in LIMBS order."""
-    suffix = "_new_template" if new_template else ""
-    return [asset_path(f"icons/{limb}{suffix}.png") for limb in LIMBS]
+    definition = get_template(template)
+    return [asset_path(definition.channel(limb).image) for limb in LIMBS]
 
 
-def display_limb_order(limbs: Sequence[str] = LIMBS) -> list:
-    """`limbs` reordered for display: mirrored pairs first (`DISPLAY_LIMB_ORDER`),
-    any limb not covered by the mirror rule appended in its original position."""
-    ordered = [limb for limb in DISPLAY_LIMB_ORDER if limb in limbs]
+def display_limb_order(limbs: Sequence[str] = LIMBS, *, template: str = DEFAULT_TEMPLATE) -> list:
+    """Template display order, followed by unknown keys in their input order."""
+    ordered = [channel.key for channel in get_template(template).channels if channel.key in limbs]
     return ordered + [limb for limb in limbs if limb not in ordered]
 
 
@@ -159,7 +150,7 @@ def _write_figure(fig, output_folder: str, filename: str, *,
 def write_transition_heatmap(transition_df: pd.DataFrame,
                              zones: Sequence[str],
                              limb: str,
-                             output_folder: str) -> ReportFigure:
+                             output_folder: str, *, template: str = DEFAULT_TEMPLATE) -> ReportFigure:
     """One start-zone x end-zone heatmap. The subtitle states the pairwise rule
     because the totals legitimately exceed the touch count (see
     `domain.touch_stats.transitions`)."""
@@ -201,7 +192,7 @@ def write_transition_heatmap(transition_df: pd.DataFrame,
     fig.update_yaxes(**ticks)
     return _write_figure(
         fig, output_folder, heatmap_file(limb),
-        title=f"Transition heatmap — {LIMB_TITLES.get(limb, limb)} ({limb})",
+        title=f"Transition heatmap — {get_template(template).channel_label(limb)} ({limb})",
         group=GROUP_TRANSITIONS,
         half_width=True,
         config=_STATIC_FIGURE_CONFIG,
@@ -274,7 +265,7 @@ def _episode_trace(episode: Episode, name: str):
 
 def write_trajectory_plot(episodes_by_limb: Dict[str, Sequence[Episode]],
                           image_paths: Sequence[str],
-                          output_folder: str) -> ReportFigure:
+                          output_folder: str, *, template: str = DEFAULT_TEMPLATE) -> ReportFigure:
     """2x2 trajectory grid, one trace per episode, drawn over the limb
     diagrams. Open episodes get an `(open)` trace name and a diamond tail
     marker; every click that counts toward the statistics appears here.
@@ -283,12 +274,13 @@ def write_trajectory_plot(episodes_by_limb: Dict[str, Sequence[Episode]],
     background image at any container width (plotly letterboxes the rest).
     """
     rows, cols = TRAJECTORY_GRID
-    panel_limbs = display_limb_order(LIMBS)
+    definition = get_template(template)
+    panel_limbs = display_limb_order(LIMBS, template=template)
     image_by_limb = dict(zip(LIMBS, image_paths))
     fig = make_subplots(
         rows=rows,
         cols=cols,
-        subplot_titles=tuple(LIMB_TITLES[limb] for limb in panel_limbs),
+        subplot_titles=tuple(definition.channel(limb).label for limb in panel_limbs),
         horizontal_spacing=0.04,
         vertical_spacing=0.08,
     )

@@ -476,9 +476,9 @@ def test_alternate_metadata_selects_alternate_diagrams_and_zone_axis(tmp_path):
     heatmap = open(os.path.join(result.output_folder, "heatmap_RH.html"), encoding="utf-8").read()
     ticks = re.search(r'"ticktext"\s*:\s*(\[[^\]]*\])', heatmap)
     from adapters.zone_masks import list_zone_names
-    assert set(list_zone_names(True)).issubset(json.loads(ticks.group(1)))
+    assert set(list_zone_names("alternate")).issubset(json.loads(ticks.group(1)))
     trajectory = open(os.path.join(result.output_folder, "touch_trajectory.html"), encoding="utf-8").read()
-    with open(plotting.limb_image_paths(True)[2], "rb") as stream:
+    with open(plotting.limb_image_paths("alternate")[2], "rb") as stream:
         image_data = base64.b64encode(stream.read()).decode()
     # Plotly escapes slash characters in embedded JSON strings.
     assert image_data in trajectory.replace("\\u002f", "/")

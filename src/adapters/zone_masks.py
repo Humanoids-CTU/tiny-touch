@@ -3,10 +3,8 @@ adapters/zone_masks.py
 Zone-mask PNG loading (cv2 imread), pulled out of LabelingApp._load_zone_masks.
 The pure hit-test rule that consumes these masks lives in domain.touch.zones_at.
 
-`zones_dir` / `list_zone_names` also make this module the single place that
-knows the zone-set directory layout (`icons/zones3` vs
-`icons/zones3_new_template`): the labeler loads the masks, analysis only needs
-the NAMES for its heatmap axes, and neither hard-codes the paths.
+`zones_dir` / `list_zone_names` resolve the domain template's asset paths:
+the labeler loads masks, while analysis only needs their names.
 """
 
 import logging
@@ -15,22 +13,21 @@ import os
 import cv2
 
 from domain.touch_stats import NO_ZONE, zone_sort_key
+from domain.templates import DEFAULT_TEMPLATE, get_template
 from gui.resource_utils import asset_path
 
 
 logger = logging.getLogger(__name__)
 
-ZONES_DIR = "icons/zones3"
-ZONES_DIR_NEW_TEMPLATE = "icons/zones3_new_template"
 _IMAGE_SUFFIXES = ('.png', '.jpg', '.jpeg')
 
 
-def zones_dir(new_template: bool = False) -> str:
+def zones_dir(template: str = DEFAULT_TEMPLATE) -> str:
     """Absolute path of the zone-mask directory for the active template."""
-    return asset_path(ZONES_DIR_NEW_TEMPLATE if new_template else ZONES_DIR)
+    return asset_path(get_template(template).masks_directory)
 
 
-def list_zone_names(new_template: bool = False) -> list:
+def list_zone_names(template: str = DEFAULT_TEMPLATE) -> list:
     """Zone NAMES for the active template, sorted for display.
 
     Directory scan (adding a PNG adds a zone — see ARCHITECTURE.md), so this is I/O
@@ -39,7 +36,7 @@ def list_zone_names(new_template: bool = False) -> list:
     An unreadable directory yields just `[NN]` with a WARN rather than raising:
     the heatmap axis then still covers whatever zones the data itself contains.
     """
-    directory = zones_dir(new_template)
+    directory = zones_dir(template)
     names = []
     try:
         for filename in os.listdir(directory):
@@ -51,7 +48,7 @@ def list_zone_names(new_template: bool = False) -> list:
     if NO_ZONE not in names:
         names.append(NO_ZONE)
     logger.debug(
-        "zone list for %s: %d zones", "new_template" if new_template else "zones3", len(names)
+        "zone list for %s: %d zones", template, len(names)
     )
     return sorted(names, key=zone_sort_key)
 

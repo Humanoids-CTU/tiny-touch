@@ -280,7 +280,7 @@ _TEMPLATES = ("zones3", "zones3_new_template")
 
 
 def _real_masks(new_template):
-    directory = zones_dir(new_template)
+    directory = zones_dir("alternate" if new_template else "default")
     if not os.path.isdir(directory):
         pytest.skip(f"zone masks not present: {directory}")
     masks = load_zone_masks(directory)
