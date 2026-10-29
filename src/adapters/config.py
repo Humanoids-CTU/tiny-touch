@@ -43,6 +43,7 @@ def _ensure_config_file() -> str:
 
 
 CONFIG_DEFAULTS = {
+    'appearance': 'light',
     'minimal_touch_length': '280',
     'perf_enabled': False, 'perf_log_every_s': 2.0, 'perf_log_top_n': 6,
     'max_display_width': 0, 'max_display_height': 0,
@@ -157,6 +158,7 @@ class AppConfig:
     as the individual load_* helpers above; `raw` keeps the full parsed dict
     so unknown keys survive a Settings save round-trip."""
 
+    appearance: str = CONFIG_DEFAULTS['appearance']
     minimal_touch_length: object = CONFIG_DEFAULTS['minimal_touch_length']
     diagram_scale: float = 1.0
     dot_size: float = 10.0
@@ -214,6 +216,7 @@ def load_app_config() -> AppConfig:
         return CONFIG_DEFAULTS['log_keep_files']
 
     return AppConfig(
+        appearance=config.get('appearance') if config.get('appearance') in ('light', 'dark') else 'light',
         minimal_touch_length=config.get('minimal_touch_length', CONFIG_DEFAULTS['minimal_touch_length']),
         diagram_scale=_float_or(config.get('diagram_scale', 1.0), 1.0),
         dot_size=_float_or(config.get('dot_size', 10), 10.0),

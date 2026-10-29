@@ -26,7 +26,7 @@ class SpecialZonesApp:
     ):
         self.top_level = tk.Toplevel(master)
         self.top_level.title("Special Zones")
-        self.top_level.configure(bg=theme.SURFACE)
+        theme.bind_colors(self.top_level, bg="SURFACE")
         self.on_save_callback = on_save_callback
         self.on_close_callback = on_close_callback
         self.diagram_scale = float(diagram_scale)
@@ -60,6 +60,7 @@ class SpecialZonesApp:
         )
 
         self.canvas2.pack(padx=10, pady=10)
+        theme.bind_colors(self.canvas2, bg="DIAGRAM_BG")
 
         # Project-wide description of what the marked zones mean.
         self.note_var = tk.StringVar(value=initial_note or "")

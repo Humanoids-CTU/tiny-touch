@@ -5,6 +5,7 @@ from tkinter import ttk
 from PIL import Image, ImageDraw, ImageTk
 
 THEME_NAME = "cosmo"
+DIAGRAM_BG = "#ffffff"
 
 # Surfaces / text.
 SURFACE = "#f8f9fa"
@@ -12,7 +13,7 @@ SURFACE_ALT = "#eef0f2"
 VIDEO_BG = "#dee2e6"
 BORDER = "#ced4da"
 TEXT = "#212529"
-TEXT_MUTED = "#6c757d"
+TEXT_MUTED = "#68717a"
 DISABLED_BG = SURFACE_ALT
 DISABLED_FG = TEXT_MUTED
 
@@ -21,6 +22,10 @@ ACCENT = "#2780e3"
 ON_GREEN = "#9fdca4"
 OFF_RED = "#E57373"
 NEUTRAL = "#ffffff"
+ON_HOVER = "#8fd096"
+OFF_HOVER = "#dd6666"
+SELECTION_BG = "#1f64b0"
+SELECTION_FG = "#ffffff"
 
 # Touch timelines.
 TL_EMPTY = "#e9ecef"
@@ -53,6 +58,48 @@ TOUCH_END = TL_OFFSET_MARK
 DOT_ONSET = "#21a453"
 DOT_OFFSET = "#e2483d"
 SPECIAL_ZONE_DOT = DOT_OFFSET
+
+# Keep the existing role names for canvas painters. TinyTouch owns one Tk
+# interpreter; selecting a palette updates the roles before any widget repaints.
+LIGHT_PALETTE = {
+    name: value for name, value in tuple(globals().items())
+    if name.isupper() and isinstance(value, str) and value.startswith("#")
+}
+DARK_PALETTE = {
+    **LIGHT_PALETTE,
+    "SURFACE": "#24282f", "SURFACE_ALT": "#2c313a",
+    "VIDEO_BG": "#191d23", "BORDER": "#454d5a",
+    "TEXT": "#e4e8ef", "TEXT_MUTED": "#a6b0bf",
+    "DISABLED_BG": "#2c313a", "DISABLED_FG": "#a6b0bf",
+    "ACCENT": "#83b4ed", "NEUTRAL": "#303640",
+    "ON_GREEN": "#355746", "OFF_RED": "#65434b",
+    "ON_HOVER": "#426b57", "OFF_HOVER": "#7a515b",
+    "SELECTION_BG": "#45658a", "SELECTION_FG": "#e4e8ef",
+    "TL_EMPTY": "#2c313a", "TL_OUTLINE": "#424a56",
+    "TL_UNAVAILABLE": "#20242b", "TL_UNAVAILABLE_MARK": "#616c7b",
+    "TL_ON": "#355746", "TL_DURING": "#30483e", "TL_OFF": "#65434b",
+    "TL_ONSET_MARK": "#75c69b", "TL_OFFSET_MARK": "#e79599",
+    "TL_PARAM_ON_MARK": "#689a80", "TL_PARAM_OFF_MARK": "#ba8088",
+    "PLAYHEAD": "#83b4ed", "TOUCH_START": "#83b4ed", "TOUCH_END": "#e79599",
+    "STATUS_OK": "#75c69b", "STATUS_BAD": "#e79599", "STATUS_WARN": "#dec17b",
+}
+PALETTES = {"light": LIGHT_PALETTE, "dark": DARK_PALETTE}
+
+
+def bind_colors(widget, **roles):
+    """Remember explicit color roles for a Tk widget, including future dialogs."""
+    widget._theme_color_roles = {**getattr(widget, "_theme_color_roles", {}), **roles}
+    widget.configure(**{option: globals()[role] for option, role in roles.items()})
+    return widget
+
+
+def _refresh_colors(widget):
+    roles = getattr(widget, "_theme_color_roles", {})
+    if roles:
+        widget.configure(**{option: globals()[role] for option, role in roles.items()})
+    for child in widget.winfo_children():
+        _refresh_colors(child)
+
 
 _dot_cache = {}
 
@@ -96,7 +143,7 @@ def dot_sprite(color, radius, ring="#ffffff", ring_px=2, hollow=False):
 
 
 def _flat_button(style, name, background, hover):
-    """Register one flat, light button style with readable hover text."""
+    """Register a flat button style with readable hover text."""
     style.configure(
         name,
         background=background,
@@ -122,19 +169,44 @@ def _flat_button(style, name, background, hover):
     )
 
 
-def init_style(root):
-    """Attach ttkbootstrap's cosmo style to an existing ``tk.Tk`` root."""
+def init_style(root, appearance="light"):
+    """Attach the selected appearance to an existing ``tk.Tk`` root."""
     # Keep this import local so importing app modules remains safe in headless
     # tests and does not initialize ttkbootstrap's widget API prematurely.
     import ttkbootstrap
 
+    from ttkbootstrap.style import ThemeDefinition
+    from ttkbootstrap.themes.standard import STANDARD_THEMES
+
     style = ttkbootstrap.Style(theme=THEME_NAME)
-    _flat_button(style, "Tool.TButton", NEUTRAL, TL_EMPTY)
-    _flat_button(style, "StateOn.TButton", ON_GREEN, "#8fd096")
-    _flat_button(style, "StateOff.TButton", OFF_RED, "#dd6666")
-    _flat_button(style, "StateNeutral.TButton", NEUTRAL, TL_EMPTY)
-    root.configure(bg=SURFACE)
+    colors = dict(STANDARD_THEMES["darkly"]["colors"])
+    colors.update(
+        bg=DARK_PALETTE["SURFACE"], fg=DARK_PALETTE["TEXT"],
+        inputbg=DARK_PALETTE["VIDEO_BG"], inputfg=DARK_PALETTE["TEXT"],
+        border=DARK_PALETTE["BORDER"], primary=DARK_PALETTE["ACCENT"],
+        secondary=DARK_PALETTE["BORDER"], active=DARK_PALETTE["NEUTRAL"],
+        selectbg=DARK_PALETTE["SELECTION_BG"], selectfg=DARK_PALETTE["SELECTION_FG"],
+        success=DARK_PALETTE["STATUS_OK"], danger=DARK_PALETTE["STATUS_BAD"],
+        warning=DARK_PALETTE["STATUS_WARN"],
+    )
+    style.register_theme(ThemeDefinition(
+        name="tinytouch-dark", themetype="dark", colors=colors,
+    ))
+    bind_colors(root, bg="SURFACE")
+    apply_appearance(root, style, appearance)
     return style
+
+
+def apply_appearance(root, style, appearance):
+    """Switch themed controls and explicitly colored widgets together."""
+    globals().update(PALETTES.get(appearance, LIGHT_PALETTE))
+    style.theme_use("tinytouch-dark" if appearance == "dark" else THEME_NAME)
+    _flat_button(style, "Tool.TButton", NEUTRAL, TL_EMPTY)
+    _flat_button(style, "StateOn.TButton", ON_GREEN, ON_HOVER)
+    _flat_button(style, "StateOff.TButton", OFF_RED, OFF_HOVER)
+    _flat_button(style, "StateNeutral.TButton", NEUTRAL, TL_EMPTY)
+    style.configure("Muted.TLabel", foreground=TEXT_MUTED)
+    _refresh_colors(root)
 
 
 def set_button_state(button, state):
@@ -156,7 +228,7 @@ class StatusChip(ttk.Frame):
             self,
             text=label,
             font=FONT_SMALL,
-            foreground=TEXT_MUTED,
+            style="Muted.TLabel",
         ).pack(side="left")
         self._dot_label = ttk.Label(
             self,
@@ -167,8 +239,15 @@ class StatusChip(ttk.Frame):
         self._dot_label.pack(side="left", padx=(4, 2))
         self._text_label = ttk.Label(self, text=text, font=FONT_SMALL)
         self._text_label.pack(side="left")
+        self.set(color, text)
 
     def set(self, color, text):
         """Update the semantic dot color and displayed status text."""
-        self._dot_label.configure(foreground=color)
+        role = next((name for name in ("STATUS_OK", "STATUS_BAD", "STATUS_WARN")
+                     if globals()[name] == color), None)
+        if role:
+            bind_colors(self._dot_label, foreground=role)
+        else:
+            getattr(self._dot_label, "_theme_color_roles", {}).pop("foreground", None)
+            self._dot_label.configure(foreground=color)
         self._text_label.configure(text=text)

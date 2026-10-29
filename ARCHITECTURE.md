@@ -222,6 +222,12 @@ project is unloaded. Only current-schema projects with recorded template IDs are
 Cancellation or rejection leaves the databases and active template unchanged. Saved choices
 override the picker selection; conflicting existing pairs are rejected.
 
+`domain.templates.TEMPLATES` is the single registry for template labels, relative diagram
+and mask paths, native canvas dimensions, and channel labels/images in display order.
+Its immutable definitions contain no file I/O; GUI and adapters resolve their paths with
+`asset_path`. Zone and plotting adapters accept template IDs rather than a two-template
+boolean. The stored channel keys and CSV column order are independent of display order.
+
 `domain.templates.TemplateState` owns template names (`default`, `alternate`) and the
 permanent lock rule. The SQLite `meta` keys `template` and `template_locked` own the
 project choice. This release creates schema 3 databases; other schema versions and
@@ -373,6 +379,7 @@ survive a Settings round-trip (`AppConfig.raw` keeps the full parsed dict). Keys
 | Key | Settings UI | Purpose |
 | --- | --- | --- |
 | `diagram_scale` | yes | Diagram render scale (1.0 = native). Display only — stored click coordinates are always at native scale. |
+| `appearance` | yes | `light` (default) or `dark`. Applied immediately and remembered across restarts; body diagrams stay white. |
 | `dot_size` | yes | Click-marker radius on the diagram. |
 | `minimal_touch_length` | no | Visualization threshold (ms) shown as the "Minimal Touch Length" readout, converted to frames. **Filters nothing**, in the app or in Analysis. |
 | `parameter1..3` | yes | Display labels for the three global parameter buttons. |

@@ -283,6 +283,9 @@ Settings also holds the display options: video downscale (higher values render s
 dot size, the fast-jump distance, and whether holding an arrow key plays at the video's real
 frame rate. Changes apply on **Apply** or **Apply & Close**.
 
+Choose **Appearance: Light / Dark** to change the interface colors. Your choice is
+remembered after closing the app. The body diagrams keep their white background.
+
 ---
 
 ## 9. Notes

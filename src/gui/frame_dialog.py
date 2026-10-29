@@ -2,6 +2,8 @@
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
+from gui import theme
+
 
 class FrameDialog(simpledialog.Dialog):
     def __init__(self, parent, current_frame, last_frame):
@@ -10,6 +12,8 @@ class FrameDialog(simpledialog.Dialog):
         super().__init__(parent, "Select Frame")
 
     def body(self, master):
+        theme.bind_colors(self, bg="SURFACE")
+        theme.bind_colors(master, bg="SURFACE")
         ttk.Label(master, text=f"Frame number (0–{self.last_frame}):").pack(
             anchor="w", padx=5, pady=(0, 5),
         )

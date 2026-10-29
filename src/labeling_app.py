@@ -26,7 +26,7 @@ from domain.model import (
 )
 from domain.project import ProjectPaths
 from domain.touch import NO_ZONE, find_last_open_onset, zones_at
-from domain.templates import ALTERNATE_TEMPLATE, TEMPLATE_LABELS, DEFAULT_TEMPLATE
+from domain.templates import TEMPLATE_LABELS, DEFAULT_TEMPLATE, get_template
 from gui import theme
 from gui.special_zones_app import SpecialZonesApp, DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE
 from gui.frame_dialog import FrameDialog
@@ -217,7 +217,7 @@ def custom_confirm_close(root) -> bool:
     win.geometry("420x180")
     win.resizable(False, False)
     win.transient(root)
-    win.configure(bg=theme.SURFACE)
+    theme.bind_colors(win, bg="SURFACE")
     win.grab_set()  # makes it modal
 
     confirmed = False
@@ -312,7 +312,8 @@ def load_parameter_names_into(video_obj, par_buttons, limb_par_buttons):
 class LabelingApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.style = theme.init_style(self)
+        self.config = config.load_app_config()
+        self.style = theme.init_style(self, self.config.appearance)
 
         # Core state (was previously in __init__)
         self.video = None
@@ -331,10 +332,6 @@ class LabelingApp(tk.Tk):
         self._zone_dir = None
         self._closing = False
         self._frame_extraction_cancel = None
-
-        # Config snapshot, loaded ONCE. build_ui and everything below read
-        # from this AppConfig instead of re-reading config.json.
-        self.config = config.load_app_config()
 
         # Build UI (creates frames, widgets, binds events; sets many attributes)
         build_ui(self)
@@ -472,17 +469,12 @@ class LabelingApp(tk.Tk):
         # Center the selector as one group while keeping labels easy to scan.
         limb_selector_frame = ttk.Frame(self.mode_controls_frame)
         limb_selector_frame.pack(anchor="n")
-        for index, (text, value) in enumerate((
-            ("Right Hand", "RH"),
-            ("Left Hand", "LH"),
-            ("Right Leg", "RL"),
-            ("Left Leg", "LL"),
-        )):
+        for index, channel in enumerate(get_template(self.template).channels):
             ttk.Radiobutton(
                 limb_selector_frame,
-                text=text,
+                text=channel.label,
                 variable=self.option_var_1,
-                value=value,
+                value=channel.key,
                 command=self._on_limb_selected,
                 takefocus=0,
             ).grid(row=index // 2, column=index % 2, sticky="w", padx=8, pady=2)
@@ -1118,18 +1110,12 @@ class LabelingApp(tk.Tk):
         self.on_radio_click()
 
     def on_radio_click(self):
-        expected_dir = asset_path("icons/zones3_new_template" if self.template == ALTERNATE_TEMPLATE else "icons/zones3")
+        definition = get_template(self.template)
+        expected_dir = asset_path(definition.masks_directory)
         if getattr(self, "_zone_dir", None) != expected_dir:
             self._reset_zone_cache()
             self._load_zone_masks()
-        if self.option_var_1.get() == "RH":
-            image_path = asset_path("icons/RH_new_template.png" if self.template == ALTERNATE_TEMPLATE else "icons/RH.png")
-        elif self.option_var_1.get() == "LH":
-            image_path = asset_path("icons/LH_new_template.png" if self.template == ALTERNATE_TEMPLATE else "icons/LH.png")
-        elif self.option_var_1.get() == "RL":
-            image_path = asset_path("icons/RL_new_template.png" if self.template == ALTERNATE_TEMPLATE else "icons/RL.png")
-        else:  # LL
-            image_path = asset_path("icons/LL_new_template.png" if self.template == ALTERNATE_TEMPLATE else "icons/LL.png")
+        image_path = asset_path(definition.channel(self.option_var_1.get()).image)
 
         scale = getattr(self, "diagram_scale", 1.0)
         # The periodic dot refresh repaints through here every 300ms; cache the
@@ -1153,7 +1139,7 @@ class LabelingApp(tk.Tk):
 
     # === Zone Masks & Lookups ==================================================
     def _load_zone_masks(self):
-        directory = asset_path("icons/zones3_new_template" if self.template == ALTERNATE_TEMPLATE else "icons/zones3")
+        directory = asset_path(get_template(self.template).masks_directory)
         if getattr(self, "_zone_dir", None) == directory and getattr(self, "_zone_masks", None):
             return
         self._zone_dir = directory
@@ -1540,7 +1526,7 @@ class LabelingApp(tk.Tk):
         win.geometry("520x180")
         win.resizable(False, False)
         win.transient(self)
-        win.configure(bg=theme.SURFACE)
+        theme.bind_colors(win, bg="SURFACE")
 
         content = ttk.Frame(win, padding=16)
         content.pack(fill="both", expand=True)
@@ -1603,7 +1589,7 @@ class LabelingApp(tk.Tk):
         win.geometry("520x160")
         win.resizable(False, False)
         win.transient(self)
-        win.configure(bg=theme.SURFACE)
+        theme.bind_colors(win, bg="SURFACE")
         win.grab_set()
         win.protocol("WM_DELETE_WINDOW", lambda: None)
 
@@ -1774,6 +1760,8 @@ class LabelingApp(tk.Tk):
                 highlightthickness=2,
             )
             self.frame_label.pack(expand=True)
+            theme.bind_colors(self.frame_label, bg="VIDEO_BG",
+                              highlightbackground="BORDER", highlightcolor="BORDER")
         self.image = photo_img  # the label does not keep the Python object alive
 
     def display_first_frame(self, frame_number=None):
@@ -2172,7 +2160,7 @@ class LabelingApp(tk.Tk):
         mode_window.geometry("420x220")
         mode_window.resizable(False, False)
         mode_window.transient(self)
-        mode_window.configure(bg=theme.SURFACE)
+        theme.bind_colors(mode_window, bg="SURFACE")
         mode_window.grab_set()
 
         content = ttk.Frame(mode_window, padding=16)
@@ -2745,7 +2733,7 @@ class LabelingApp(tk.Tk):
         win.title("Settings")
         win.resizable(False, False)
         win.transient(self)
-        win.configure(bg=theme.SURFACE)
+        theme.bind_colors(win, bg="SURFACE")
         self._settings_win = win
 
         content = ttk.Frame(win, padding=16)
@@ -2756,6 +2744,7 @@ class LabelingApp(tk.Tk):
             return cfg.get(key, default)
 
         vars_map = {
+            "appearance": tk.StringVar(value=self.config.appearance.title()),
             "video_downscale": tk.StringVar(value=str(_v("video_downscale", 1.0))),
             "diagram_scale": tk.StringVar(value=str(_v("diagram_scale", 1.0))),
             "dot_size": tk.StringVar(value=str(_v("dot_size", 10))),
@@ -2788,6 +2777,14 @@ class LabelingApp(tk.Tk):
             padx=8,
             pady=(0, 6),
         )
+        row += 1
+        ttk.Label(content, text="Appearance").grid(
+            row=row, column=0, sticky="w", padx=8, pady=4
+        )
+        ttk.Combobox(
+            content, textvariable=vars_map["appearance"],
+            values=("Light", "Dark"), state="readonly", width=12,
+        ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
         row += 1
         ttk.Label(content, text="Video downscale (1 = full, 2 = half)").grid(
             row=row, column=0, sticky="w", padx=8, pady=4
@@ -2905,6 +2902,7 @@ class LabelingApp(tk.Tk):
         def apply_settings(close=False):
             try:
                 new_cfg = dict(cfg)
+                new_cfg["appearance"] = vars_map["appearance"].get().lower()
                 downscale = parse_float(vars_map["video_downscale"].get(), "video_downscale")
                 if downscale <= 0:
                     downscale = 1.0
@@ -2988,9 +2986,27 @@ class LabelingApp(tk.Tk):
             )
 
     def apply_runtime_settings(self, cfg: dict):
+        previous = self.config
+        note_draft = self._get_note_entry_text()
         # Refresh the one AppConfig snapshot the app holds (build_ui and other
         # readers consume self.config instead of re-reading config.json).
         self.config = config.load_app_config()
+        if self.config.appearance != previous.appearance:
+            theme.apply_appearance(self, self.style, self.config.appearance)
+            self.color_start = theme.TOUCH_START
+            self.color_during = theme.TL_DURING
+            self.color_end = theme.TOUCH_END
+            self._timeline_dirty = True
+            self._timeline2_dirty = True
+            self.draw_timeline()
+            self.draw_timeline2()
+
+        # Appearance and label changes do not invalidate decoded video frames
+        # or the diagram. Preserve unsaved notes and avoid interrupting playback.
+        display_changed = any(
+            getattr(self.config, name) != getattr(previous, name)
+            for name in ("video_downscale", "diagram_scale", "dot_size")
+        )
         self.perf.enabled = bool(cfg.get("perf_enabled", False))
         self.perf.log_every_s = float(cfg.get("perf_log_every_s", 2.0))
         self.perf.top_n = int(cfg.get("perf_log_top_n", 6))
@@ -3037,10 +3053,16 @@ class LabelingApp(tk.Tk):
                 {1: self.par1_btn, 2: self.par2_btn, 3: self.par3_btn},
                 {1: self.limb_par1_btn, 2: self.limb_par2_btn, 3: self.limb_par3_btn},
             )
+            if self.video is not None:
+                self.update_button_colors()
+                self.update_limb_parameter_buttons()
         except Exception:
             pass
 
-        base_w, base_h = 450, 696
+        if not display_changed:
+            return
+
+        base_w, base_h = get_template(self.template).native_size
         w, h = int(base_w * new_scale), int(base_h * new_scale)
         try:
             self.diagram_canvas.config(width=w, height=h)
@@ -3057,6 +3079,7 @@ class LabelingApp(tk.Tk):
         self._timeline2_playhead_id = None
         if getattr(self, "video", None):
             self.display_first_frame()
+            self._set_note_entry_text(note_draft)
 
     # === Frame Stepping ========================================================
     def next_frame(self, number_of_frames, play=False):

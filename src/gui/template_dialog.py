@@ -3,22 +3,20 @@ import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk
 
-from domain.templates import TEMPLATE_LABELS, ALTERNATE_TEMPLATE, validate_template
+from domain.templates import TEMPLATE_LABELS, get_template, validate_template
 from gui.resource_utils import asset_path
 from gui import theme
 
 
 def template_diagram(template):
-    validate_template(template)
-    folder = "zones3_new_template" if template == ALTERNATE_TEMPLATE else "zones3"
-    return asset_path(f"icons/{folder}/LINE.png")
+    return asset_path(get_template(template).diagram)
 
 
 def choose_template(parent, initial, *, center=None):
     validate_template(initial)
     win = tk.Toplevel(parent)
     win.withdraw()
-    win.configure(bg=theme.SURFACE)
+    theme.bind_colors(win, bg="SURFACE")
     win.title("Template for new projects")
     win.transient(parent)
     content = ttk.Frame(win, padding=16)

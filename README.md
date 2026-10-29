@@ -57,6 +57,7 @@ or picking up an object; agree on what each box means before labeling.
 
 | Setting | What it does |
 | --- | --- |
+| Appearance | Chooses Light or Dark. Applies immediately and remembers your choice; body diagrams stay white. |
 | Video downscale | Makes video images smaller. Try `2` (half size) if the app feels slow. |
 | Diagram scale | Makes the body diagram larger or smaller to suit your screen. |
 | Dot size | Changes the size of the marks on the diagram. |

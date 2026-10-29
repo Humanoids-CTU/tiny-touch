@@ -11,6 +11,7 @@ from PIL import Image, ImageTk
 import sys
 
 from gui.resource_utils import asset_path
+from domain.templates import get_template
 from gui import theme
 
 def build_ui(app):
@@ -55,6 +56,9 @@ def build_ui(app):
     app.video_frame = tk.Frame(app, bg=theme.VIDEO_BG, bd=0)
     app.timeline_frame = tk.Frame(app, bg=theme.SURFACE_ALT, height=50)
     app.control_frame = tk.Frame(app, bg=theme.SURFACE, height=100)
+    theme.bind_colors(app.video_frame, bg="VIDEO_BG")
+    theme.bind_colors(app.timeline_frame, bg="SURFACE_ALT")
+    theme.bind_colors(app.control_frame, bg="SURFACE")
     app.diagram_frame = ttk.Frame(app)
 
     # Match original grid positions exactly
@@ -75,6 +79,7 @@ def build_ui(app):
         highlightthickness=0,
     )
     app.timeline2_canvas.pack(fill=tk.X, expand=True, padx=8, pady=(6, 4))
+    theme.bind_colors(app.timeline2_canvas, bg="SURFACE")
     app.timeline2_canvas.bind("<Button-1>", app.on_timeline2_click)
 
     app.timeline_canvas = tk.Canvas(
@@ -84,6 +89,7 @@ def build_ui(app):
         highlightthickness=0,
     )
     app.timeline_canvas.pack(fill=tk.X, expand=True, padx=8, pady=(4, 8))
+    theme.bind_colors(app.timeline_canvas, bg="SURFACE_ALT")
     app.timeline_canvas.bind("<Button-1>", app.on_timeline_click)
     if sys.platform.startswith("linux"):
         app.bind("<Button-1>", app.global_click, add="+")   # safer on Linux
@@ -276,9 +282,8 @@ def _build_controls(app):
 def _build_diagram_panel(app, scale):
     app.option_var_1 = tk.StringVar()
     app.option_var_1.set("RH")
-    # === Diagram canvas EXACTLY like original ===
-    # original used icons/diagram0.png, scaled size, and packed inside diagram_frame
-    base_w, base_h = 450, 696
+    definition = get_template(app.template)
+    base_w, base_h = definition.native_size
     w, h = int(base_w * scale), int(base_h * scale)
 
     app.diagram_canvas = tk.Canvas(
@@ -289,9 +294,10 @@ def _build_diagram_panel(app, scale):
         highlightthickness=0,
     )
     app.diagram_canvas.pack(padx=10, pady=10, side="top", anchor="n")
+    theme.bind_colors(app.diagram_canvas, bg="DIAGRAM_BG")
 
     try:
-        img = Image.open(asset_path("icons/diagram0.png"))
+        img = Image.open(asset_path(definition.startup_diagram))
         img = img.resize((w, h), Image.LANCZOS)
         app.photo = ImageTk.PhotoImage(img)
         app.diagram_canvas.create_image(0, 0, anchor="nw", image=app.photo)
@@ -393,6 +399,11 @@ def _build_diagram_panel(app, scale):
         highlightthickness=1,
     )
     app.note_entry.pack(anchor="center")
+    theme.bind_colors(
+        app.note_entry, bg="NEUTRAL", fg="TEXT", insertbackground="TEXT",
+        highlightbackground="BORDER", highlightcolor="ACCENT",
+        selectbackground="SELECTION_BG", selectforeground="SELECTION_FG",
+    )
 
     note_button_row = ttk.Frame(note_controls)
     note_button_row.pack(fill="x", pady=(6, 0))
