@@ -86,3 +86,57 @@ directions, frame jumps, validation, decoder switching, and recovery from a fail
 file load. It skips when the optional runtime is missing. The scenario runs in
 a separate process so its native player and Tk state cannot affect TinyTouch's
 GUI tests.
+
+## Playback and resource benchmark
+
+```powershell
+uv pip install --python .venv/Scripts/python.exe -r demos/benchmark-requirements.txt
+uv run demos/benchmark_mpv.py
+```
+
+The runner compares the existing JPEG `FrameBuffer` and Tk image-upload path
+with mpv automatic hardware decoding and mpv software decoding. It uses the
+local `videos/sample_1080p.mp4` and `videos/sample_2160p.mp4` samples. Both must
+be present; it does not download or modify source videos or annotation projects.
+It creates an isolated JPEG cache under `demos/runtime/benchmarks/`.
+
+Each video/mode runs in a fresh process three times, with the order reversed
+on the second repeat. Each run measures a 20-second playback segment, 25 forward
+steps, 25 backward steps, and 24 seeded random frame jumps. Video panels are
+1280x720 and audio is disabled. Expect several minutes and visible benchmark
+windows; leave the machine connected to power and avoid other heavy work.
+
+Measurements include process CPU time (all its threads), sampled working-set
+and private memory, timeline playback rate, native mpv dropped-frame counters,
+and command-to-ready delays. On Windows an optional sampler records valid
+per-process GPU Engine counters once per second. GPU errors do not invalidate
+CPU/memory results, but missing GPU data must be reported as unavailable.
+
+Each campaign retains `report.md`, `summary.json`, raw per-run JSON, resource
+samples, GPU samples, errors, and copies/hashes of the playback adapter sources.
+The runner rejects a campaign if its own source changes between worker runs.
+The rest of TinyTouch's annotation UI is excluded, so this is a playback-component
+comparison rather than acceptance of a completed integration.
+
+Timing ends at a Tk image upload or mpv reaching the requested time with seeking
+finished. It does not measure physical screen latency. The 10 ms scenario poll
+adds a timing floor. Backend notification intervals are retained for diagnostics
+but should not be compared as physical display jitter.
+
+CPU percentages use the whole machine as 100%, matching Task Manager's scale.
+The GPU summary uses the busiest engine for the benchmark process per sample;
+engine percentages must not be added together. Tk's desktop-compositor work
+may be attributed to the compositor rather than the Python process.
+
+Configurable workload values are named constants near the top of
+`benchmark_mpv.py`. To reuse a prepared benchmark cache, an optional, Git-ignored
+`demos/benchmark_config.json` can contain:
+
+```json
+{"reuse_prepared_cache": "demos/runtime/benchmarks/<previous campaign>"}
+```
+
+The cache is checked against its recorded file count/byte inventory and source
+path/size/FPS/count. Reuse assumes that the cached images still belong to that
+source; rebuild after replacing a video. Each new campaign hashes its source
+videos. OS caches are not flushed, and JPEG preparation is timed only once.
