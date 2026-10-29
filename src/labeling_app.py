@@ -454,6 +454,8 @@ class LabelingApp(tk.Tk):
         if not hasattr(self, "mode_controls_frame"):
             return
 
+        definition = get_template(self.template)
+        self.limb_parameter_heading.config(text=f"{definition.channel_noun}-specific")
         self._clear_frame_children(self.mode_controls_frame)
         self._clear_frame_children(self.limb_parameter_frame)
         self.limb_par1_btn = None
@@ -462,14 +464,14 @@ class LabelingApp(tk.Tk):
 
         ttk.Label(
             self.mode_controls_frame,
-            text="Limb Selector",
+            text=f"{definition.channel_noun} Selector",
             font=theme.FONT_BOLD,
         ).pack(anchor="n", pady=(5, 6))
 
         # Center the selector as one group while keeping labels easy to scan.
         limb_selector_frame = ttk.Frame(self.mode_controls_frame)
         limb_selector_frame.pack(anchor="n")
-        for index, channel in enumerate(get_template(self.template).channels):
+        for index, channel in enumerate(definition.channels):
             ttk.Radiobutton(
                 limb_selector_frame,
                 text=channel.label,
@@ -2118,6 +2120,7 @@ class LabelingApp(tk.Tk):
         self.template = template
         self._reset_zone_cache()
         self._load_zone_masks()
+        self.rebuild_annotation_controls()
         self._render_diagram_dots()
 
     def change_project_template(self):
@@ -2535,7 +2538,6 @@ class LabelingApp(tk.Tk):
         for b in self.video.frames.values():
             if isinstance(b, dict):
                 b["Changed"] = False
-        self.rebuild_annotation_controls()
         self._set_mode_button_states()
         logger.info(
             "video %s loaded: %s frames at %s fps, resuming at frame %s",
@@ -2856,21 +2858,22 @@ class LabelingApp(tk.Tk):
             pady=(0, 6),
         )
         row += 1
-        ttk.Label(content, text="Limb Parameter 1").grid(
+        channel_noun = get_template(self.template).channel_noun
+        ttk.Label(content, text=f"{channel_noun} Parameter 1").grid(
             row=row, column=0, sticky="w", padx=8, pady=4
         )
         ttk.Entry(content, textvariable=vars_map["limb_parameter1"], width=18).grid(
             row=row, column=1, sticky="w", padx=8, pady=4
         )
         row += 1
-        ttk.Label(content, text="Limb Parameter 2").grid(
+        ttk.Label(content, text=f"{channel_noun} Parameter 2").grid(
             row=row, column=0, sticky="w", padx=8, pady=4
         )
         ttk.Entry(content, textvariable=vars_map["limb_parameter2"], width=18).grid(
             row=row, column=1, sticky="w", padx=8, pady=4
         )
         row += 1
-        ttk.Label(content, text="Limb Parameter 3").grid(
+        ttk.Label(content, text=f"{channel_noun} Parameter 3").grid(
             row=row, column=0, sticky="w", padx=8, pady=4
         )
         ttk.Entry(content, textvariable=vars_map["limb_parameter3"], width=18).grid(

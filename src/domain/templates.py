@@ -4,6 +4,7 @@ from types import MappingProxyType
 
 DEFAULT_TEMPLATE = "default"
 ALTERNATE_TEMPLATE = "alternate"
+GENERAL_TEMPLATE = "general"
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class TemplateDefinition:
     channels: tuple[ChannelDefinition, ...]  # selector and report display order
     native_size: tuple[int, int] = (450, 696)
     startup_diagram: str = "icons/diagram0.png"
+    channel_noun: str = "Limb"
 
     def channel(self, key: str) -> ChannelDefinition:
         for channel in self.channels:
@@ -56,6 +58,17 @@ def _anatomical_template(label: str, masks_directory: str, image_suffix: str) ->
 TEMPLATES = MappingProxyType({
     DEFAULT_TEMPLATE: _anatomical_template("Default", "icons/zones3", ""),
     ALTERNATE_TEMPLATE: _anatomical_template("Alternate", "icons/zones3_new_template", "_new_template"),
+    GENERAL_TEMPLATE: TemplateDefinition(
+        label="General",
+        diagram="icons/zones_general/LINE.png",
+        masks_directory="icons/zones_general",
+        channels=tuple(
+            ChannelDefinition(key, f"Channel {index}", "icons/general.png")
+            for index, key in enumerate(("RH", "LH", "RL", "LL"), start=1)
+        ),
+        startup_diagram="icons/general.png",
+        channel_noun="Channel",
+    ),
 })
 TEMPLATE_LABELS = MappingProxyType({key: definition.label for key, definition in TEMPLATES.items()})
 

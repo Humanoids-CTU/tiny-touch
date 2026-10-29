@@ -5,8 +5,9 @@ import pytest
 from PIL import Image
 
 from adapters.plotting import display_limb_order, limb_image_paths
-from adapters.zone_masks import zones_dir
+from adapters.zone_masks import load_zone_masks, zones_dir
 from domain.model import LIMBS
+from domain.touch import zones_at
 from domain.templates import TEMPLATE_LABELS, get_template
 from gui.resource_utils import asset_path
 from gui.template_dialog import template_diagram
@@ -37,10 +38,27 @@ def test_existing_template_assets_and_labels(template, label, folder, suffix):
         assert image.size == (365, 696)
 
 
-def test_general_is_not_selectable_yet():
-    assert dict(TEMPLATE_LABELS) == {"default": "Default", "alternate": "Alternate"}
-    with pytest.raises(ValueError, match="Unknown body template"):
-        get_template("general")
+def test_general_template_has_four_channels_and_eight_clickable_squares():
+    assert TEMPLATE_LABELS["general"] == "General"
+    definition = get_template("general")
+    assert definition.channel_noun == "Channel"
+    assert [(channel.key, channel.label) for channel in definition.channels] == [
+        ("RH", "Channel 1"), ("LH", "Channel 2"),
+        ("RL", "Channel 3"), ("LL", "Channel 4"),
+    ]
+    assert display_limb_order(template="general") == ["RH", "LH", "RL", "LL"]
+    for path in [template_diagram("general"), *limb_image_paths("general")]:
+        with Image.open(path) as image:
+            assert image.size == definition.native_size == (450, 696)
+    masks = load_zone_masks(zones_dir("general"))
+    assert {name for name, _ in masks} == {str(n) for n in range(1, 9)} | {"LINE", "OUTSIDE"}
+    for row in range(4):
+        for column in range(2):
+            x, y = 65 + column * 176, 30 + row * 164
+            zone = str(row * 2 + column + 1)
+            assert zones_at(masks, x + 72, y + 72) == [zone]
+            assert zones_at(masks, x, y) == ["LINE"]
+    assert zones_at(masks, 225, 100) == ["OUTSIDE"]
 
 
 @pytest.mark.parametrize("template", [None, True, "future", []])

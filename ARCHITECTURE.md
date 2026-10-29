@@ -228,7 +228,13 @@ Its immutable definitions contain no file I/O; GUI and adapters resolve their pa
 `asset_path`. Zone and plotting adapters accept template IDs rather than a two-template
 boolean. The stored channel keys and CSV column order are independent of display order.
 
-`domain.templates.TemplateState` owns template names (`default`, `alternate`) and the
+General uses eight numbered square zones and four channels in selector order:
+Channel 1 (`RH`), Channel 2 (`LH`), Channel 3 (`RL`), Channel 4 (`LL`). Every channel
+uses the same diagram and masks under `icons/zones_general`. Its annotation and Settings
+headings use channel terminology; configured parameter labels remain user-owned.
+Activating a template refreshes both the masks and annotation controls.
+
+`domain.templates.TemplateState` owns template names (`default`, `alternate`, `general`) and the
 permanent lock rule. The SQLite `meta` keys `template` and `template_locked` own the
 project choice. This release creates schema 3 databases; other schema versions and
 existing projects missing a template ID are rejected. There is no migration, historical

@@ -325,11 +325,12 @@ def _build_diagram_panel(app, scale):
         font=theme.FONT_BOLD,
     ).grid(row=0, column=0, columnspan=2, pady=(0, 6))
 
-    ttk.Label(
+    app.limb_parameter_heading = ttk.Label(
         parameter_box,
-        text="Limb-specific",
+        text=f"{definition.channel_noun}-specific",
         font=theme.FONT_SUBTITLE,
-    ).grid(row=1, column=0, pady=(0, 5))
+    )
+    app.limb_parameter_heading.grid(row=1, column=0, pady=(0, 5))
     ttk.Label(
         parameter_box,
         text="Global",

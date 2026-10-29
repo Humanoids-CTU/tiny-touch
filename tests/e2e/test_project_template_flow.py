@@ -13,7 +13,7 @@ from gui.resource_utils import asset_path
 from adapters.sqlite_repo import SqliteRepository
 from gui_driver import (
     click, click_canvas, dismiss_dialog, find_button, find_toplevel, find_widget,
-    load_video, pump, save,
+    load_video, pump, save, select_radio,
 )
 
 
@@ -28,12 +28,13 @@ def _metadata(paths):
         connection.close()
 
 
-@pytest.mark.parametrize("choice,template,folder,zone", [
-    ("Default", "default", "zones3", "I"),
-    ("Alternate", "alternate", "zones3_new_template", "G"),
+@pytest.mark.parametrize("choice,template,folder,zone,native_point", [
+    ("Default", "default", "zones3", "I", (192, 336)),
+    ("Alternate", "alternate", "zones3_new_template", "G", (192, 336)),
+    ("General", "general", "zones_general", "1", (137, 102)),
 ])
 def test_special_zones_displays_selected_template_and_permanently_locks_it(
-    app, workspace, choice, template, folder, zone,
+    app, workspace, choice, template, folder, zone, native_point,
 ):
     load_video(app, workspace, workspace.video, template=choice)
     paths = workspace.project()
@@ -51,7 +52,7 @@ def test_special_zones_displays_selected_template_and_permanently_locks_it(
     assert ImageChops.difference(rendered, expected).getbbox() is None
 
     scale = app._special_zones_app.diagram_scale
-    point = (int(192 * scale), int(336 * scale))
+    point = tuple(int(value * scale) for value in native_point)
     click_canvas(canvas, "<Button-1>", *point)
     pump(app)
     # Lock is durable before the user presses Save in Special Zones.
@@ -166,23 +167,69 @@ def test_switching_templates_updates_annotation_masks(app, workspace, tmp_path):
     assert not workspace.errors()
 
 
-def test_empty_project_can_change_template_through_settings(loaded_app, workspace):
+@pytest.mark.parametrize("choice,template,zone,native_point", [
+    ("Alternate", "alternate", "G", (192, 336)),
+    ("General", "general", "1", (137, 102)),
+])
+def test_empty_project_can_change_template_through_settings(
+    loaded_app, workspace, choice, template, zone, native_point,
+):
     app = loaded_app
     click(app, "Settings")
     settings = find_toplevel(app, "Settings")
     selected = dismiss_dialog(
-        app, "Template for new projects", "Continue", radio_text="Alternate",
+        app, "Template for new projects", "Continue", radio_text=choice,
     )
     click(settings, "Change project template")
     assert selected["clicked"]
-    assert _metadata(workspace.project())["template"] == "alternate"
+    assert _metadata(workspace.project())["template"] == template
     assert _metadata(workspace.project())["template_locked"] == "0"
-    assert json.loads(Path(workspace.project().export_metadata).read_text())["template"] == "alternate"
+    assert json.loads(Path(workspace.project().export_metadata).read_text())["template"] == template
+    selector = "Channel 1" if template == "general" else "Right Hand"
+    assert find_widget(app.mode_controls_frame, text=selector) is not None
     find_toplevel(app, "Settings").destroy()
-    click_canvas(app.diagram_canvas, "<Button-1>", 96, 168)
-    assert app.video.frames[0]["RH"]["Zones"] == [["G"]]
+    point = tuple(int(value * app.diagram_scale) for value in native_point)
+    click_canvas(app.diagram_canvas, "<Button-1>", *point)
+    assert app.video.frames[0]["RH"]["Zones"] == [[zone]]
     click(app, "Settings")
     assert find_button(find_toplevel(app, "Settings"), "Change project template").instate(["disabled"])
+    assert not workspace.errors()
+
+
+def test_general_channels_annotate_all_squares_and_restore_limb_controls(app, workspace, tmp_path):
+    load_video(app, workspace, workspace.video, template="General")
+    assert find_widget(app.mode_controls_frame, text="Channel Selector") is not None
+    assert app.limb_parameter_heading.cget("text") == "Channel-specific"
+    assert find_widget(app.mode_controls_frame, text="Right Hand") is None
+    scale = app.diagram_scale
+    with Image.open(asset_path("icons/general.png")) as source:
+        expected = source.convert("RGB").resize(
+            (int(450 * scale), int(696 * scale)), Image.Resampling.LANCZOS,
+        )
+    for index, key in enumerate(("RH", "LH", "RL", "LL"), start=1):
+        select_radio(app, f"Channel {index}")
+        assert app.option_var_1.get() == key
+        rendered = ImageTk.getimage(app.photo).convert("RGB")
+        assert ImageChops.difference(rendered, expected).getbbox() is None
+        for row in range(4):
+            for column in range(2):
+                x, y = 137 + column * 176, 102 + row * 164
+                click_canvas(app.diagram_canvas, "<Button-1>", int(x * scale), int(y * scale))
+        assert app.video.frames[0][key]["Zones"] == [[str(n)] for n in range(1, 9)]
+
+    click(app, "Settings")
+    settings = find_toplevel(app, "Settings")
+    assert find_widget(settings, text="Channel Parameter 1") is not None
+    assert find_widget(settings, text="Limb Parameter 1") is None
+    settings.destroy()
+
+    default_video = tmp_path / "default.mp4"
+    shutil.copy(workspace.video, default_video)
+    load_video(app, workspace, default_video, template="Default")
+    assert find_widget(app.mode_controls_frame, text="Limb Selector") is not None
+    assert find_widget(app.mode_controls_frame, text="Right Hand") is not None
+    assert find_widget(app.mode_controls_frame, text="Channel 1") is None
+    assert app.limb_parameter_heading.cget("text") == "Limb-specific"
     assert not workspace.errors()
 
 

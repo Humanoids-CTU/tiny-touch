@@ -22,7 +22,7 @@ def choose_template(parent, initial, *, center=None):
     content = ttk.Frame(win, padding=16)
     content.pack(fill="both", expand=True)
     explanation = (
-        "Choose the body zones for a new project.\n"
+        "Choose the diagram for a new project.\n"
         "Existing projects restore their saved template; Reliability inherits the original."
     )
     ttk.Label(content, text=explanation, justify="left", wraplength=580).pack(pady=(0, 12))
