@@ -1,5 +1,10 @@
 # mpv playback demo
 
+For the numbered-video comparison, see [frame identity results](FRAME_IDENTITY_RESULTS.md).
+Run `uv run demos/frame_identity.py` to generate an isolated clip and compare
+the burned-in IDs in the actual visible JPEG/mpv output. This focused experiment
+opens two windows for its pixel captures; keep them visible and unobscured.
+
 Run from the TinyTouch repository in PowerShell:
 
 ```powershell
