@@ -7,30 +7,36 @@ from PIL import Image, ImageDraw, ImageFont
 ICONS_DIR = Path(__file__).resolve().parent / "resources" / "icons"
 MASKS_DIR = ICONS_DIR / "zones_general"
 CANVAS_SIZE = (450, 696)
-SQUARE_SIZE = 144
+SQUARE_SIZE = 128
 COLUMNS = 2
 ROWS = 4
-LEFT_MARGIN = 65
-TOP_MARGIN = 30
+LEFT_MARGIN = 81
+TOP_MARGIN = 24
 HORIZONTAL_GAP = 32
-VERTICAL_GAP = 20
+VERTICAL_GAP = 16
 OUTLINE_WIDTH = 3
 LABEL_SIZE = 28
 CHANNEL_KEYS = ("RH", "LH", "RL", "LL")
 CHANNEL_HIGHLIGHT = "#1bafd0"
-FOOTER_Y = 674
+FOOTER_Y = 610
+FOOTER_LEFT = 15
+FOOTER_BOX_WIDTH = 96
+FOOTER_BOX_HEIGHT = 70
+FOOTER_GAP = 12
+FOOTER_LABEL_SIZE = 32
 
 
 def with_channel_footer(diagram: Image.Image, selected: str | None) -> Image.Image:
     result = diagram.copy()
     draw = ImageDraw.Draw(result)
-    font = ImageFont.load_default(size=12)
+    font = ImageFont.load_default(size=FOOTER_LABEL_SIZE)
     for index, key in enumerate(CHANNEL_KEYS):
-        x = 17 + index * 105
-        draw.rectangle((x, FOOTER_Y, x + 99, FOOTER_Y + 19),
-                       fill=CHANNEL_HIGHLIGHT if key == selected else "white", outline="black")
-        draw.text((x + 50, FOOTER_Y + 9), f"Channel {index + 1}", font=font,
-                  fill="black", anchor="mm")
+        x = FOOTER_LEFT + index * (FOOTER_BOX_WIDTH + FOOTER_GAP)
+        draw.rectangle((x, FOOTER_Y, x + FOOTER_BOX_WIDTH - 1, FOOTER_Y + FOOTER_BOX_HEIGHT - 1),
+                       fill=CHANNEL_HIGHLIGHT if key == selected else "white",
+                       outline="black", width=2)
+        draw.text((x + (FOOTER_BOX_WIDTH - 1) / 2, FOOTER_Y + (FOOTER_BOX_HEIGHT - 1) / 2),
+                  str(index + 1), font=font, fill="black", anchor="mm")
     return result
 
 

@@ -12,7 +12,7 @@ DIAGRAM_BG = "#ffffff"
 # Surfaces / text.
 SURFACE = "#f8f9fa"
 SURFACE_ALT = "#eef0f2"
-VIDEO_BG = "#dee2e6"
+VIDEO_BG = "#ffffff"
 BORDER = "#ced4da"
 TEXT = "#212529"
 TEXT_MUTED = "#68717a"
@@ -216,18 +216,50 @@ def init_style(root, appearance="light"):
     return style
 
 
+def _drop_dead_theme_subscribers(root):
+    # ttkbootstrap subscribes every Combobox popdown to theme changes but never
+    # unsubscribes it when the combobox is destroyed. A closed Settings dialog
+    # would then raise mid-switch and leave the theme half applied.
+    from ttkbootstrap.publisher import Channel, Publisher
+
+    for sub in Publisher.get_subscribers(Channel.STD):
+        name = str(sub.name)
+        if name.startswith(".") and not int(root.tk.call("winfo", "exists", name)):
+            Publisher.unsubscribe(name)
+
+
 def apply_appearance(root, style, appearance):
     """Switch themed controls and explicitly colored widgets together."""
     global _appearance
     _appearance = appearance
     globals().update(PALETTES.get(appearance, LIGHT_PALETTE))
+    _drop_dead_theme_subscribers(root)
     style.theme_use("tinytouch-dark" if appearance == "dark" else THEME_NAME)
     _flat_button(style, "Tool.TButton", NEUTRAL, TL_EMPTY)
     _flat_button(style, "StateOn.TButton", ON_GREEN, ON_HOVER)
     _flat_button(style, "StateOff.TButton", OFF_RED, OFF_HOVER)
     _flat_button(style, "StateNeutral.TButton", NEUTRAL, TL_EMPTY)
     style.configure("Muted.TLabel", foreground=TEXT_MUTED)
+    _plain_readonly_combobox(style)
     _refresh_colors(root)
+
+
+def _plain_readonly_combobox(style):
+    # ttkbootstrap's dark themes paint readonly comboboxes in the selection
+    # color, so they looked highlighted next to ordinary entries. Styles are
+    # built lazily per theme, so build it now and adjust it before first use.
+    from ttkbootstrap.style import Bootstyle
+
+    Bootstyle.update_ttk_widget_style(style_string="TCombobox")
+    field = style.colors.inputbg
+    replacements = {"fieldbackground": field, "background": field,
+                    "lightcolor": field, "darkcolor": field, "bordercolor": BORDER}
+    for option, color in replacements.items():
+        states = [
+            (*spec[:-1], color if spec[:-1] == ("readonly",) else spec[-1])
+            for spec in style.map("TCombobox", query_opt=option)
+        ]
+        style.map("TCombobox", **{option: states})
 
 
 def set_button_state(button, state):

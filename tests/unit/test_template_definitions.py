@@ -54,9 +54,9 @@ def test_general_template_has_four_channels_and_eight_clickable_squares():
     assert {name for name, _ in masks} == {str(n) for n in range(1, 9)} | {"LINE", "OUTSIDE"}
     for row in range(4):
         for column in range(2):
-            x, y = 65 + column * 176, 30 + row * 164
+            x, y = 81 + column * 160, 24 + row * 144
             zone = str(row * 2 + column + 1)
-            assert zones_at(masks, x + 72, y + 72) == [zone]
+            assert zones_at(masks, x + 64, y + 64) == [zone]
             assert zones_at(masks, x, y) == ["LINE"]
     assert zones_at(masks, 225, 100) == ["OUTSIDE"]
 

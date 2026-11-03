@@ -12,6 +12,12 @@ from gui_driver import click, click_canvas, find_toplevel, find_widget, goto_fra
 pytestmark = pytest.mark.gui
 
 
+def _show_toggle(settings):
+    label = find_widget(settings, text="Show zone names on diagrams")
+    info = label.grid_info()
+    return next(widget for widget in label.master.grid_slaves(row=info["row"], column=1))
+
+
 def _edit(app, settings, zone, name, show, *, cancel=False):
     errors = []
 
@@ -24,17 +30,21 @@ def _edit(app, settings, zone, name, show, *, cancel=False):
             entry = next(widget for widget in walk(window) if getattr(widget, "zone_id", None) == zone)
             entry.delete(0, "end")
             entry.insert(0, name)
-            toggle = find_widget(window, text="Show zone names on diagrams")
-            if bool(toggle.instate(["selected"])) != show:
-                toggle.invoke()
             click(window, "Cancel" if cancel else "Apply")
         except Exception as exc:
             errors.append(exc)
             window.destroy()
 
     app.after(20, fill)
-    click(settings, "Zone names")
+    click(settings, "Edit zone names")
     assert not errors
+    if cancel:
+        return
+    # Visibility is a Settings toggle applied with the other settings.
+    toggle = _show_toggle(settings)
+    if bool(toggle.instate(["selected"])) != show:
+        toggle.invoke()
+    click(settings, "Apply")
 
 
 def _texts(canvas):

@@ -14,9 +14,7 @@ def edit_zone_names(parent, zone_ids, settings, on_apply, *, center=None):
     theme.bind_colors(win, bg="SURFACE")
     content = ttk.Frame(win, padding=16)
     content.pack(fill="both", expand=True)
-    ttk.Label(content, text="Names are saved with this project. Blank uses the zone ID.").pack(anchor="w")
-    show = tk.BooleanVar(value=settings.show_names)
-    ttk.Checkbutton(content, text="Show zone names on diagrams", variable=show).pack(anchor="w", pady=10)
+    ttk.Label(content, text="Names are saved with this project. Blank uses the zone ID.").pack(anchor="w", pady=(0, 10))
 
     table = ttk.Frame(content)
     table.pack(fill="both", expand=True)
@@ -61,11 +59,11 @@ def edit_zone_names(parent, zone_ids, settings, on_apply, *, center=None):
 
     def apply():
         try:
-            selected = ZoneDisplaySettings({zone: value.get() for zone, value in entries.items()}, show.get())
+            selected = ZoneDisplaySettings({zone: value.get() for zone, value in entries.items()})
         except ValueError as exc:
             error.configure(text=str(exc))
             return
-        if on_apply(selected):
+        if on_apply(selected.labels):
             win.destroy()
 
     buttons = ttk.Frame(content)

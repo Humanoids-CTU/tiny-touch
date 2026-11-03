@@ -16,8 +16,8 @@ class VideoRendererError(RuntimeError):
 
 
 class GpuVideoSurface:
-    def __init__(self, parent, on_failure):
-        self.widget = tk.Frame(parent, bg="black", borderwidth=0, takefocus=0)
+    def __init__(self, parent, on_failure, background="#000000"):
+        self.widget = tk.Frame(parent, bg=background, borderwidth=0, takefocus=0)
         self.sdl = None
         self.window = None
         self.renderer = None
@@ -59,7 +59,7 @@ class GpuVideoSurface:
             if not info.flags & sdl.SDL_RENDERER_ACCELERATED:
                 raise VideoRendererError("SDL selected a software renderer")
             self.name = info.name.decode("utf-8", errors="replace")
-            self._check(sdl.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255))
+            self.set_background(background)
             self.widget.bind("<Expose>", self._schedule_redraw)
             self.widget.bind("<Configure>", self._schedule_redraw)
         except (ImportError, OSError, RuntimeError, tk.TclError):
@@ -72,6 +72,17 @@ class GpuVideoSurface:
     def _check(self, code):
         if code < 0:
             raise VideoRendererError(self._error())
+
+    def set_background(self, color):
+        """Use a ``#rrggbb`` color for letterboxing so it matches the Tk theme."""
+        red, green, blue = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+        self.widget.configure(bg=color)
+        self._check(self.sdl.SDL_SetRenderDrawColor(self.renderer, red, green, blue, 255))
+        if self._last_image is None:
+            self._check(self.sdl.SDL_RenderClear(self.renderer))
+            self.sdl.SDL_RenderPresent(self.renderer)
+        else:
+            self._schedule_redraw(None)
 
     def _draw(self):
         sdl = self.sdl

@@ -102,6 +102,6 @@ def test_general_footer_highlights_only_the_owning_channel():
     for selected, key in enumerate(("RH", "LH", "RL", "LL")):
         with Image.open(asset_path(f"icons/general_{key}.png")) as image:
             assert image.size == (450, 696)
-            assert image.crop((0, 0, 450, 670)).tobytes() == neutral.crop((0, 0, 450, 670)).tobytes()
+            assert image.crop((0, 0, 450, 600)).tobytes() == neutral.crop((0, 0, 450, 600)).tobytes()
             for index in range(4):
-                assert image.getpixel((20 + index * 105, 676)) == ((27, 175, 208) if selected == index else (255, 255, 255))
+                assert image.getpixel((20 + index * 108, 616)) == ((27, 175, 208) if selected == index else (255, 255, 255))

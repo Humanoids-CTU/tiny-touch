@@ -220,7 +220,7 @@ def test_general_channels_annotate_all_squares_and_restore_limb_controls(app, wo
         assert ImageChops.difference(rendered, expected).getbbox() is None
         for row in range(4):
             for column in range(2):
-                x, y = 137 + column * 176, 102 + row * 164
+                x, y = 145 + column * 160, 88 + row * 144
                 click_canvas(app.diagram_canvas, "<Button-1>", int(x * scale), int(y * scale))
         assert app.video.frames[0][key]["Zones"] == [[str(n)] for n in range(1, 9)]
 

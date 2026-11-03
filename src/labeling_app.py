@@ -1765,7 +1765,8 @@ class LabelingApp(tk.Tk):
         if label is not None:
             label.pack_forget()
         try:
-            self._gpu_video = GpuVideoSurface(self.video_frame, self._on_gpu_redraw_failure)
+            self._gpu_video = GpuVideoSurface(
+                self.video_frame, self._on_gpu_redraw_failure, theme.VIDEO_BG)
         except (ImportError, OSError, RuntimeError, tk.TclError) as error:
             self._gpu_failed = True
             self._renderer_status.set("CPU (GPU unavailable)")
@@ -2223,29 +2224,33 @@ class LabelingApp(tk.Tk):
         self.rebuild_annotation_controls()
         self._render_diagram_dots()
 
+    def _save_zone_display(self, settings):
+        try:
+            self.state_repo.save_zone_display(self.template, settings)
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            logger.exception("Could not save project zone names")
+            messagebox.showerror("Cannot save zone names", str(exc), parent=self)
+            return False
+        self.zone_display = settings
+        self._render_diagram_dots()
+        if self._special_zones_app and self._special_zones_app.top_level.winfo_exists():
+            self._special_zones_app.set_zone_display(settings, self._zone_label_positions)
+        # The DB is authoritative; a failed export is retryable via Save.
+        try:
+            if self.save_data() is False:
+                messagebox.showerror("Export not updated", "Zone names were saved. Retry Save to update the export.", parent=self)
+        except Exception:
+            logger.exception("Zone names saved, but export failed")
+            messagebox.showerror("Export not updated", "Zone names were saved. Retry Save to update the export.", parent=self)
+        return True
+
     def edit_project_zone_names(self):
         if self.video is None or self.state_repo is None:
             return
 
-        def apply(settings):
-            try:
-                self.state_repo.save_zone_display(self.template, settings)
-            except (OSError, ValueError, sqlite3.Error) as exc:
-                logger.exception("Could not save project zone names")
-                messagebox.showerror("Cannot save zone names", str(exc), parent=self)
-                return False
-            self.zone_display = settings
-            self._render_diagram_dots()
-            if self._special_zones_app and self._special_zones_app.top_level.winfo_exists():
-                self._special_zones_app.set_zone_display(settings, self._zone_label_positions)
-            # The DB is authoritative; a failed export is retryable via Save.
-            try:
-                if self.save_data() is False:
-                    messagebox.showerror("Export not updated", "Zone names were saved. Retry Save to update the export.", parent=self)
-            except Exception:
-                logger.exception("Zone names saved, but export failed")
-                messagebox.showerror("Export not updated", "Zone names were saved. Retry Save to update the export.", parent=self)
-            return True
+        def apply(labels):
+            # Visibility is a separate Settings toggle; keep the saved value.
+            return self._save_zone_display(ZoneDisplaySettings(labels, self.zone_display.show_names))
 
         edit_zone_names(
             self._settings_win, editable_zone_names(self.template), self.zone_display,
@@ -2903,20 +2908,9 @@ class LabelingApp(tk.Tk):
             "realtime_arrow_hold": tk.BooleanVar(value=bool(_v("realtime_arrow_hold", True))),
         }
 
+        show_zone_names = tk.BooleanVar(value=self.zone_display.show_names)
+
         row = 0
-        if self.video is not None:
-            template_state = self.state_repo.load_template()
-            status = "locked" if template_state.locked else "changeable until annotation begins"
-            ttk.Label(content, text=f"Project template: {TEMPLATE_LABELS[template_state.template]} ({status})").grid(
-                row=row, column=0, columnspan=2, sticky="w", padx=8, pady=4)
-            row += 1
-            ttk.Button(content, text="Change project template", command=self.change_project_template,
-                       state=tk.DISABLED if template_state.locked else tk.NORMAL).grid(
-                row=row, column=0, columnspan=2, sticky="w", padx=8, pady=4)
-            row += 1
-            ttk.Button(content, text="Zone names", command=self.edit_project_zone_names).grid(
-                row=row, column=0, columnspan=2, sticky="w", padx=8, pady=4)
-            row += 1
         ttk.Label(content, text="Display", font=theme.FONT_BOLD).grid(
             row=row,
             column=0,
@@ -3060,6 +3054,38 @@ class LabelingApp(tk.Tk):
         )
         row += 1
 
+        if self.video is not None:
+            # Project settings live in the project DB, not config.json.
+            ttk.Separator(content, orient="horizontal").grid(
+                row=row, column=0, columnspan=2, sticky="ew", padx=8, pady=(10, 8))
+            row += 1
+            ttk.Label(content, text="Project", font=theme.FONT_BOLD).grid(
+                row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 6))
+            row += 1
+            template_state = self.state_repo.load_template()
+            status = "locked" if template_state.locked else "changeable until annotation begins"
+            ttk.Label(content, text=f"Template: {TEMPLATE_LABELS[template_state.template]}\n({status})").grid(
+                row=row, column=0, sticky="w", padx=8, pady=4)
+            ttk.Button(
+                content, text="Change project template", command=self.change_project_template,
+                style="Tool.TButton", takefocus=0,
+                state=tk.DISABLED if template_state.locked else tk.NORMAL,
+            ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
+            row += 1
+            ttk.Label(content, text="Zone names").grid(
+                row=row, column=0, sticky="w", padx=8, pady=4)
+            ttk.Button(
+                content, text="Edit zone names", command=self.edit_project_zone_names,
+                style="Tool.TButton", takefocus=0,
+            ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
+            row += 1
+            ttk.Label(content, text="Show zone names on diagrams").grid(
+                row=row, column=0, sticky="w", padx=8, pady=4)
+            ttk.Checkbutton(
+                content, variable=show_zone_names, bootstyle="round-toggle", takefocus=0,
+            ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
+            row += 1
+
         def apply_settings(close=False):
             try:
                 new_cfg = dict(cfg)
@@ -3103,6 +3129,10 @@ class LabelingApp(tk.Tk):
                     )
             cfg.clear()
             cfg.update(new_cfg)
+            if self.video is not None and show_zone_names.get() != self.zone_display.show_names:
+                if not self._save_zone_display(
+                        ZoneDisplaySettings(self.zone_display.labels, show_zone_names.get())):
+                    return
             if close:
                 win.destroy()
 
@@ -3171,6 +3201,11 @@ class LabelingApp(tk.Tk):
                 self._renderer_status.set("Not initialized")
         if self.config.appearance != previous.appearance:
             theme.apply_appearance(self, self.style, self.config.appearance)
+            if self._gpu_video is not None:
+                try:
+                    self._gpu_video.set_background(theme.VIDEO_BG)
+                except VideoRendererError as error:
+                    self._on_gpu_redraw_failure(error)
             self.color_start = theme.TOUCH_START
             self.color_during = theme.TL_DURING
             self.color_end = theme.TOUCH_END
