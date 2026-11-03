@@ -32,6 +32,10 @@ flagged/
 # Ignore pytest cache
 .pytest_cache/
 
+# Generated browser screenshots and Playwright session files
+/output/playwright/
+/.playwright-cli/
+
 # Ignore log files
 *.log
 /logs/

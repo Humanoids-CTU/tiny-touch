@@ -8,21 +8,29 @@ events and observations.
 
 
 
+## New in 9.1.0
+
+- **Dark mode:** choose Light or Dark in Settings; your preference is remembered.
+- **General-purpose template:** eight numbered zones and four annotation channels
+  for coding schemes beyond anatomical body maps.
+- **GPU-accelerated video rendering:** uses the GPU for video scaling and drawing
+  to improve playback performance on supported hardware, with automatic CPU fallback.
+
 ## Install
 
 Download TinyTouch from the
 [Releases page](https://github.com/Humanoids-CTU/tiny-touch/releases).
 
 **Windows 10/11 (64-bit):** download **windows-x64.zip**, extract it, and
-double-click the **TinyTouch.exe** file.
+double-click **TinyTouch-v9.1.0.exe** (the version number matches your download).
 
 **Linux (Ubuntu 24.04 or newer, Intel/AMD 64-bit):** download **linux-x64.zip**
 and extract it. Open a terminal in the extracted folder and run
 (use the version number you downloaded):
 
 ```bash
-chmod +x TinyTouch-v9.0.0
-./TinyTouch-v9.0.0
+chmod +x TinyTouch-v9.1.0
+./TinyTouch-v9.1.0
 ```
 
 ## Label a video
@@ -101,6 +109,18 @@ For a second coder's pass, load the same video and choose **Reliability**.
 TinyTouch adds `_reliability` to the project and output names, keeping the two
 coders' labels separate. Compare the two exports in your own analysis to measure
 agreement between coders. TinyTouch does not calculate reliability itself.
+
+## Architecture
+
+TinyTouch separates its user interface, application services, file and library
+adapters, and annotation rules. Each video has its own project folder containing
+extracted frames, saved annotations, exports, and analysis reports.
+
+[![TinyTouch software layers and project data flow](docs/paper/figures/sw_architecture.png)](docs/paper/figures/sw_architecture.png)
+
+Grey arrows show code dependencies; dark arrows show data flow. Click the diagram
+to view it at full size. See [ARCHITECTURE.md](ARCHITECTURE.md) for implementation
+details.
 
 ## License and contact
 
