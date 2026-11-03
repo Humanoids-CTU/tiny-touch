@@ -1,5 +1,8 @@
 # mpv playback demo
 
+For the separate experiment that keeps JPEG frame access and uses GPU scaling
+and drawing without mpv, see [GPU rendering results](GPU_RENDER_RESULTS.md).
+
 For the numbered-video comparison, see [frame identity results](FRAME_IDENTITY_RESULTS.md).
 Run `uv run demos/frame_identity.py` to generate an isolated clip and compare
 the burned-in IDs in the actual visible JPEG/mpv output. This focused experiment
