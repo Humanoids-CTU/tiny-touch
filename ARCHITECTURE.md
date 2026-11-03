@@ -20,6 +20,7 @@ Researchers record videos of infants and use TinyTouch to produce structured CSV
 - **OpenCV** (`opencv-contrib-python`) -- video probing, fallback frame extraction, mask reads
 - **imageio-ffmpeg** -- bundles a static `ffmpeg` binary used as the primary frame extractor (much faster than OpenCV)
 - **Pillow** -- image / diagram rendering on Tk canvases
+- **PySDL2 + SDL2** -- optional-at-runtime GPU video drawing in a Tk-owned child window, with the existing Pillow/Tk display as fallback
 - **Pandas** -- CSV / JSON I/O and tabular handling
 - **Plotly** -- interactive analysis dashboards (rendered to HTML and opened in the default browser)
 - **keyboard** -- global hotkey support
@@ -208,6 +209,33 @@ Frame extraction (`adapters.frame_extractor.create_frames`) runs synchronously i
 3. **OpenCV fallback** -- sequential `cv2.VideoCapture` decode + `cv2.imwrite`, used if ffmpeg is unavailable or fails.
 
 Frame counts are sanity-checked against `cv2.CAP_PROP_FRAME_COUNT` with a 0.1% tolerance (`FRAME_COUNT_TOLERANCE_PCT`).
+
+Both extraction backends fit newly generated JPEGs into a 1920x1080 box without
+upscaling or cropping. FFmpeg evaluates the scale after autorotation; OpenCV uses
+the actual decoded pixel dimensions. Neither changes the frame numbering or
+adds an FPS conversion. Existing frame caches and Reliability copies are retained.
+
+`gui.video_surface.GpuVideoSurface` embeds SDL's accelerated renderer in a
+Tk-owned native child window, using PySDL2's stable SDL2 bindings. The controller
+attempts it after a video loads when `video_renderer=auto` (the default). Missing
+libraries, unsupported embedding and drawing errors retain or restore the existing
+PhotoImage path. Settings offers Automatic/CPU and shows the active renderer.
+
+The worker's `BufferContext.resize_in_worker` flag selects its output: CPU mode
+keeps the existing draft-decode-and-resize path; GPU mode retains draft-decoded
+RGB pixels and lets SDL scale them. GPU initialization, upload, expose/resize
+redraw and cleanup all stay on Tk's thread. A mode switch resets the buffer
+generation and pauses playback. Native texture/renderer/window resources are
+released before Tk destroys the child, including direct `LabelingApp.destroy()`.
+SDL wraps the native handle without owning the Tk window; it does not run a second
+navigation loop. The PyInstaller spec collects both the lazy Python binding and
+the bundled SDL binaries explicitly.
+
+`displayed_frame` advances only after a successful GPU or CPU paint. Frame-bound
+annotation actions wait until it matches the requested frame; decoding a frame
+into the buffer alone does not authorize an annotation. Switching renderers
+preserves an unsaved note through the asynchronous repaint. The SQLite/CSV and
+diagram-coordinate contracts are unchanged. See [manual acceptance](docs/VIDEO_RENDERING.md).
 
 ## Labeling Modes
 

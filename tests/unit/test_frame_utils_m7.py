@@ -4,6 +4,7 @@ import io
 import os
 from threading import Event
 
+import numpy as np
 import pytest
 
 from adapters import frame_extractor as frame_utils
@@ -90,7 +91,7 @@ class _ErrorCapture:
 
     def read(self):
         self.read_count += 1
-        return (True, object()) if self.read_count == 1 else (False, None)
+        return (True, np.zeros((2, 2, 3), dtype=np.uint8)) if self.read_count == 1 else (False, None)
 
     def release(self):
         self.released = True

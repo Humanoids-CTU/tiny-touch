@@ -95,6 +95,7 @@ class BufferContext(NamedTuple):
     downscale: float
     jump_frame_count: int
     last_step_sign: int
+    resize_in_worker: bool = True  # False: retain JPEG draft pixels for GPU scaling.
 
 
 class _NullPerf:
@@ -247,6 +248,7 @@ class FrameBuffer:
                 display_w = ctx.display_w
                 display_h = ctx.display_h
                 downscale = ctx.downscale
+                resize_in_worker = ctx.resize_in_worker
                 gen = self._gen
 
                 # 1) Load the currently-visible frame first (synchronously) so the
@@ -255,7 +257,8 @@ class FrameBuffer:
                 if current_frame not in self._buffer:
                     with self._perf.time("priority_load"):
                         self._load_priority(
-                            current_frame, frames_dir, display_w, display_h, downscale, gen
+                            current_frame, frames_dir, display_w, display_h, downscale, gen,
+                            resize_in_worker,
                         )
                 current_frame_loaded = current_frame in self._buffer
 
@@ -268,7 +271,8 @@ class FrameBuffer:
                         and priority not in self._buffer):
                     with self._perf.time("priority_load"):
                         self._load_priority(
-                            priority, frames_dir, display_w, display_h, downscale, gen
+                            priority, frames_dir, display_w, display_h, downscale, gen,
+                            resize_in_worker,
                         )
 
                 # 3) Asymmetric, velocity-aware prefetch window. Same direction as
@@ -359,11 +363,13 @@ class FrameBuffer:
                 #    (most likely direction of travel), then backward.
                 for i in range(current_frame + 1, end_frame + 1):
                     self._maybe_submit_load(
-                        i, ctx.total_frames, frames_dir, display_w, display_h, downscale, gen
+                        i, ctx.total_frames, frames_dir, display_w, display_h, downscale, gen,
+                        resize_in_worker,
                     )
                 for i in range(current_frame - 1, start_frame - 1, -1):
                     self._maybe_submit_load(
-                        i, ctx.total_frames, frames_dir, display_w, display_h, downscale, gen
+                        i, ctx.total_frames, frames_dir, display_w, display_h, downscale, gen,
+                        resize_in_worker,
                     )
 
                 # 5) Trim out-of-range frames + enforce the byte budget. Hard cap
@@ -390,7 +396,8 @@ class FrameBuffer:
                 self.buffer_ready = buffer_ready
 
     # === Decode / store / evict ==============================================
-    def _load_priority(self, frame_number, frames_dir, display_w, display_h, downscale, gen):
+    def _load_priority(self, frame_number, frames_dir, display_w, display_h, downscale, gen,
+                       resize_in_worker=True):
         """Get `frame_number` into the buffer NOW, without decoding it twice.
 
         Runs on the buffering thread for the current frame and the priority
@@ -418,10 +425,11 @@ class FrameBuffer:
             if frame_number in self._buffer:
                 return
         self._load_frame_to_buffer(
-            frame_number, frames_dir, display_w, display_h, downscale, gen
+            frame_number, frames_dir, display_w, display_h, downscale, gen, resize_in_worker
         )
 
-    def _load_frame_to_buffer(self, frame_number, frames_dir, display_w, display_h, downscale, gen):
+    def _load_frame_to_buffer(self, frame_number, frames_dir, display_w, display_h, downscale, gen,
+                              resize_in_worker=True):
         """Disk read + JPEG decode + resize + buffer store. Safe to run on any thread.
 
         The target size is computed from the ORIGINAL dimensions (Image.open
@@ -431,6 +439,9 @@ class FrameBuffer:
         on JPEGs, which is exactly what the frames dir holds. The (much
         smaller) decoded image then gets one cheap BILINEAR resize, skipped
         entirely when draft already landed on the exact target size.
+        With resize_in_worker=False the GPU performs final scaling instead;
+        JPEG draft decoding still uses the display target, and the detached
+        draft-sized pixels are stored without an additional Pillow resize.
 
         Stores the result only if the buffer generation still matches (gen == self._gen),
         i.e. no reset() happened mid-decode. Always discards from the in-flight map
@@ -450,7 +461,7 @@ class FrameBuffer:
                         opened.draft("RGB", target)
                         img = opened.copy()
                 with self._perf.time("load_frame_resize"):
-                    if img.size != target:
+                    if resize_in_worker and img.size != target:
                         img = img.resize(target, Image.Resampling.BILINEAR)
                 try:
                     bytes_per_pixel = max(1, len(img.getbands()))
@@ -471,7 +482,8 @@ class FrameBuffer:
                 self._inflight.pop(frame_number, None)
             logger.exception("Opening or processing frame %s", frame_number)
 
-    def _maybe_submit_load(self, frame_number, total_frames, frames_dir, display_w, display_h, downscale, gen):
+    def _maybe_submit_load(self, frame_number, total_frames, frames_dir, display_w, display_h, downscale, gen,
+                           resize_in_worker=True):
         """Submit a prefetch load to the worker pool, deduping against in-flight + cached frames.
 
         The Future is kept in `_inflight` so `background_update` can cancel
@@ -485,7 +497,7 @@ class FrameBuffer:
         try:
             future = self._loader_pool.submit(
                 self._load_frame_to_buffer,
-                frame_number, frames_dir, display_w, display_h, downscale, gen,
+                frame_number, frames_dir, display_w, display_h, downscale, gen, resize_in_worker,
             )
         except RuntimeError:
             # Pool was shut down (e.g. on app close); back out the inflight reservation.

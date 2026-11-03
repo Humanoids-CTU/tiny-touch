@@ -220,6 +220,9 @@ def tiny_video(tmp_path_factory):
 # click tests also cover the display -> data coordinate conversion.
 DIAGRAM_SCALE = 0.5
 TEST_CONFIG = {
+    # Pixel/reuse tests intentionally exercise the established CPU path. GPU
+    # embedding and automatic fallback have their own native integration tests.
+    "video_renderer": "cpu",
     "diagram_scale": DIAGRAM_SCALE,
     "dot_size": 10.0,
     "minimal_touch_length": 280,

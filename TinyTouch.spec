@@ -3,7 +3,7 @@
 import os
 import sys
 
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 spec_path = os.path.abspath(sys.argv[0]) if sys.argv else os.path.abspath("TinyTouch.spec")
 project_root = os.path.abspath(os.path.dirname(spec_path))
@@ -21,11 +21,13 @@ datas += collect_data_files("ttkbootstrap")  # localization .msg files
 a = Analysis(
     ["src/main.py"],
     pathex=[src_root],
-    binaries=[],
+    binaries=collect_dynamic_libs("sdl2dll", search_patterns=["*.dll", "*.dylib", "lib*.so*"]),
     datas=datas,
     hiddenimports=[
         "PIL._tkinter_finder",
         "PIL._tkinter",
+        "sdl2dll",
+        "sdl2",  # Loaded lazily so CPU mode also works without the GPU runtime.
     ],
     hookspath=[],
     hooksconfig={},

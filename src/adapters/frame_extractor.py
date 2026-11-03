@@ -4,6 +4,7 @@ Frame folder management and generation (was frame_utils.py).
 """
 
 import logging
+from fractions import Fraction
 import os
 import re
 import time
@@ -21,6 +22,32 @@ logger = logging.getLogger(__name__)
 
 _FRAME_RE = re.compile(r"^frame(\d+)\.(jpg|jpeg|png)$", re.IGNORECASE)
 FRAME_COUNT_TOLERANCE_PCT = 0.001  # allow up to 0.1% missing frames
+# Coding images fit this landscape box; source videos remain untouched.
+MAX_FRAME_WIDTH = 1920
+MAX_FRAME_HEIGHT = 1080
+
+
+def frame_output_size(width, height):
+    """Fit within the coding limit without upscaling, cropping, or stretching.
+
+    Integer sizes round down by less than one pixel. Unknown probe dimensions
+    remain unchanged; extraction uses the actual decoded dimensions instead.
+    """
+    if width <= 0 or height <= 0:
+        return width, height
+    ratio = min(Fraction(1), Fraction(MAX_FRAME_WIDTH, width),
+                Fraction(MAX_FRAME_HEIGHT, height))
+    return max(1, int(width * ratio)), max(1, int(height * ratio))
+
+
+def _frame_scale_filter():
+    # Evaluate after FFmpeg's autorotation, independent of OpenCV's probe.
+    # Quoting protects expression commas from filter-chain parsing. trunc()
+    # matches frame_output_size's integer rounding; no FPS filter is added.
+    width = f"min(iw,min({MAX_FRAME_WIDTH},{MAX_FRAME_HEIGHT}*iw/ih))"
+    height = f"min(ih,min({MAX_FRAME_HEIGHT},{MAX_FRAME_WIDTH}*ih/iw))"
+    return (f"scale=w='max(1,trunc({width}))':"
+            f"h='max(1,trunc({height}))':flags=bilinear")
 
 
 class FrameExtractionError(RuntimeError):
@@ -165,6 +192,7 @@ def _extract_frames_ffmpeg(
         "-nostats",
         "-loglevel", "error",
         "-i", video_path,
+        "-vf", _frame_scale_filter(),
         "-q:v", "2",
         "-start_number", "0",
         output_pattern,
@@ -339,6 +367,12 @@ def _extract_frames_opencv(
 
         while success:
             _raise_if_cancelled(cancel_event)
+            # Use decoded pixels rather than possibly missing or rotated
+            # container metadata. Resizing changes no frame indices or timing.
+            image_height, image_width = image.shape[:2]
+            output_size = frame_output_size(image_width, image_height)
+            if output_size != (image_width, image_height):
+                image = cv2.resize(image, output_size, interpolation=cv2.INTER_LINEAR)
             frame_path = os.path.join(frames_dir, f"frame{count}.jpg")
             if not cv2.imwrite(frame_path, image):
                 msg = (

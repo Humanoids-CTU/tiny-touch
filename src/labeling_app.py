@@ -14,7 +14,9 @@ from PIL import Image, ImageTk
 
 from adapters import config
 from adapters import video_probe
-from adapters.frame_buffer import PLAYBACK_BUFFER_AHEAD, BufferContext, FrameBuffer
+from adapters.frame_buffer import (
+    PLAYBACK_BUFFER_AHEAD, BufferContext, FrameBuffer, compute_target_size, resize_for_buffer,
+)
 from adapters.frame_extractor import FrameExtractionCancelled, FrameExtractionError
 from adapters.timer_resolution import PreciseTimers
 from adapters.zone_masks import load_zone_masks, editable_zone_names, zone_label_positions
@@ -29,6 +31,7 @@ from domain.touch import NO_ZONE, find_last_open_onset, zones_at
 from domain.templates import TEMPLATE_LABELS, DEFAULT_TEMPLATE, get_template
 from domain.zone_display import ZoneDisplaySettings
 from gui import theme
+from gui.video_surface import GpuVideoSurface, VideoRendererError
 from gui.special_zones_app import SpecialZonesApp, DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE
 from gui.frame_dialog import FrameDialog
 from gui.template_dialog import choose_template, template_diagram
@@ -396,6 +399,9 @@ class LabelingApp(tk.Tk):
         self.displayed_frame = None
         self.frame_paint_listeners = []
         self._displayed_image = None          # the PIL image on screen (identity check)
+        self._gpu_video = None
+        self._gpu_failed = False
+        self._renderer_status = tk.StringVar(self, "Not initialized")
         self._buffer_status_shown = None      # last state of the Loaded/Loading chip
         self._display_pump_id = None          # after() id of _display_pump
 
@@ -1702,6 +1708,7 @@ class LabelingApp(tk.Tk):
             downscale=float(getattr(self, "video_downscale", 1.0) or 1.0),
             jump_frame_count=max(1, getattr(self, "jump_frame_count", 1)),
             last_step_sign=self._last_step_sign,
+            resize_in_worker=getattr(self, "_gpu_video", None) is None,
         )
 
     def _apply_play_advance(self, next_frame, direction):
@@ -1745,6 +1752,50 @@ class LabelingApp(tk.Tk):
         self.frame_buffer.reset()
 
     # === Frame Display =========================================================
+    def _prepare_video_renderer(self):
+        if self.config.video_renderer == "cpu":
+            self._renderer_status.set("CPU")
+            label = getattr(self, "frame_label", None)
+            if label is not None:
+                label.pack(expand=True)
+            return
+        if self._gpu_video is not None or self._gpu_failed:
+            return
+        label = getattr(self, "frame_label", None)
+        if label is not None:
+            label.pack_forget()
+        try:
+            self._gpu_video = GpuVideoSurface(self.video_frame, self._on_gpu_redraw_failure)
+        except (ImportError, OSError, RuntimeError, tk.TclError) as error:
+            self._gpu_failed = True
+            self._renderer_status.set("CPU (GPU unavailable)")
+            logger.warning("GPU renderer unavailable; using CPU: %s", error)
+            if label is not None:
+                label.pack(expand=True)
+        else:
+            self._renderer_status.set("GPU")
+            logger.info("Video rendering: GPU (%s)", self._gpu_video.name)
+
+    def _disable_gpu(self, error):
+        surface = self._gpu_video
+        self._gpu_video = None
+        self._gpu_failed = True
+        if surface is not None:
+            surface.close()
+        label = getattr(self, "frame_label", None)
+        if label is not None:
+            label.pack(expand=True)
+        self._renderer_status.set("CPU (GPU unavailable)")
+        logger.warning("GPU drawing failed; using CPU: %s", error)
+        self._buffer_reset()  # Discard in-flight GPU-sized decodes before CPU mode.
+
+    def _on_gpu_redraw_failure(self, error):
+        source = self._displayed_image
+        self._disable_gpu(error)
+        if source is not None:
+            # Keep the last confirmed frame visible until the buffer is rebuilt.
+            self._show_frame_image(source)
+
     def _show_frame_image(self, pil_img):
         """Put `pil_img` on the video label, reusing the PhotoImage on screen.
 
@@ -1755,11 +1806,24 @@ class LabelingApp(tk.Tk):
         existing image, so a frame of another size or mode (after a resize)
         still gets a fresh one.
         """
+        surface = getattr(self, "_gpu_video", None)
+        if surface is not None:
+            try:
+                surface.show(pil_img, self.video_downscale)
+                return compute_target_size(*pil_img.size, self._display_w, self._display_h,
+                                           self.video_downscale)
+            except VideoRendererError as error:
+                self._disable_gpu(error)
+        if getattr(self, "_gpu_failed", False):
+            # A failed upload may have arrived from a GPU-sized buffer. Fit it
+            # immediately on the CPU as well as rebuilding the future buffer.
+            pil_img = resize_for_buffer(pil_img, self._display_w, self._display_h,
+                                       self.video_downscale)
         shown = self._displayed_image
         if (self.image is not None and shown is not None
                 and shown.size == pil_img.size and shown.mode == pil_img.mode):
             self.image.paste(pil_img)
-            return
+            return pil_img.size
         photo_img = ImageTk.PhotoImage(pil_img)
         if getattr(self, "frame_label", None):
             self.frame_label.configure(image=photo_img)
@@ -1777,6 +1841,7 @@ class LabelingApp(tk.Tk):
             theme.bind_colors(self.frame_label, bg="VIDEO_BG",
                               highlightbackground="BORDER", highlightcolor="BORDER")
         self.image = photo_img  # the label does not keep the Python object alive
+        return pil_img.size
 
     def display_first_frame(self, frame_number=None):
         self._assert_ui_thread()
@@ -1788,20 +1853,28 @@ class LabelingApp(tk.Tk):
             if frame_number < 0 or frame_number > self.video.total_frames:
                 logger.error("frame number out of bounds: %s", frame_number)
                 return
+            preserve = self.__dict__.get("_preserve_note_on_paint")
+            same_note_frame = (preserve is not None and preserve[0] is self.video
+                               and preserve[1] == frame_number)
+            note_draft = self._get_note_entry_text() if same_note_frame else None
             pil_img = self.frame_buffer.get(frame_number)
             if pil_img is not None:
                 with self.perf.time("display_frame_photo"):
-                    self._show_frame_image(pil_img)
+                    painted_size = self._show_frame_image(pil_img) or pil_img.size
                 self._show_buffer_status(True)
                 self._displayed_image = pil_img
                 self.displayed_frame = frame_number
                 for listener in self.frame_paint_listeners:
-                    listener(frame_number, pil_img.size)
+                    listener(frame_number, painted_size)
             else:
                 logger.debug("frame not in buffer: %s", frame_number)
                 self._show_buffer_status(False)
 
             self.update_note_entry()
+            if same_note_frame:
+                self._set_note_entry_text(note_draft)
+            if preserve is not None and (pil_img is not None or not same_note_frame):
+                self._preserve_note_on_paint = None
             self.update_frame_counter()
             self.update_limb_parameter_buttons()
             self.update_button_colors()
@@ -1944,6 +2017,8 @@ class LabelingApp(tk.Tk):
             self.next_frame(target - self.video.current_frame)
 
     def save_note(self):
+        if not LabelingApp._annotation_frame_ready(self):
+            return
         idx = self.video.current_frame
         note_text = self._get_note_entry_text().strip()
         if note_text and not LabelingApp._lock_before_annotation(self):
@@ -2113,7 +2188,18 @@ class LabelingApp(tk.Tk):
             self.play_video()
 
     # === Video Load & Init =====================================================
+    def _annotation_frame_ready(self):
+        video = getattr(self, "video", None)
+        if video is None:
+            return True
+        ready = getattr(self, "displayed_frame", video.current_frame) == video.current_frame
+        if not ready:
+            logger.debug("Annotation skipped: frame %s has not been painted yet", video.current_frame)
+        return ready
+
     def _lock_before_annotation(self):
+        if not LabelingApp._annotation_frame_ready(self):
+            return False
         repo = getattr(self, "state_repo", None)
         if repo is None:
             return True
@@ -2533,6 +2619,7 @@ class LabelingApp(tk.Tk):
         #    threads start seeing this video from this line on.
         self.video = video
         self.video_name = video_name
+        self._prepare_video_renderer()
         self._apply_active_template(self.state_repo.load_template().template)
         self._refresh_jump_label()
 
@@ -2671,6 +2758,13 @@ class LabelingApp(tk.Tk):
     
 
     # === App Lifecycle (close, position) =======================================
+    def destroy(self):
+        surface = self.__dict__.get("_gpu_video")
+        if surface is not None:
+            self._gpu_video = None
+            surface.close()  # Native resources must go before Tk's child HWND.
+        super().destroy()
+
     def on_close(self):
         if getattr(self, "_closing", False):
             return
@@ -2794,6 +2888,8 @@ class LabelingApp(tk.Tk):
 
         vars_map = {
             "appearance": tk.StringVar(value=self.config.appearance.title()),
+            "video_renderer": tk.StringVar(value=(
+                "CPU" if self.config.video_renderer == "cpu" else "Automatic (GPU preferred)")),
             "video_downscale": tk.StringVar(value=str(_v("video_downscale", 1.0))),
             "diagram_scale": tk.StringVar(value=str(_v("diagram_scale", 1.0))),
             "dot_size": tk.StringVar(value=str(_v("dot_size", 10))),
@@ -2837,6 +2933,18 @@ class LabelingApp(tk.Tk):
             content, textvariable=vars_map["appearance"],
             values=("Light", "Dark"), state="readonly", width=12,
         ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
+        row += 1
+        ttk.Label(content, text="Video renderer").grid(
+            row=row, column=0, sticky="w", padx=8, pady=4)
+        ttk.Combobox(
+            content, textvariable=vars_map["video_renderer"],
+            values=("Automatic (GPU preferred)", "CPU"), state="readonly", width=25,
+        ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
+        row += 1
+        ttk.Label(content, text="Active renderer").grid(
+            row=row, column=0, sticky="w", padx=8, pady=4)
+        ttk.Label(content, textvariable=self._renderer_status).grid(
+            row=row, column=1, sticky="w", padx=8, pady=4)
         row += 1
         ttk.Label(content, text="Video downscale (1 = full, 2 = half)").grid(
             row=row, column=0, sticky="w", padx=8, pady=4
@@ -2956,6 +3064,8 @@ class LabelingApp(tk.Tk):
             try:
                 new_cfg = dict(cfg)
                 new_cfg["appearance"] = vars_map["appearance"].get().lower()
+                new_cfg["video_renderer"] = (
+                    "cpu" if vars_map["video_renderer"].get() == "CPU" else "auto")
                 downscale = parse_float(vars_map["video_downscale"].get(), "video_downscale")
                 if downscale <= 0:
                     downscale = 1.0
@@ -3044,6 +3154,21 @@ class LabelingApp(tk.Tk):
         # Refresh the one AppConfig snapshot the app holds (build_ui and other
         # readers consume self.config instead of re-reading config.json).
         self.config = config.load_app_config()
+        renderer_changed = self.config.video_renderer != previous.video_renderer
+        if renderer_changed:
+            self.stop_video()
+            if self.video is not None:
+                self._preserve_note_on_paint = (self.video, self.video.current_frame)
+            self._buffer_reset()
+            if self._gpu_video is not None:
+                self._gpu_video.close()
+                self._gpu_video = None
+            self._gpu_failed = False
+            self._displayed_image = None
+            if self.video is not None:
+                self._prepare_video_renderer()
+            else:
+                self._renderer_status.set("Not initialized")
         if self.config.appearance != previous.appearance:
             theme.apply_appearance(self, self.style, self.config.appearance)
             self.color_start = theme.TOUCH_START
@@ -3056,7 +3181,7 @@ class LabelingApp(tk.Tk):
 
         # Appearance and label changes do not invalidate decoded video frames
         # or the diagram. Preserve unsaved notes and avoid interrupting playback.
-        display_changed = any(
+        display_changed = renderer_changed or any(
             getattr(self.config, name) != getattr(previous, name)
             for name in ("video_downscale", "diagram_scale", "dot_size")
         )

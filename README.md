@@ -58,12 +58,18 @@ or picking up an object; agree on what each box means before labeling.
 | Setting | What it does |
 | --- | --- |
 | Appearance | Chooses Light or Dark. Applies immediately and remembers your choice; body diagrams stay white. |
+| Video renderer | Automatic prefers GPU drawing, including integrated graphics, and falls back to CPU. Choose CPU to compare. The active renderer is shown underneath. Changing renderer pauses playback. |
 | Video downscale | Makes video images smaller. Try `2` (half size) if the app feels slow. |
 | Diagram scale | Makes the body diagram larger or smaller to suit your screen. |
 | Dot size | Changes the size of the marks on the diagram. |
 | Fast-jump seconds | Sets how far **<< / >>** and **Shift + arrow** jump. |
 | Realtime hold | Plays at the video's frame rate while you hold an arrow key. |
 | Parameter Labels | Names your limb-specific and global observations. |
+
+Newly generated video frames fit within **1920 × 1080**, preserving aspect ratio
+and every frame index. Smaller inputs are not enlarged during preparation.
+Original video files and existing frame caches are kept unchanged. GPU drawing
+works with both new and existing caches.
 
 ## Find your data and run analysis
 
