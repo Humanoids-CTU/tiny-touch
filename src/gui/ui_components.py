@@ -14,6 +14,10 @@ from gui.resource_utils import asset_path
 from domain.templates import get_template
 from gui import theme
 
+# Width of the frame drawn around the diagram canvas so its edge is visible.
+DIAGRAM_BORDER_PX = 1
+
+
 def build_ui(app):
     """
     Build all containers (frames), widgets, and bindings on the given app.
@@ -91,6 +95,10 @@ def build_ui(app):
     app.timeline_canvas.pack(fill=tk.X, expand=True, padx=8, pady=(4, 8))
     theme.bind_colors(app.timeline_canvas, bg="SURFACE_ALT")
     app.timeline_canvas.bind("<Button-1>", app.on_timeline_click)
+    # The timelines stretch with the window; redraw them at their new width.
+    # (Their full redraw is skipped when the size and data are unchanged.)
+    app.timeline2_canvas.bind("<Configure>", lambda _event: app.draw_timeline2())
+    app.timeline_canvas.bind("<Configure>", lambda _event: app.draw_timeline())
     if sys.platform.startswith("linux"):
         app.bind("<Button-1>", app.global_click, add="+")   # safer on Linux
     else:
@@ -286,14 +294,22 @@ def _build_diagram_panel(app, scale):
     base_w, base_h = definition.native_size
     w, h = int(base_w * scale), int(base_h * scale)
 
+    # A 1 px frame draws the diagram's edge. In light mode the white diagram
+    # otherwise blends into the surface. A frame, unlike a canvas highlight
+    # ring, keeps click coordinates aligned with the image.
+    app.diagram_border = tk.Frame(app.diagram_frame, bd=0, highlightthickness=0)
+    app.diagram_border.pack(padx=10, pady=10, side="top", anchor="n")
+    theme.bind_colors(app.diagram_border, bg="BORDER")
+
     app.diagram_canvas = tk.Canvas(
-        app.diagram_frame,
+        app.diagram_border,
         bg=theme.SURFACE,
         width=w,
         height=h,
+        bd=0,
         highlightthickness=0,
     )
-    app.diagram_canvas.pack(padx=10, pady=10, side="top", anchor="n")
+    app.diagram_canvas.pack(padx=DIAGRAM_BORDER_PX, pady=DIAGRAM_BORDER_PX)
     theme.bind_colors(app.diagram_canvas, bg="DIAGRAM_BG")
 
     try:
@@ -444,6 +460,10 @@ def _bind_navigation(app):
     app.bind("<KeyPress-d>", _guard_key(app, app.on_middle_click))
     app.bind("<Left>", _guard_key(app, app.navigate_left))
     app.bind("<Right>", _guard_key(app, app.navigate_right))
+    # Releases must still stop a hold when focus has moved into the note box.
+    app.bind("<KeyRelease-Left>", lambda event: app._on_arrow_release(-1))
+    app.bind("<KeyRelease-Right>", lambda event: app._on_arrow_release(1))
+    app.bind("<FocusOut>", lambda event: app._cancel_arrow_hold_state(), add="+")
     app.bind("<Shift-Left>", _guard_key(app, lambda event: app.next_frame(-app.jump_frame_count)))
     app.bind("<Shift-Right>", _guard_key(app, lambda event: app.next_frame(app.jump_frame_count)))
     app.bind("<space>", _guard_key(app, app.toggle_play))

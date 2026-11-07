@@ -53,18 +53,8 @@ annotation_logger = logging.getLogger("annot")
 # =============================================================================
 # Constants
 # =============================================================================
-# Realtime arrow-hold tuning.
-# HOLD_START_DELAY_MS: how long the key must be held before realtime playback
-# kicks in. The OS keyboard auto-repeat delay (typically ~500ms) is shorter,
-# so we explicitly gate on elapsed time since the first KeyPress.
-# HOLD_RELEASE_TIMEOUT_MS: gap with no auto-repeat KeyPress before we treat
-# the key as released. OS auto-repeat fires ~every 30ms while held, so 100ms
-# is a comfortable margin that responds quickly when the user lets go.
-# HOLD_WATCHDOG_INTERVAL_MS: how often the watchdog polls. Set <= timeout/2
-# so the actual stop-latency stays close to HOLD_RELEASE_TIMEOUT_MS.
-HOLD_START_DELAY_MS = 500
-HOLD_RELEASE_TIMEOUT_MS = 100
-HOLD_WATCHDOG_INTERVAL_MS = 50
+# Keep taps precise without waiting for the operating system's repeat delay.
+ARROW_HOLD_DELAY_MS = 150
 # Mouse-wheel navigation. Notches are queued and consumed one frame per video
 # frame interval, so a fast flick moves at playback speed (like holding an
 # arrow key) instead of racing the redraw. The queue is capped at
@@ -90,6 +80,9 @@ PLAYBACK_STALL_POLL_MS = 20
 # <Configure> events of a window-edge drag (~16 ms) and the perf scenario's
 # 50 ms resize steps; every extra millisecond delays the sharp frame.
 RESIZE_SETTLE_MS = 100
+# Canvas tag of the per-frame dots on the diagram, so a frame change can
+# replace just them and leave the limb image and zone labels alone.
+DIAGRAM_DOT_TAG = "dot"
 # Dev guard (H1): when True, the main render/timeline methods raise if called
 # off the Tk main thread, so any future thread-boundary regression fails loudly
 # at the offending call site instead of crashing Tcl intermittently.
@@ -361,16 +354,14 @@ class LabelingApp(tk.Tk):
         logger.debug("fast jump configured: %ss", self.jump_seconds)
         self._refresh_jump_label()
 
-        # Realtime arrow-hold playback state (no KeyRelease bindings â€” OS keyboard
-        # auto-repeat KeyPress events act as a heartbeat, polled by a watchdog).
+        # Arrow playback follows key-down/key-up, independently of OS repeat.
         self.realtime_arrow_hold = self.config.realtime_arrow_hold
         logger.debug("realtime arrow hold: %s", self.realtime_arrow_hold)
-        self.play_dir = 1                     # 1 = forward, -1 = backward (set by arrow-hold)
-        self._arrow_held_dir = None           # currently-held arrow direction (1 / -1 / None)
-        self._first_arrow_press_ms = 0.0      # time of the initial KeyPress (gates 1s hold delay)
-        self._last_arrow_press_ms = 0.0       # heartbeat: time of most recent KeyPress
-        self._hold_watchdog_id = None         # after() id for the release-detection watchdog
-        self._hold_play_active = False        # True while arrow-hold-driven playback is running
+        self.play_dir = 1
+        self._arrow_held_dir = None
+        self._arrow_release_id = None
+        self._arrow_start_id = None
+        self._hold_play_active = False
         self._play_tick_id = None             # after() id of the pending _play_tick
         self._play_next_due = None            # perf_counter deadline of the next playback step
         # 1 ms Windows timer resolution while frames are paced (playback,
@@ -531,6 +522,9 @@ class LabelingApp(tk.Tk):
             return
         idx = self.video.current_frame if index is None else index
 
+        # Every annotation edit passes through here, so this is where cached
+        # views of the annotations go stale and the screen catches up.
+        self._annotation_version = getattr(self, "_annotation_version", 0) + 1
         b = self.video.frames.get(idx)
         if isinstance(b, dict):
             b["Changed"] = True
@@ -538,6 +532,7 @@ class LabelingApp(tk.Tk):
             self._timeline2_dirty = True
             if hasattr(self, "notify_bundle_changed"):
                 self.notify_bundle_changed(idx)
+        self._refresh_after_annotation_edit()
 
     def notify_bundle_changed(self, index=None):
         if self.video is None:
@@ -616,87 +611,50 @@ class LabelingApp(tk.Tk):
     def navigate_left(self, event):  self._on_arrow_press(-1)
     def navigate_right(self, event): self._on_arrow_press(1)
 
-    # --- Realtime arrow-hold playback ---------------------------------------
-    # Strategy: bind ONLY KeyPress (no KeyRelease â€” those proved unreliable).
-    # The OS keyboard auto-repeat fires KeyPress events ~every 30ms while a
-    # key is physically held. We treat each KeyPress as a heartbeat:
-    #
-    #   - 1st KeyPress while idle: do a one-frame step (tap behavior).
-    #   - Auto-repeat KeyPresses for the same direction: keep updating the
-    #     heartbeat. Once the key has been held for HOLD_START_DELAY_MS (1s),
-    #     start framerate-paced playback (matches the Play button's engine).
-    #   - A watchdog timer polls every HOLD_WATCHDOG_INTERVAL_MS. If no
-    #     KeyPress has arrived in HOLD_RELEASE_TIMEOUT_MS (100ms), the key
-    #     has been released and we stop playback.
+    # --- Arrow-hold playback ------------------------------------------------
     def _on_arrow_press(self, direction):
-        """KeyPress on Left (-1) or Right (+1)."""
+        """Step once on key-down, then play if held past the tap grace period."""
         if self.video is None:
             return
         if not self.realtime_arrow_hold:
             self._request_buffered_step(direction)
             return
 
-        now_ms = time.monotonic() * 1000.0
-
+        if self._arrow_release_id is not None:
+            self.after_cancel(self._arrow_release_id)
+            self._arrow_release_id = None
         if self._arrow_held_dir == direction:
-            # Auto-repeat KeyPress â†’ user is holding. Update heartbeat and
-            # gate playback on elapsed-since-first-press exceeding the 1s
-            # hold threshold (OS auto-repeat starts much sooner, ~500ms).
-            self._last_arrow_press_ms = now_ms
-            if (not self._hold_play_active
-                    and (now_ms - self._first_arrow_press_ms) >= HOLD_START_DELAY_MS):
-                self._begin_hold_playback(direction)
             return
 
-        # Fresh press. If the user was already holding the OPPOSITE direction
-        # and we have an active hold-playback, kill it before switching.
-        if self._hold_play_active:
-            self.play = False
-            self._hold_play_active = False
-            self.play_dir = 1
-
+        self._cancel_arrow_hold_state()
+        self.play = False
         self._arrow_held_dir = direction
-        self._first_arrow_press_ms = now_ms
-        self._last_arrow_press_ms = now_ms
-        self._request_buffered_step(direction)  # immediate one-frame step (tap behavior)
-        self._ensure_hold_watchdog()
-
-    def _ensure_hold_watchdog(self):
-        if self._hold_watchdog_id is not None:
-            return
-        self._hold_watchdog_id = self.after(HOLD_WATCHDOG_INTERVAL_MS, self._hold_watchdog_tick)
-
-    def _hold_watchdog_tick(self):
-        self._hold_watchdog_id = None
-        if self._arrow_held_dir is None:
-            return
-        now_ms = time.monotonic() * 1000.0
-        if now_ms - self._last_arrow_press_ms > HOLD_RELEASE_TIMEOUT_MS:
-            # No KeyPress events recently â†’ key has been released.
-            direction = self._arrow_held_dir
-            self._arrow_held_dir = None
-            if self._hold_play_active:
-                self.play = False
-                self._hold_play_active = False
-                self.play_dir = 1
-                logger.debug("realtime hold released: direction=%s", direction)
-            return
-        # Still held â€” keep polling.
-        self._hold_watchdog_id = self.after(HOLD_WATCHDOG_INTERVAL_MS, self._hold_watchdog_tick)
+        self._arrow_start_id = self.after(
+            ARROW_HOLD_DELAY_MS, lambda: self._begin_hold_playback(direction))
+        self._request_buffered_step(direction)
 
     def _begin_hold_playback(self, direction):
+        self._arrow_start_id = None
         if self._arrow_held_dir != direction or self.video is None:
             return
         self._hold_play_active = True
         self._start_playback(direction)
-        logger.debug("realtime hold started: direction=%s fps=%s", direction, self.frame_rate)
+        logger.debug("arrow playback started: direction=%s fps=%s", direction, self.frame_rate)
+
+    def _on_arrow_release(self, direction):
+        """Defer release to idle so X11 repeat release/press pairs cancel it."""
+        if self._arrow_held_dir != direction or self._arrow_release_id is not None:
+            return
+        self._arrow_release_id = self.after_idle(self._cancel_arrow_hold_state)
 
     def _cancel_arrow_hold_state(self):
-        """Force-stop any in-flight hold state. Used when arrow keys are unbound."""
-        if self._hold_watchdog_id is not None:
-            try: self.after_cancel(self._hold_watchdog_id)
-            except Exception: pass
-            self._hold_watchdog_id = None
+        """Stop arrow playback on release, focus loss, reload or shutdown."""
+        if self._arrow_start_id is not None:
+            self.after_cancel(self._arrow_start_id)
+            self._arrow_start_id = None
+        if self._arrow_release_id is not None:
+            self.after_cancel(self._arrow_release_id)
+            self._arrow_release_id = None
         self._arrow_held_dir = None
         if self._hold_play_active:
             self.play = False
@@ -960,10 +918,7 @@ class LabelingApp(tk.Tk):
             max_dist=20.0 / scale,
         )
         if removed:
-            self.mark_bundle_changed()
-            # Repaint immediately so the erased dot disappears without waiting
-            # for the 300ms periodic_print_dot tick.
-            self._render_diagram_dots()
+            self.mark_bundle_changed()  # also repaints the dots and timelines
             rec = self.video.frames[current_frame][option]
             annotation_logger.info(
                 "f=%s %s delete points=%s",
@@ -973,61 +928,73 @@ class LabelingApp(tk.Tk):
             )
 
     # === Diagram Init & Click Handling =========================================
+    # The diagram is repainted on EVENTS, not on a timer: frame changes
+    # (display_first_frame), annotation edits (mark_bundle_changed), limb and
+    # display-setting changes (on_radio_click), and template / zone-name /
+    # project changes (_redraw_diagram). It used to be fully rebuilt every
+    # 300 ms by `periodic_print_dot`, which hid those dependencies and would
+    # wipe any canvas item that is meant to live longer than one repaint.
     def init_diagram(self):
-        # set up periodic dots refresh
-        self._dot_refresh_after_id = None
+        self._ghost_cache = None
         self._reset_zone_cache()
         self._load_zone_masks()
-        self.periodic_print_dot()
+        self._redraw_diagram()
 
-    def _render_diagram_dots(self):
-        """Repaint the diagram canvas with the current frame's dots + ghost.
-        Single render pass â€” no scheduling. Safe to call from click handlers
-        for instant visual feedback, and from the periodic poller as a fallback.
+    def _redraw_diagram(self):
+        """Full diagram repaint: limb image, zone labels, then the dots."""
+        self._draw_diagram_base()
+        self._draw_diagram_dots()
+
+    def _draw_diagram_dots(self):
+        """Repaint only the current frame's dots + the open-onset ghost.
+
+        Cheap (deletes and recreates a handful of cached sprites), so it runs
+        on every frame change, including each playback step.
         """
-        self.diagram_canvas.delete("all")
-        self.on_radio_click()  # keeps same behavior for image & palette
+        self.diagram_canvas.delete(DIAGRAM_DOT_TAG)
+        if not self.video:
+            return
         dot_size = getattr(self, "dot_size", 10)
         scale = getattr(self, "diagram_scale", 1.0)
-        if self.video:
-            sel = self.option_var_1.get()
-            if sel == "RH":
-                data = self.video.dataRH
-            elif sel == "LH":
-                data = self.video.dataLH
-            elif sel == "RL":
-                data = self.video.dataRL
-            elif sel == "LL":
-                data = self.video.dataLL
-            else:
-                data = {}
-            self.find_last_green(data)
-            frame_data: FrameRecord | dict = data.get(self.video.current_frame, {})
-            xs = frame_data.get('X', []) if frame_data else []
-            ys = frame_data.get('Y', []) if frame_data else []
-            onset = frame_data.get('Onset', "OFF") if frame_data else "OFF"
-            for x, y in zip(xs, ys):
-                color = theme.DOT_ONSET if onset == "ON" else theme.DOT_OFFSET
+        sel = self.option_var_1.get()
+        if sel == "RH":
+            data = self.video.dataRH
+        elif sel == "LH":
+            data = self.video.dataLH
+        elif sel == "RL":
+            data = self.video.dataRL
+        elif sel == "LL":
+            data = self.video.dataLL
+        else:
+            data = {}
+        self.find_last_green(data)
+        frame_data: FrameRecord | dict = data.get(self.video.current_frame, {})
+        xs = frame_data.get('X', []) if frame_data else []
+        ys = frame_data.get('Y', []) if frame_data else []
+        onset = frame_data.get('Onset', "OFF") if frame_data else "OFF"
+        for x, y in zip(xs, ys):
+            color = theme.DOT_ONSET if onset == "ON" else theme.DOT_OFFSET
+            self.diagram_canvas.create_image(
+                x * scale,
+                y * scale,
+                image=theme.dot_sprite(color, dot_size),
+                tags=(DIAGRAM_DOT_TAG,),
+            )
+        array_xy = getattr(self.video, "last_green", [(None, None)])
+        for (x_last, y_last) in array_xy:
+            if x_last is not None:
                 self.diagram_canvas.create_image(
-                    x * scale,
-                    y * scale,
-                    image=theme.dot_sprite(color, dot_size),
+                    x_last * scale,
+                    y_last * scale,
+                    image=theme.dot_sprite(theme.DOT_ONSET, dot_size, hollow=True),
+                    tags=(DIAGRAM_DOT_TAG,),
                 )
-            array_xy = getattr(self.video, "last_green", [(None, None)])
-            for (x_last, y_last) in array_xy:
-                if x_last is not None:
-                    self.diagram_canvas.create_image(
-                        x_last * scale,
-                        y_last * scale,
-                        image=theme.dot_sprite(theme.DOT_ONSET, dot_size, hollow=True),
-                    )
 
-    def periodic_print_dot(self):
-        self._render_diagram_dots()
-        # Keep the id so the timer can be cancelled on close — otherwise the
-        # reschedule below fires into an already-destroyed interpreter and Tcl
-        # reports `invalid command name "...periodic_print_dot"` on every exit.
-        self._dot_refresh_after_id = self.after(300, self.periodic_print_dot)
+    def _refresh_after_annotation_edit(self):
+        """Show an edit right away: the dots and both timelines can change."""
+        self._draw_diagram_dots()
+        self.draw_timeline()
+        self.draw_timeline2()
 
     def on_diagram_click(self, event, is_onset):
         if self.video is None:
@@ -1067,10 +1034,7 @@ class LabelingApp(tk.Tk):
             self.video.frames, current_frame, option, x_pos, y_pos, onset, zone_results
         )
 
-        self.mark_bundle_changed()
-        # Repaint immediately so the dot appears without waiting for the
-        # 300ms periodic_print_dot tick.
-        self._render_diagram_dots()
+        self.mark_bundle_changed()  # also repaints the dots and timelines
 
         annotation_logger.info(
             "f=%s %s click %s zones=%s points=%s",
@@ -1112,9 +1076,16 @@ class LabelingApp(tk.Tk):
             return
 
         limb = self.option_var_1.get()  # "LH"/"RH"/"LL"/"RL"
-        self.video.last_green = find_last_open_onset(
-            self.video.frames, limb, self.video.current_frame
-        )
+        frame = self.video.current_frame
+        # Reuse the previous answer while video, limb and annotations are
+        # unchanged: playback then scans one frame per step, not back to the
+        # last ON/OFF (possibly frame 0) on every step.
+        key = (self.video, limb, getattr(self, "_annotation_version", 0))
+        cache = getattr(self, "_ghost_cache", None)
+        known = cache[1] if cache is not None and cache[0] == key else None
+        points = find_last_open_onset(self.video.frames, limb, frame, known=known)
+        self._ghost_cache = (key, (frame, points))
+        self.video.last_green = points
 
     def _on_limb_selected(self):
         selected = self.option_var_1.get()
@@ -1125,8 +1096,19 @@ class LabelingApp(tk.Tk):
         self.on_radio_click()
 
     def on_radio_click(self):
+        """Limb or diagram display settings changed: repaint everything that
+        depends on the selected limb."""
+        self._redraw_diagram()
         if self.video is None:
-            self.diagram_canvas.delete("all")
+            return
+        self.draw_timeline()
+        self.draw_timeline2()
+        self.update_limb_parameter_buttons()
+
+    def _draw_diagram_base(self):
+        """Clear the diagram and draw the limb image and zone labels."""
+        self.diagram_canvas.delete("all")
+        if self.video is None:
             return
         definition = get_template(self.template)
         expected_dir = asset_path(definition.masks_directory)
@@ -1136,9 +1118,8 @@ class LabelingApp(tk.Tk):
         image_path = asset_path(definition.channel(self.option_var_1.get()).image)
 
         scale = getattr(self, "diagram_scale", 1.0)
-        # The periodic dot refresh repaints through here every 300ms; cache the
-        # decoded+resized PhotoImage per (path, scale) so the repaint does not
-        # re-read the PNG from disk on every tick.
+        # Cache the decoded+resized PhotoImage per (path, scale) so switching
+        # limbs back and forth does not re-read and resize the PNG.
         cache = getattr(self, "_diagram_photo_cache", None)
         if cache is None:
             cache = self._diagram_photo_cache = {}
@@ -1152,9 +1133,6 @@ class LabelingApp(tk.Tk):
         self.photo = photo
         self.diagram_canvas.create_image(0, 0, anchor="nw", image=self.photo, tags=("diagram",))
         draw_zone_labels(self.diagram_canvas, self.zone_display, self._zone_label_positions, scale)
-        self.draw_timeline()
-        self.draw_timeline2()
-        self.update_limb_parameter_buttons()
 
     # === Zone Masks & Lookups ==================================================
     def _load_zone_masks(self):
@@ -1177,6 +1155,8 @@ class LabelingApp(tk.Tk):
 
     # === Timelines =============================================================
     def on_timeline_click(self, event):
+        if self._open_timeline_note(event):
+            return "break"
         if self.video and self.video.total_frames > 0:
             click_position = event.x
             canvas_width = self.timeline_canvas.winfo_width()
@@ -1188,6 +1168,8 @@ class LabelingApp(tk.Tk):
                 logger.error("invalid frame number")
 
     def on_timeline2_click(self, event):
+        if self._open_timeline_note(event):
+            return "break"
         if self.video and self.video.total_frames > 0:
             click_position = event.x
             canvas_width = self.timeline2_canvas.winfo_width()
@@ -1213,6 +1195,33 @@ class LabelingApp(tk.Tk):
             fill=color,
             width=theme.TL_PARAM_MARK_WIDTH,
             dash=theme.TL_PARAM_MARK_DASH,
+        )
+
+    def _open_timeline_note(self, event):
+        """Resolve note clicks before the canvas's approximate frame jump."""
+        if self.video is None:
+            return False
+        for tag in event.widget.gettags("current"):
+            if tag.startswith("note_frame:"):
+                frame = int(tag.split(":", 1)[1])
+                self.stop_video()
+                self.video.current_frame = frame
+                self.video.current_frame_zone = frame // self.video.number_frames_in_zone
+                self.display_first_frame()
+                self.draw_timeline()
+                self.draw_timeline2()
+                self.focus_set()
+                return True
+        return False
+
+    @staticmethod
+    def _draw_note_marker(canvas, frame, x, bottom):
+        """Keep frame notes distinct from full-height touch/parameter ticks."""
+        canvas.create_polygon(
+            x, bottom - 9, x + 4, bottom - 5,
+            x, bottom - 1, x - 4, bottom - 5,
+            fill=theme.TL_NOTE_MARK, outline="",
+            tags=("note_marker", f"note_frame:{frame}"),
         )
 
     @staticmethod
@@ -1351,6 +1360,13 @@ class LabelingApp(tk.Tk):
                         width=1,
                     )
 
+                for frame in range(self.video.number_frames_in_zone):
+                    frame_idx = offset + frame
+                    if (self.video.frames.get(frame_idx, {}).get("Note") or "").strip():
+                        x = left_edge + (frame + 0.5) * sector_width
+                        x = min(max(x, left_edge + 4), right_edge - 4)
+                        LabelingApp._draw_note_marker(self.timeline_canvas, frame_idx, x, bottom)
+
                 self._timeline_dirty = False
                 self._timeline_last_zone = zone
                 self._timeline_last_limb = limb
@@ -1473,6 +1489,12 @@ class LabelingApp(tk.Tk):
                     self.timeline2_canvas.create_line(
                         x, top, x, bottom, fill=theme.TL_OFFSET_MARK, width=2
                     )
+
+                for frame, bundle in self.video.frames.items():
+                    if (bundle.get("Note") or "").strip():
+                        x = left_edge + (frame / self.video.total_frames) * drawable_width
+                        x = min(max(x, left_edge + 4), right_edge - 4)
+                        LabelingApp._draw_note_marker(self.timeline2_canvas, frame, x, bottom)
 
                 self._timeline2_dirty = False
                 self._timeline2_last_limb = limb
@@ -1879,6 +1901,7 @@ class LabelingApp(tk.Tk):
             self.update_frame_counter()
             self.update_limb_parameter_buttons()
             self.update_button_colors()
+            self._draw_diagram_dots()
 
     # === Labeling-time accumulator (service_layer.project_service) =============
     def _current_video_time_s(self) -> float:
@@ -1930,9 +1953,8 @@ class LabelingApp(tk.Tk):
         button = {1: self.par1_btn, 2: self.par2_btn, 3: self.par3_btn}[parameter_index]
         theme.set_button_state(button, new_state)
 
-        # mark frame dirty, print, and refresh timeline
+        # mark frame dirty (also redraws the timelines)
         self.mark_bundle_changed(idx)
-        self.draw_timeline()
         annotation_logger.info("f=%s param P%s -> %s", idx, parameter_index, new_state)
 
     def toggle_limb_parameter(self, param_number: int):
@@ -1948,9 +1970,8 @@ class LabelingApp(tk.Tk):
         btn = {1: self.limb_par1_btn, 2: self.limb_par2_btn, 3: self.limb_par3_btn}[param_number]
         theme.set_button_state(btn, new_state)
 
-        # mark & redraw (so timeline updates)
+        # mark frame dirty (also redraws the timelines)
         self.mark_bundle_changed(frame)
-        self.draw_timeline()
         annotation_logger.info(
             "f=%s %s limbparam LP%s -> %s", frame, limb, param_number, new_state
         )
@@ -2030,11 +2051,7 @@ class LabelingApp(tk.Tk):
             # mark_bundle_changed already emits the notify_bundle_changed summary.
             self.mark_bundle_changed(idx)
             annotation_logger.info("f=%s note -> %r", idx, note_text)
-        try:
-            import keyboard
-            keyboard.press_and_release('tab')
-        except Exception:
-            pass
+        self.focus_set()
 
     def update_note_entry(self):
         if self.video is None:
@@ -2222,7 +2239,7 @@ class LabelingApp(tk.Tk):
         self._reset_zone_cache()
         self._load_zone_masks()
         self.rebuild_annotation_controls()
-        self._render_diagram_dots()
+        self._redraw_diagram()
 
     def _save_zone_display(self, settings):
         try:
@@ -2232,7 +2249,7 @@ class LabelingApp(tk.Tk):
             messagebox.showerror("Cannot save zone names", str(exc), parent=self)
             return False
         self.zone_display = settings
-        self._render_diagram_dots()
+        self._redraw_diagram()
         if self._special_zones_app and self._special_zones_app.top_level.winfo_exists():
             self._special_zones_app.set_zone_display(settings, self._zone_label_positions)
         # The DB is authoritative; a failed export is retryable via Save.
@@ -2396,7 +2413,8 @@ class LabelingApp(tk.Tk):
         # context and go idle instead of touching a half-swapped state.
         self.video = None
         self.video_name = None
-        self._render_diagram_dots()
+        self._ghost_cache = None  # drop the reference to the old video
+        self._redraw_diagram()
         self.displayed_frame = None
         self._displayed_image = None
         self._last_step_sign = 0
@@ -2426,7 +2444,8 @@ class LabelingApp(tk.Tk):
         self._reset_zone_cache()
         self.video = None
         self.video_name = None
-        self._render_diagram_dots()
+        self._ghost_cache = None  # drop the reference to the old video
+        self._redraw_diagram()
         self.displayed_frame = None
         self._displayed_image = None
         self._buffer_reset()
@@ -2807,10 +2826,9 @@ class LabelingApp(tk.Tk):
     def _cancel_pending_timers(self):
         """Cancel our own repeating `after()` timers before the root goes away.
 
-        Without this the diagram-refresh timer, the display pump, a running
-        playback tick, a pending resize (and any live arrow-hold watchdog) fire
-        into a destroyed interpreter and Tcl prints
-        `invalid command name "...periodic_print_dot"` on every close.
+        Without this the display pump, a running playback tick, a pending
+        resize (and any pending arrow release) fire into a destroyed
+        interpreter and Tcl prints `invalid command name "..."` on every close.
         """
         self._cancel_arrow_hold_state()
         self.play = False
@@ -2836,13 +2854,6 @@ class LabelingApp(tk.Tk):
             except Exception:
                 logger.warning("could not cancel display pump", exc_info=True)
             self._display_pump_id = None
-        after_id = getattr(self, "_dot_refresh_after_id", None)
-        if after_id is not None:
-            try:
-                self.after_cancel(after_id)
-            except Exception:
-                logger.warning("could not cancel diagram refresh timer", exc_info=True)
-            self._dot_refresh_after_id = None
 
     def _close_state_repo(self):
         """Release the state DB connection (called before opening another
@@ -2968,7 +2979,7 @@ class LabelingApp(tk.Tk):
             row=row, column=1, sticky="w", padx=8, pady=4
         )
         row += 1
-        ttk.Label(content, text="Realtime hold (arrow keys play at video framerate)").grid(
+        ttk.Label(content, text=f"Hold arrows to play ({ARROW_HOLD_DELAY_MS} ms tap delay; target: video FPS)").grid(
             row=row, column=0, sticky="w", padx=8, pady=4
         )
         ttk.Checkbutton(

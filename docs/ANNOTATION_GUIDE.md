@@ -129,7 +129,7 @@ frames around your position are still being read; wait a second and it turns gre
 
 | Input | Action |
 | --- | --- |
-| `←` / `→` | Previous / next frame |
+| `←` / `→` | Play backward / forward while held when Hold arrows is enabled; otherwise step on keyboard repeat |
 | `Shift`+`←` / `Shift`+`→` | Jump back / forward by the fast-jump distance |
 | Mouse wheel | Previous / next frame |
 | `Space` | Toggle Play / Stop |
@@ -148,6 +148,11 @@ bottom strip.
 
 Navigation keys are ignored while the cursor is inside the note box, so typing a note that
 contains a `d` or an arrow key does not move you off the frame.
+
+With **Hold arrows to play** enabled, key-down steps one frame. A tap released within
+150 ms stays on that frame; holding longer starts playback. Release or focus loss
+stops playback. **< / >** always step one frame. Playback targets the video's frame
+rate but slows down if rendering cannot keep up, preserving frames.
 
 ---
 
@@ -296,8 +301,8 @@ stay `Parameter_1..3` and `{limb}_Parameter_1..3`. Agree on the labels before co
 starts; changing them mid-study leaves you with one metadata file describing both halves.
 
 Settings also holds the display options: video downscale (higher values render smaller frames), diagram scale,
-dot size, the fast-jump distance, and whether holding an arrow key plays at the video's real
-frame rate. Changes apply on **Apply** or **Apply & Close**.
+dot size, the fast-jump distance, and whether holding an arrow key starts playback
+after a 150 ms tap delay at the video's target frame rate. Changes apply on **Apply** or **Apply & Close**.
 
 Choose **Appearance: Light / Dark** to change the interface colors. Your choice is
 remembered after closing the app. The body diagrams keep their white background.
@@ -311,6 +316,9 @@ The text box at the bottom right stores one free-text note per frame.
 - Type the text and click **Save Note**. The note is attached to the frame you are on and
   reappears when you return to it.
 - Saving an empty box clears the note.
+- **Save Note** also leaves the note box so arrow keys immediately move between frames.
+- Purple diamond markers show saved notes on both timelines, regardless of the selected
+  limb. Click a diamond to jump to its exact frame and read the note in the box.
 
 To jump to a specific frame, click **Select Frame** between the backward and forward
 buttons (`<<  <  Select Frame  >  >>`). Playback pauses and a dialog opens with the

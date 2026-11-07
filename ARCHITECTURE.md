@@ -196,6 +196,12 @@ costs one rebuild instead of one per event. The old frame stays on screen meanwh
   and the next `PLAYBACK_BUFFER_AHEAD = 3` frames in the play direction are buffered; until
   then it re-checks every `PLAYBACK_STALL_POLL_MS = 20` ms, so playback stalls briefly
   rather than stutters. Every write to `current_frame` is therefore on the Tk thread.
+  Arrow key-down steps once and arms a 150 ms hold timer. Releasing before it fires
+  preserves single-frame taps; otherwise playback starts without waiting for OS repeat.
+  Playback stops on release or focus loss. A release is
+  deferred with `after_idle`, then cancelled by a same-direction repeat press, so X11
+  release/press repeat pairs do not interrupt playback. OS repeat timing does not pace
+  playback. Toolbar `<` / `>` retain exact single-frame stepping.
   Two Windows timing details make this precise: deadlines use `time.perf_counter()`
   (`time.monotonic()` there is `GetTickCount64`, 15.6 ms steps), and while playback or
   wheel scrolling runs, `adapters.timer_resolution.PreciseTimers` holds a 1 ms timer
@@ -439,7 +445,7 @@ survive a Settings round-trip (`AppConfig.raw` keeps the full parsed dict). Keys
 | `limb_parameter1..3` | yes | Display labels for the three per-limb parameter buttons. |
 | `video_downscale` | yes | Display-only video downscale factor (1 = full, 2 = half). Affects rendering speed only. |
 | `jump_seconds` | yes | Fast-jump distance in seconds for `<<` / `>>` and Shift+Arrow; multiplied by the frame rate at load time into `jump_frame_count`. |
-| `realtime_arrow_hold` | yes | Holding an arrow key plays at the video's frame rate instead of stepping. |
+| `realtime_arrow_hold` | yes | Arrow key-down steps once; holding for 150 ms starts playback. Key-up or focus loss cancels the hold timer and stops arrow playback. Targets source FPS without skipping frames. Disabled: step per keyboard repeat. Toolbar `<` / `>` always step one frame. |
 | `perf_enabled` / `perf_log_every_s` / `perf_log_top_n` | no | Optional `PerfLogger` (see [src/perf_utils.py](src/perf_utils.py)). When on, prints rolling averages of timed code blocks (buffer loop, click handlers, etc.). |
 | `log_level_console` | no | Console threshold (`INFO` by default); `TINYTOUCH_LOG_LEVEL` overrides it for development. The session file always records `DEBUG`. |
 | `log_keep_files` | no | Number of newest session log files retained (default 20). |

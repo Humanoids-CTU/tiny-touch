@@ -50,7 +50,8 @@ chmod +x TinyTouch-v9.1.0
 
 | Control | Action |
 | --- | --- |
-| Left / right arrow, or mouse wheel | Previous / next frame |
+| Left / right arrow | Step one frame; hold for 150 ms to play backward / forward (when Hold arrows is enabled) |
+| **<** / **>**, or mouse wheel | Previous / next frame |
 | Shift + arrow, or **<<** / **>>** | Jump back / forward |
 | Space, or **Play / Stop** | Play or pause |
 | Click a timeline | Jump to that point |
@@ -71,7 +72,7 @@ or picking up an object; agree on what each box means before labeling.
 | Diagram scale | Makes the body diagram larger or smaller to suit your screen. |
 | Dot size | Changes the size of the marks on the diagram. |
 | Fast-jump seconds | Sets how far **<< / >>** and **Shift + arrow** jump. |
-| Realtime hold | Plays at the video's frame rate while you hold an arrow key. |
+| Hold arrows to play | Steps once on key-down, starts playback after a 150 ms hold, and stops on release. Targets the video's frame rate without skipping frames; slower rendering slows playback. Disable for keyboard-repeat stepping. **< / >** always step one frame. |
 | Parameter Labels | Names your limb-specific and global observations. |
 
 Newly generated video frames fit within **1920 × 1080**, preserving aspect ratio
