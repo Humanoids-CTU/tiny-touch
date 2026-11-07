@@ -75,6 +75,11 @@ DISPLAY_PUMP_MS = 10
 # dict lookup on the Tk thread, so it can poll much faster than the old
 # thread's 150 ms sleep and resume as soon as the frames land.
 PLAYBACK_STALL_POLL_MS = 20
+# Video frames follow source FPS; annotation controls need fewer repaints.
+PLAYBACK_UI_INTERVAL_S = 1.0 / 25.0
+# Recover ordinary event-loop jitter without accumulating unlimited catch-up
+# work after a long pause. Every callback still advances at most one frame.
+PLAYBACK_MAX_LAG_S = 0.25
 # A video-panel resize rebuilds the frame buffer only after no new size has
 # arrived for this long (LabelingApp.on_resize). Longer than the gap between
 # <Configure> events of a window-edge drag (~16 ms) and the perf scenario's
@@ -364,6 +369,8 @@ class LabelingApp(tk.Tk):
         self._hold_play_active = False
         self._play_tick_id = None             # after() id of the pending _play_tick
         self._play_next_due = None            # perf_counter deadline of the next playback step
+        self._play_ui_next_due = None         # next ancillary UI refresh during playback
+        self._play_ui_pending = False         # controls lag behind the last video paint
         # 1 ms Windows timer resolution while frames are paced (playback,
         # wheel); Tk's after() is otherwise rounded to the 15.6 ms tick.
         self._precise_timers = PreciseTimers()
@@ -430,6 +437,8 @@ class LabelingApp(tk.Tk):
         self._timeline2_canvas_size = (0, 0)
         self._timeline_playhead_id = None
         self._timeline2_playhead_id = None
+        # Synchronize the note to the stopped frame before the user edits it.
+        self.note_entry.bind("<FocusIn>", lambda event: self.stop_video(), add="+")
 
     def _limb_param_key_for_index(self, idx: int) -> str:
         return f"Par{idx}"
@@ -627,11 +636,11 @@ class LabelingApp(tk.Tk):
             return
 
         self._cancel_arrow_hold_state()
-        self.play = False
+        self.stop_video()
         self._arrow_held_dir = direction
         self._arrow_start_id = self.after(
             ARROW_HOLD_DELAY_MS, lambda: self._begin_hold_playback(direction))
-        self._request_buffered_step(direction)
+        self._request_buffered_step(direction, preserve_arrow_hold=True)
 
     def _begin_hold_playback(self, direction):
         self._arrow_start_id = None
@@ -657,9 +666,9 @@ class LabelingApp(tk.Tk):
             self._arrow_release_id = None
         self._arrow_held_dir = None
         if self._hold_play_active:
-            self.play = False
             self._hold_play_active = False
             self.play_dir = 1
+            self.stop_video()
 
     def _refresh_jump_label(self):
         label = getattr(self, "jump_label", None)
@@ -786,7 +795,7 @@ class LabelingApp(tk.Tk):
 
     @staticmethod
     def _next_deadline(due, interval_s):
-        """Deadline pacing shared by the wheel and playback.
+        """Wheel deadline pacing without catching up late navigation steps.
 
         The next step is due one interval after the PREVIOUS deadline, not
         one interval after the redraw: the redraw itself costs ~20 ms, and
@@ -820,17 +829,34 @@ class LabelingApp(tk.Tk):
 
     def _start_playback(self, direction):
         """Play in `direction` (+1 / -1); arm the tick chain if it is idle."""
+        if not self.play or direction != self.play_dir:
+            self._play_next_due = None
+            self._play_ui_next_due = None
         self.play_dir = direction
         self.play = True
+        self._precise_timers.hold("playback")
         if self._play_tick_id is None:
-            self._play_next_due = None
-            self._precise_timers.hold("playback")
             self._play_tick()
 
     def _end_play_chain(self):
         """The tick chain stops here: forget the clock, give back the timers."""
         self._play_next_due = None
         self._precise_timers.release("playback")
+        self._flush_playback_ui()
+
+    @staticmethod
+    def _next_playback_deadline(due, interval_s):
+        """Keep modest lateness on the playback clock; bound recovery work.
+
+        Resetting after just one late frame loses wall-clock time at high FPS.
+        The next callback catches up one frame at a time, with a minimum 1 ms
+        wait so input and paints can run. A long pause starts a fresh clock.
+        Wheel scrolling deliberately retains its separate non-catch-up rule.
+        """
+        now = time.perf_counter()
+        if due is None or now - due > PLAYBACK_MAX_LAG_S:
+            due = now
+        return due + interval_s
 
     def _play_window_buffered(self, current, direction):
         """True when `current` and the next PLAYBACK_BUFFER_AHEAD frames in
@@ -862,18 +888,22 @@ class LabelingApp(tk.Tk):
             # are decoded, then restart the clock (no catch-up burst).
             self.frame_buffer.request_priority(next_frame)
             self._play_next_due = None
+            self._flush_playback_ui()
             self._play_tick_id = self.after(PLAYBACK_STALL_POLL_MS, self._play_tick)
             return
-        due = self._play_next_due = self._next_deadline(
+        due = self._play_next_due = self._next_playback_deadline(
             self._play_next_due, self._frame_interval_s())
         self._apply_play_advance(next_frame, direction)
         delay_ms = max(1, round((due - time.perf_counter()) * 1000.0))
         self._play_tick_id = self.after(delay_ms, self._play_tick)
 
-    def _request_buffered_step(self, delta):
+    def _request_buffered_step(self, delta, *, preserve_arrow_hold=False):
         if self.video is None:
             return
+        if not preserve_arrow_hold:
+            self.stop_video()
         self._pending_buffer_step = delta
+        self._pending_buffer_preserve_hold = preserve_arrow_hold
         # Hint the buffering thread to prioritize the jump target so the polling
         # loop in _buffered_step_tick picks it up on the next 50ms tick.
         target = max(0, min(self.video.total_frames, self.video.current_frame + delta))
@@ -894,10 +924,12 @@ class LabelingApp(tk.Tk):
             self.after(50, self._buffered_step_tick)
             return
         self._pending_buffer_step = None
-        self.next_frame(delta)
+        self.next_frame(delta, preserve_arrow_hold=self._pending_buffer_preserve_hold)
 
     def on_middle_click(self, event=None):
         if self.video is None:
+            return
+        if not LabelingApp._annotation_frame_ready(self):
             return
         # mouse position in display coords; convert to data coords using diagram_scale
         if event is None or isinstance(event, tk.Event):
@@ -1158,6 +1190,7 @@ class LabelingApp(tk.Tk):
         if self._open_timeline_note(event):
             return "break"
         if self.video and self.video.total_frames > 0:
+            self.stop_video()
             click_position = event.x
             canvas_width = self.timeline_canvas.winfo_width()
             frame_number = int(click_position / canvas_width * self.video.number_frames_in_zone)
@@ -1171,6 +1204,7 @@ class LabelingApp(tk.Tk):
         if self._open_timeline_note(event):
             return "break"
         if self.video and self.video.total_frames > 0:
+            self.stop_video()
             click_position = event.x
             canvas_width = self.timeline2_canvas.winfo_width()
             new_frame = int((click_position / canvas_width) * self.video.total_frames)
@@ -1746,18 +1780,17 @@ class LabelingApp(tk.Tk):
             return  # Discard an advance queued just before the dialog paused playback.
         self.video.current_frame = next_frame
         self._last_step_sign = direction
+        self._play_ui_pending = True
         try:
-            self.display_first_frame()
-            self.draw_timeline2()
-            if next_frame % 10 == 0:
-                self.draw_timeline()
+            self.display_first_frame(refresh_ui=False)
+            self._refresh_playback_ui()
         except tk.TclError as exc:
             # Expected only when the app is being torn down mid-playback.
             logger.debug("play advance redraw aborted during teardown: %s", exc)
 
     def _on_playback_boundary(self, current_frame, direction):
         """Playback hit the edge it was moving toward — stop cleanly."""
-        self.play = False
+        self.stop_video()
         self._hold_play_active = False
         self.play_dir = 1
         logger.debug("playback stopped at boundary: frame=%s direction=%s", current_frame, direction)
@@ -1866,7 +1899,7 @@ class LabelingApp(tk.Tk):
         self.image = photo_img  # the label does not keep the Python object alive
         return pil_img.size
 
-    def display_first_frame(self, frame_number=None):
+    def display_first_frame(self, frame_number=None, *, refresh_ui=True):
         self._assert_ui_thread()
         with self.perf.time("display_first_frame"):
             if frame_number is None:
@@ -1876,10 +1909,6 @@ class LabelingApp(tk.Tk):
             if frame_number < 0 or frame_number > self.video.total_frames:
                 logger.error("frame number out of bounds: %s", frame_number)
                 return
-            preserve = self.__dict__.get("_preserve_note_on_paint")
-            same_note_frame = (preserve is not None and preserve[0] is self.video
-                               and preserve[1] == frame_number)
-            note_draft = self._get_note_entry_text() if same_note_frame else None
             pil_img = self.frame_buffer.get(frame_number)
             if pil_img is not None:
                 with self.perf.time("display_frame_photo"):
@@ -1893,15 +1922,56 @@ class LabelingApp(tk.Tk):
                 logger.debug("frame not in buffer: %s", frame_number)
                 self._show_buffer_status(False)
 
-            self.update_note_entry()
-            if same_note_frame:
-                self._set_note_entry_text(note_draft)
-            if preserve is not None and (pil_img is not None or not same_note_frame):
-                self._preserve_note_on_paint = None
-            self.update_frame_counter()
-            self.update_limb_parameter_buttons()
-            self.update_button_colors()
-            self._draw_diagram_dots()
+            if refresh_ui:
+                # Exact navigation and asynchronous repaints refresh immediately.
+                self._play_next_due = None
+                if getattr(self, "_play_ui_pending", False):
+                    self._refresh_playback_ui(force=True)
+                else:
+                    self._refresh_frame_controls()
+
+    def _refresh_frame_controls(self):
+        """Synchronize frame-bound controls, retaining a renderer-switch draft."""
+        if self.video is None:
+            return
+        frame = self.video.current_frame
+        preserve = self.__dict__.get("_preserve_note_on_paint")
+        same_note_frame = (preserve is not None and preserve[0] is self.video
+                           and preserve[1] == frame)
+        note_draft = self._get_note_entry_text() if same_note_frame else None
+        self.update_note_entry()
+        if same_note_frame:
+            self._set_note_entry_text(note_draft)
+        current_image_painted = (
+            self.displayed_frame == frame and self._displayed_image is not None
+            and self._displayed_image is self.frame_buffer.get(frame)
+        )
+        if preserve is not None and (current_image_painted or not same_note_frame):
+            self._preserve_note_on_paint = None
+        self.update_frame_counter()
+        self.update_limb_parameter_buttons()
+        self.update_button_colors()
+        self._draw_diagram_dots()
+        self._play_ui_pending = False
+
+    def _refresh_playback_ui(self, *, force=False):
+        """Refresh annotation controls and timelines at most 25 times/second."""
+        if self.video is None:
+            self._play_ui_pending = False
+            return
+        now = time.perf_counter()
+        due = self._play_ui_next_due
+        if not force and due is not None and now < due:
+            return
+        self._refresh_frame_controls()
+        self.draw_timeline()
+        self.draw_timeline2()
+        self._play_ui_next_due = time.perf_counter() + PLAYBACK_UI_INTERVAL_S
+
+    def _flush_playback_ui(self):
+        """Complete a deferred refresh before pausing, editing, or stalling."""
+        if getattr(self, "_play_ui_pending", False):
+            self._refresh_playback_ui(force=True)
 
     # === Labeling-time accumulator (service_layer.project_service) =============
     def _current_video_time_s(self) -> float:
@@ -2197,7 +2267,17 @@ class LabelingApp(tk.Tk):
         self._start_playback(1)
 
     def stop_video(self):
+        # Keep the held direction until key-up, so an OS repeat cannot re-arm
+        # playback after Stop, annotation, or entering the note editor.
+        start_id = getattr(self, "_arrow_start_id", None)
+        if start_id is not None:
+            self.after_cancel(start_id)
+            self._arrow_start_id = None
         self.play = False
+        self._pending_buffer_step = None
+        self._play_next_due = None
+        self._precise_timers.release("playback")
+        self._flush_playback_ui()
 
     def toggle_play(self, event=None):
         if self.play:
@@ -2211,6 +2291,9 @@ class LabelingApp(tk.Tk):
         if video is None:
             return True
         ready = getattr(self, "displayed_frame", video.current_frame) == video.current_frame
+        if (getattr(self, "play", False) or getattr(self, "_play_ui_pending", False)
+                or getattr(self, "_arrow_start_id", None) is not None):
+            self.stop_video()
         if not ready:
             logger.debug("Annotation skipped: frame %s has not been painted yet", video.current_frame)
         return ready
@@ -3191,15 +3274,22 @@ class LabelingApp(tk.Tk):
 
     def apply_runtime_settings(self, cfg: dict):
         previous = self.config
-        note_draft = self._get_note_entry_text()
         # Refresh the one AppConfig snapshot the app holds (build_ui and other
         # readers consume self.config instead of re-reading config.json).
         self.config = config.load_app_config()
         renderer_changed = self.config.video_renderer != previous.video_renderer
-        if renderer_changed:
+        display_changed = renderer_changed or any(
+            getattr(self.config, name) != getattr(previous, name)
+            for name in ("video_downscale", "diagram_scale", "dot_size")
+        )
+        if display_changed:
             self.stop_video()
             if self.video is not None:
                 self._preserve_note_on_paint = (self.video, self.video.current_frame)
+        # Playback controls may lag the painted frame until stop_video flushes
+        # them. Capture the synchronized note, never a prior frame's text.
+        note_draft = self._get_note_entry_text()
+        if renderer_changed:
             self._buffer_reset()
             if self._gpu_video is not None:
                 self._gpu_video.close()
@@ -3227,10 +3317,6 @@ class LabelingApp(tk.Tk):
 
         # Appearance and label changes do not invalidate decoded video frames
         # or the diagram. Preserve unsaved notes and avoid interrupting playback.
-        display_changed = renderer_changed or any(
-            getattr(self.config, name) != getattr(previous, name)
-            for name in ("video_downscale", "diagram_scale", "dot_size")
-        )
         self.perf.enabled = bool(cfg.get("perf_enabled", False))
         self.perf.log_every_s = float(cfg.get("perf_log_every_s", 2.0))
         self.perf.top_n = int(cfg.get("perf_log_top_n", 6))
@@ -3306,10 +3392,12 @@ class LabelingApp(tk.Tk):
             self._set_note_entry_text(note_draft)
 
     # === Frame Stepping ========================================================
-    def next_frame(self, number_of_frames, play=False):
+    def next_frame(self, number_of_frames, play=False, *, preserve_arrow_hold=False):
         if self.video is None:
             logger.debug("frame movement skipped: no video loaded")
             return
+        if not play and not preserve_arrow_hold:
+            self.stop_video()
         if number_of_frames > 0:
             self.video.current_frame = min(self.video.total_frames, self.video.current_frame + number_of_frames)
             self._last_step_sign = 1

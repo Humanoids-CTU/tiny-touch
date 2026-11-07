@@ -66,11 +66,13 @@ def _display_app(buffered):
     )
     app._assert_ui_thread = lambda: None
     for name in ("update_note_entry", "update_frame_counter",
-                 "update_limb_parameter_buttons", "update_button_colors"):
+                 "update_limb_parameter_buttons", "update_button_colors",
+                 "_draw_diagram_dots"):
         setattr(app, name, lambda: None)
     app.display_first_frame = MethodType(LabelingApp.display_first_frame, app)
     app._show_buffer_status = MethodType(LabelingApp._show_buffer_status, app)
     app._show_frame_image = MethodType(LabelingApp._show_frame_image, app)
+    app._refresh_frame_controls = MethodType(LabelingApp._refresh_frame_controls, app)
     return app
 
 

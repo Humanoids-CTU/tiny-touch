@@ -12,6 +12,9 @@ class ConfiguredWidget:
         self.skip_unchanged = skip_unchanged
         self.writes = 0
 
+    def cget(self, option):
+        return self.widget.cget(option)
+
     def configure(self, **options):
         changed = options
         if self.skip_unchanged:

@@ -80,6 +80,12 @@ and every frame index. Smaller inputs are not enlarged during preparation.
 Original video files and existing frame caches are kept unchanged. GPU drawing
 works with both new and existing caches.
 
+During playback, video frames retain their source timing while annotation controls
+and timelines refresh up to 25 times per second. Pausing, releasing an arrow, or
+starting an annotation synchronizes the controls to the displayed frame. Entering
+the Notes box pauses playback before editing. Use Automatic/GPU rendering for
+high-frame-rate videos; slower machines may still play below source FPS.
+
 ## Find your data and run analysis
 
 Your work is stored in `data/`, with a separate folder for each video.

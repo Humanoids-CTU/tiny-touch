@@ -45,6 +45,7 @@ TL_PARAM_ON_MARK = "#74b58c"
 TL_PARAM_OFF_MARK = "#dc9088"
 TL_PARAM_MARK_WIDTH = 1
 TL_PARAM_MARK_DASH = (3, 2)
+TL_NOTE_MARK = "#8554ad"
 PLAYHEAD = ACCENT
 
 # Status chips use small semantic dots rather than filled backgrounds.
@@ -82,6 +83,7 @@ DARK_PALETTE = {
     "TL_ON": "#355746", "TL_DURING": "#30483e", "TL_OFF": "#65434b",
     "TL_ONSET_MARK": "#75c69b", "TL_OFFSET_MARK": "#e79599",
     "TL_PARAM_ON_MARK": "#689a80", "TL_PARAM_OFF_MARK": "#ba8088",
+    "TL_NOTE_MARK": "#c49ae8",
     "PLAYHEAD": "#83b4ed", "TOUCH_START": "#83b4ed", "TOUCH_END": "#e79599",
     "STATUS_OK": "#75c69b", "STATUS_BAD": "#e79599", "STATUS_WARN": "#dec17b",
 }
@@ -269,7 +271,11 @@ def set_button_state(button, state):
         "ON": "StateOn.TButton",
         "OFF": "StateOff.TButton",
     }.get(normalized, "StateNeutral.TButton")
-    button.configure(style=style_name)
+    # Reapplying an unchanged style still queues native widget repaint work.
+    # Read the actual option so a theme switch or another caller cannot make
+    # a separate Python-side cache stale.
+    if button.cget("style") != style_name:
+        button.configure(style=style_name)
 
 
 class StatusChip(ttk.Frame):

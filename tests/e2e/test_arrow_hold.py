@@ -1,7 +1,7 @@
 """Arrow navigation through real Tk bindings and the playback timer."""
 import pytest
 
-from gui_driver import click, pump, wait_until
+from gui_driver import click, goto_frame, pump, wait_until
 
 pytestmark = pytest.mark.gui
 
@@ -32,6 +32,8 @@ def test_arrow_taps_step_once_and_holds_play_until_release(loaded_app):
 
     # X11 may emit release/press pairs on auto-repeat; they must not add
     # extra steps or stop the running playback chain.
+    # Leave enough frames for the hold to remain active before the boundary.
+    goto_frame(app, 7)
     app.event_generate('<KeyPress-Left>', when='now')
     wait_until(app, lambda: app.play, timeout=1, what='reverse hold playback')
     frame = app.video.current_frame
@@ -45,6 +47,7 @@ def test_arrow_taps_step_once_and_holds_play_until_release(loaded_app):
     assert not app.play
 
     # Changing direction ignores the old key's later release.
+    goto_frame(app, 7)
     app.event_generate('<KeyPress-Right>', when='now')
     app.event_generate('<KeyPress-Left>', when='now')
     app.event_generate('<KeyRelease-Right>', when='now')

@@ -50,6 +50,7 @@ def test_style_changes_and_external_writes_are_seen():
         setter.configure(style=style)
         assert widget.options["style"] == style
     widget.configure(style="external")
+    assert setter.cget("style") == "external"
     setter.configure(style="neutral")
     assert widget.options["style"] == "neutral"
 

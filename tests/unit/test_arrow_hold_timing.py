@@ -13,6 +13,7 @@ def app():
         _arrow_held_dir=None, _arrow_release_id=None, _arrow_start_id=None,
         _hold_play_active=False, play=False, play_dir=1, frame_rate=100,
         now=0, callbacks={}, serial=0,
+        _precise_timers=SimpleNamespace(release=lambda _: None),
     )
 
     def after(delay, callback):
@@ -32,7 +33,7 @@ def app():
             callback()
         app.now = end
 
-    def step(direction):
+    def step(direction, **kwargs):
         app.video.current_frame += direction
 
     def play(direction):
@@ -47,7 +48,7 @@ def app():
     app._request_buffered_step = step
     app._start_playback = play
     for name in ('_on_arrow_press', '_on_arrow_release', '_cancel_arrow_hold_state',
-                 '_begin_hold_playback'):
+                 '_begin_hold_playback', 'stop_video', '_flush_playback_ui'):
         if hasattr(LabelingApp, name):
             setattr(app, name, MethodType(getattr(LabelingApp, name), app))
     return app

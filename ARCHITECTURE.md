@@ -191,11 +191,20 @@ costs one rebuild instead of one per event. The old frame stays on screen meanwh
   The on-screen `Buffer: Loaded` / `Buffer: Loading` chip is set by the display pump.
 - **Playback** -- not a thread: Play and arrow-hold playback are a chain of `after()`
   callbacks on the Tk thread (`LabelingApp._play_tick`), paced against a running deadline
-  exactly like the mouse wheel (`_next_deadline`), so the redraw cost is absorbed into the
-  frame interval and a late tick never bursts. A step happens only once the current frame
+  (`_next_playback_deadline`). Small callback delays remain on the clock so later steps
+  can recover the elapsed time. Each callback paints at most one frame and yields for at
+  least 1 ms; lag beyond 250 ms starts a new clock rather than an unbounded catch-up.
+  Wheel navigation retains its separate `_next_deadline` policy. A step happens only once the current frame
   and the next `PLAYBACK_BUFFER_AHEAD = 3` frames in the play direction are buffered; until
   then it re-checks every `PLAYBACK_STALL_POLL_MS = 20` ms, so playback stalls briefly
   rather than stutters. Every write to `current_frame` is therefore on the Tk thread.
+  Video presentation runs at source FPS while annotation controls and both timelines
+  refresh at most 25 times per second. The timelines retain their existing cached static
+  content and move their cursor between rebuilds. Unchanged semantic button styles do
+  not request another widget repaint. Stop, release, boundaries, exact navigation and
+  annotation actions synchronize deferred controls immediately. Focusing Notes pauses
+  before editing. `displayed_frame` still advances only after successful video painting;
+  an unpainted requested frame remains ineligible for annotation.
   Arrow key-down steps once and arms a 150 ms hold timer. Releasing before it fires
   preserves single-frame taps; otherwise playback starts without waiting for OS repeat.
   Playback stops on release or focus loss. A release is

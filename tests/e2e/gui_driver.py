@@ -180,6 +180,8 @@ def load_video(app, workspace, video_path, mode="Normal", template="Default"):
     # The buffering thread decodes frame 0 asynchronously; wait for the first
     # real paint so later steps see a consistent display.
     wait_until(app, lambda: 0 in app.frame_buffer, what="frame 0 in the buffer")
+    wait_until(app, lambda: app.displayed_frame == app.video.current_frame,
+               what="loaded project frame painted")
 
 
 def save(app):
@@ -198,7 +200,7 @@ def pending_timers(app):
     tkinter names the Tcl command it registers for `after` after the Python
     callback (`Misc.after` sets `callit.__name__ = func.__name__`), so a
     still-scheduled repeating timer is identifiable BY NAME here — and that is
-    the same name Tcl puts in the `invalid command name "...periodic_print_dot"`
+    the same name Tcl puts in the `invalid command name "..."`
     error the app used to print on every exit.
     """
     entries = []
@@ -247,3 +249,4 @@ def goto_frame(app, target):
         pump(app)
         guard += 1
         assert guard < 500, f"could not reach frame {target}"
+    wait_until(app, lambda: app.displayed_frame == target, what=f"frame {target} painted")

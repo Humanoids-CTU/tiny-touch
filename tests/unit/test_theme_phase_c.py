@@ -78,7 +78,6 @@ def test_diagram_dots_use_filled_and_hollow_sprites(monkeypatch):
         dot_size=6,
         diagram_scale=0.5,
         option_var_1=SimpleNamespace(get=lambda: "RH"),
-        on_radio_click=lambda: None,
         find_last_green=lambda _data: None,
     )
 
@@ -89,7 +88,7 @@ def test_diagram_dots_use_filled_and_hollow_sprites(monkeypatch):
 
     monkeypatch.setattr(theme, "dot_sprite", fake_sprite)
 
-    LabelingApp._render_diagram_dots(app)
+    LabelingApp._draw_diagram_dots(app)
 
     assert [(call[0], call[1], call[2]) for call in sprite_calls] == [
         (theme.DOT_ONSET, 6, False),
@@ -106,6 +105,9 @@ def test_loading_parameter_names_resets_ttk_state(monkeypatch):
     class Button:
         def __init__(self):
             self.options = {}
+
+        def cget(self, option):
+            return self.options.get(option, "")
 
         def config(self, **kwargs):
             self.options.update(kwargs)

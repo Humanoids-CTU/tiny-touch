@@ -61,7 +61,52 @@ tests remain explicitly on CPU so their PhotoImage assertions still apply.
 
 The native GPU readback verifies rendered buffers; final visible-window behavior
 and normal physical keyboard/mouse use are the purpose of this manual acceptance.
-The integrated build has not been performance-benchmarked, so earlier component
-speedup percentages should not be treated as a combined whole-app speedup.
+Whole-app playback measurements are recorded below; earlier component speedup
+percentages should not be treated as a combined whole-app speedup.
 Windows is exercised here; Linux GPU embedding and a frozen executable still
 need platform/build acceptance. Unsupported acceleration retains CPU rendering.
+
+## Realtime playback validation (7 November 2026)
+
+Playback now avoids redundant button style writes, refreshes frame controls and
+both timeline cursors at up to 25 Hz, and keeps video pacing on source-FPS
+deadlines. Every source frame is still painted; frames are not skipped to hide
+slow rendering. Stop, arrow release, navigation and annotation synchronize the
+controls immediately. Arrow taps retain a 150 ms grace period before continuous
+playback. Focusing the note editor pauses playback before editing.
+
+Visible-window Windows/GPU tests used generated 1920x1080, 100 FPS clips and
+temporary projects with touch markers, changing parameters and notes:
+
+| Clip | Play | Hold Right | Hold Left |
+| --- | ---: | ---: | ---: |
+| 5 seconds / 500 frames | 4.99 s | 5.14 s | 5.13 s |
+| 15 seconds / 1500 frames | 15.73 s | 15.14 s | 15.92 s |
+
+All 499 / 1499 advances were painted in exact order, with zero buffer stalls.
+The initial frame is already visible; the first advance is immediate. Holds
+include the 150 ms grace period. These results show approximately 95-100 FPS,
+not a hard realtime guarantee: longer runs still show scheduling/rendering
+variation. Physical monitor refresh, Linux, packaged builds and CPU-only
+100 FPS throughput have not been certified.
+
+To repeat the opt-in benchmark against a local constant-frame-rate video:
+
+```powershell
+$env:TINYTOUCH_REALTIME_VIDEO = 'C:/path/to/test_100fps_5s.mp4'
+uv run pytest -m gui tests/e2e/test_realtime_throughput.py -s -q
+Remove-Item Env:TINYTOUCH_REALTIME_VIDEO
+```
+
+The benchmark exercises the production Play button and arrow-hold handlers,
+checks every painted frame and endpoint controls, and enforces a timing ceiling
+of expected duration plus 5% and 50 ms. It is opt-in because speed depends on
+the host. Ordinary GUI tests cover pause/annotation synchronization, note drafts,
+renderer changes and precise taps without imposing a hardware speed threshold.
+
+Regression results: 562 non-GUI tests passed. The complete GUI run had 46 passes,
+2 skips and one template/reliability failure; that module passed in isolation.
+After correcting GUI helper paint-readiness waits and giving reverse-hold tests
+room before the video boundary, all 7 affected arrow/template tests passed.
+The 8 focused playback/renderer/refresh tests also passed. The full GUI suite
+was not rerun to completion after these test-only corrections.

@@ -108,8 +108,10 @@ def _play_app(clock, *, current_frame=100, total_frames=999, buffer=None, redraw
     app.after = after
     app._apply_play_advance = apply_play_advance
     app._next_deadline = LabelingApp._next_deadline
+    app._next_playback_deadline = LabelingApp._next_playback_deadline
     for name in ("_frame_interval_s", "_start_playback", "_play_window_buffered",
-                 "_play_tick", "_end_play_chain", "_on_playback_boundary", "stop_video"):
+                 "_play_tick", "_end_play_chain", "_on_playback_boundary", "stop_video",
+                 "_flush_playback_ui"):
         setattr(app, name, MethodType(getattr(LabelingApp, name), app))
     return app
 

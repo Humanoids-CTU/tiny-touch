@@ -67,10 +67,11 @@ def _pump_app(current_frame=5):
     app.after = lambda delay, callback: app.scheduled.append((delay, callback)) or len(app.scheduled)
     app._assert_ui_thread = lambda: None
     for name in ("update_note_entry", "update_frame_counter",
-                 "update_limb_parameter_buttons", "update_button_colors"):
+                 "update_limb_parameter_buttons", "update_button_colors",
+                 "_draw_diagram_dots"):
         setattr(app, name, lambda: None)
     for name in ("display_first_frame", "_show_buffer_status", "_display_pump",
-                 "_show_frame_image"):
+                 "_show_frame_image", "_refresh_frame_controls"):
         setattr(app, name, MethodType(getattr(LabelingApp, name), app))
     painted = []
     app.frame_paint_listeners.append(lambda frame, size: painted.append((frame, size)))
