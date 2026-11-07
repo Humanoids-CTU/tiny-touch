@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "name": "Example general coding",
+  "template": "general",
+  "zone_labels": {},
+  "channel_labels": {
+    "Channel1": "Channel 1",
+    "Channel2": "Channel 2",
+    "Channel3": "Channel 3",
+    "Channel4": "Channel 4"
+  },
+  "parameter_labels": {
+    "Par1": "Looking",
+    "Par2": "P2",
+    "Par3": "P3"
+  },
+  "channel_parameter_labels": {
+    "Par1": "CP1",
+    "Par2": "CP2",
+    "Par3": "CP3"
+  }
+}

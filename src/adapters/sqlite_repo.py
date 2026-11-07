@@ -86,6 +86,8 @@ from domain.model import (
 from domain.templates import TemplateState, bundle_has_annotation
 from domain.templates import validate_template
 from domain.zone_display import ZoneDisplaySettings
+from domain.coding_setup import CodingSetup
+from adapters.coding_configs import validate_coding_setup
 
 
 logger = logging.getLogger(__name__)
@@ -316,6 +318,10 @@ class SqliteRepository:
         return TemplateState(self.get_meta(META_TEMPLATE), raw == "1")
 
     def save_template(self, state: TemplateState, *, zone_display: ZoneDisplaySettings | None = None) -> None:
+        setup = self.load_coding_setup()
+        if setup is not None and self.load_preparation_state() == "ready":
+            if state.template != setup.template or (zone_display is not None and dict(zone_display.labels) != dict(setup.zone_labels)):
+                raise ValueError("This video's coding setup is locked after preparation")
         current = self.load_template()
         if state.template is None:
             raise ValueError("Choose the project's body template first")
@@ -341,7 +347,47 @@ class SqliteRepository:
             raise ValueError(f"Invalid saved zone names for {template}") from exc
 
     def save_zone_display(self, template: str, settings: ZoneDisplaySettings) -> None:
+        setup = self.load_coding_setup()
+        if setup is not None and self.load_preparation_state() == "ready":
+            if template != setup.template or dict(settings.labels) != dict(setup.zone_labels):
+                raise ValueError("This video's coding setup is locked after preparation")
         self.set_meta(f"zone_display:{validate_template(template)}", self._encode_zone_display(settings))
+
+    def load_coding_setup(self) -> CodingSetup | None:
+        raw = self.get_meta("coding_setup")
+        return None if raw is None else CodingSetup.from_dict(json.loads(raw))
+
+    def load_preparation_state(self) -> str:
+        state = self.get_meta("preparation_state", "draft")
+        if state not in ("draft", "preparing", "ready", "needs_review"):
+            raise ValueError("Invalid video preparation state")
+        return state
+
+    def save_coding_setup(self, setup: CodingSetup, preparation_state: str = "draft") -> None:
+        if not isinstance(setup, CodingSetup):
+            raise ValueError("A complete coding setup is required")
+        validate_coding_setup(setup)
+        self.load_template().choose(setup.template)
+        if preparation_state not in ("draft", "preparing", "ready", "needs_review"):
+            raise ValueError("Invalid video preparation state")
+        current = self.load_coding_setup()
+        if current is not None and self.load_preparation_state() == "ready":
+            if current != setup or preparation_state != "ready":
+                raise ValueError("This video's coding setup is locked after preparation")
+            return
+        values = {"coding_setup": json.dumps(setup.to_dict(), ensure_ascii=False),
+                  "preparation_state": preparation_state,
+                  META_TEMPLATE: setup.template,
+                  f"zone_display:{setup.template}": self._encode_zone_display(ZoneDisplaySettings(setup.zone_labels, self.load_zone_display(setup.template).show_names))}
+        if preparation_state == "ready":
+            values[META_TEMPLATE_LOCKED] = 1
+        self.set_meta_many(values)
+
+    def mark_prepared(self) -> None:
+        setup = self.load_coding_setup()
+        if setup is None:
+            raise ValueError("Review the coding setup before preparing this video")
+        self.save_coding_setup(setup, preparation_state="ready")
 
     @staticmethod
     def _encode_zone_display(settings: ZoneDisplaySettings) -> str:
