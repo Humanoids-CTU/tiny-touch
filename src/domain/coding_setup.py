@@ -74,9 +74,11 @@ class CodingSetup:
 
 
 def default_coding_setup(template="default", parameter_labels=None, limb_parameter_labels=None):
+    definition = get_template(template)
+    parameter_prefix = "CP" if template == "general" else "LP"
     return CodingSetup(
-        name=f"{get_template(template).label} coding", template=template,
-        channel_labels={key: f"Channel {i}" for i, key in enumerate(CHANNEL_KEYS, 1)},
+        name=f"{definition.label} coding", template=template,
+        channel_labels={key: definition.channel_label(key) for key in CHANNEL_KEYS},
         parameter_labels=parameter_labels if parameter_labels is not None else {key: f"P{i}" for i, key in enumerate(PARAMETER_KEYS, 1)},
-        limb_parameter_labels=limb_parameter_labels if limb_parameter_labels is not None else {key: f"CP{i}" for i, key in enumerate(PARAMETER_KEYS, 1)},
+        limb_parameter_labels=limb_parameter_labels if limb_parameter_labels is not None else {key: f"{parameter_prefix}{i}" for i, key in enumerate(PARAMETER_KEYS, 1)},
     )

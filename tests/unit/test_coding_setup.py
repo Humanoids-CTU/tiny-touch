@@ -20,6 +20,18 @@ def repo(tmp_path):
 
 
 @pytest.mark.parametrize("template", ["default", "alternate", "general"])
+def test_template_defaults_are_ready_for_the_diagram(template):
+    setup = default_coding_setup(template)
+    anatomical = template != "general"
+    assert list(setup.channel_labels.values()) == (
+        ["Right Hand", "Left Hand", "Right Leg", "Left Leg"] if anatomical
+        else [f"Channel {i}" for i in range(1, 5)]
+    )
+    prefix = "LP" if anatomical else "CP"
+    assert list(setup.limb_parameter_labels.values()) == [f"{prefix}{i}" for i in range(1, 4)]
+
+
+@pytest.mark.parametrize("template", ["default", "alternate", "general"])
 def test_portable_roundtrip_preserves_complete_setup(template):
     setup = replace(default_coding_setup(template), name="Study α", zone_labels={"1": "Head"})
     raw = setup.to_dict()

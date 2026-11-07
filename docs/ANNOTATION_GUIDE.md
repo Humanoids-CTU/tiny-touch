@@ -44,7 +44,8 @@ frame long.
 
 ## 2. Labeling modes: Normal and Reliability
 
-Every time you press **Load Video** you are asked to choose a mode.
+Choose the mode while preparing a new video. Opening an existing project from
+the video library restores its saved mode and coding setup.
 
 **Normal** — ordinary coding. The project folder is named after the video.
 
@@ -66,33 +67,39 @@ amber in Reliability mode. Your choice is remembered as the default for next tim
 
 ## 3. Loading a video
 
-1. Click **Load Video** and pick `Normal` or `Reliability`, then **Continue**.
-   Choose **Default** or **Alternate** in the template preview, then **Continue** again.
-2. Select the video file (`.mp4`, `.mov`, `.avi`, `.mkv`, `.flv`, `.wmv`).
-3. TinyTouch copies the video into `videos/` under the current working directory
-   (the folder you launched from). A progress window shows the copy.
-4. It then extracts every frame to `data/<video>/frames/`. **This takes a while on a long
-   video and only happens once**; a later session on the same video reuses the frames.
-   In Reliability mode the frames are copied from the original project when available.
-5. Any existing annotations for that project are loaded, and you resume at the frame you
-   left off on.
+1. Click **Load Video** to browse existing projects by thumbnail, title, and diagram.
+   Open a prepared project to resume at its saved position.
+2. For a new project, choose **Load new video** and select a file (`.mp4`, `.mov`,
+   `.avi`, `.mkv`, `.flv`, `.wmv`).
+3. Choose the mode and a diagram: **Default**, **Alternate**, or **General**.
+   Alternatively, load a shared coding configuration from `config/` to prefill
+   all the settings. This folder sits beside the application's `config.json`.
+4. Review the zone names, four channel names, three global parameter labels, and
+   three channel-specific parameter labels. Keep defaults or edit them; **Back**
+   lets you revisit earlier steps. The geometry of the zones does not change.
+5. Review the complete setup. Save a named configuration JSON if another video or
+   coder should reuse it, then prepare the video.
+6. TinyTouch copies the video into `videos/` and extracts frames into
+   `data/<video>/frames/`. Reliability reuses the original frames when available.
+   Successful preparation locks the coding setup and opens the annotation view.
 
-The template choice applies to new projects. A saved project restores its own choice;
-a Reliability pass inherits its original's choice. If two existing passes disagree,
-TinyTouch refuses to link them. This release is for new projects; older working databases
-or projects without a recorded template are rejected without conversion. Keep earlier
-annotations as archives and start new work in a fresh data folder.
+Cancelling the library or setup leaves the current project intact. Failed or
+interrupted preparation must be retried before coding. An existing prepared
+project restores its own settings; it does not reread the shared configuration.
+Reliability inherits a complete copy of the original setup. Conflicting existing
+passes cannot be linked silently.
 
-**Settings** displays the active project template. You may change it while the project
-has never contained annotations or special zone marks. The first annotation (including a
-note or parameter), special zone mark or Special Zones note locks it permanently; deleting
-marks does not unlock it. Linking a Reliability pass locks both projects. Special Zones
-uses the same body outline and zones as the annotation view. Close the Special Zones
-window before changing an empty project's template.
+The diagram and zone/channel/parameter names are fixed after preparation.
+Deleting annotations does not unlock them. Use the same configuration to prepare
+a new project when a different coding definition is needed. Display preferences,
+annotation values, notes, and Special Zones markings remain editable.
 
-On saving, keep the CSV and metadata JSON together. The metadata records `"template"`
-as `"default"` or `"alternate"`; see [the metadata specification](DATA_FORMAT.md#2-the-metadata-sidecar).
-Working databases use schema 2. There is no import or upgrade of older working data.
+Existing supported databases without a complete coding setup need a one-time
+review if their exported metadata cannot establish the parameter meanings. This
+does not add support for retired pre-SQLite working-state formats.
+
+Keep the exported CSV and metadata JSON together. The metadata records the exact
+coding setup and export format version; see [the export specification](DATA_FORMAT.md).
 
 Launch from the same working directory each time and use the same mode and video to
 resume. Project names come from video filenames without their extensions; use unique
@@ -255,27 +262,26 @@ to sort first.
 
 ### Custom zone names
 
-With a video loaded, open **Settings → Zone names**. This works for **Default**,
+Set zone names in the new-video setup wizard. This works for **Default**,
 **Alternate**, and **General**. Enter names beside the zone IDs: for example,
-General's `1` could become `Light on`. Names can contain up to 40 characters on one
+General's `1` could become `Light on`. The General preview also shows Channel 1 through 4 as reserved selectors. These boxes keep fixed positions and indices; set their display names in the following channel setup step. Names can contain up to 40 characters on one
 line. Leave a name blank to use the original ID again. `LINE` and `NN` remain fixed.
 
-Enable **Show zone names on diagrams** to show names on the annotation diagram and
-in **Special Zones**. Names are hidden by default. **Apply** saves the names and
-visibility with this project and updates its export. **Cancel** discards the edits.
-You can change names after coding starts; the selected template remains locked.
+Enable **Show zone names on diagrams** in Settings to show names on the annotation
+diagram and in **Special Zones**. This visibility preference remains editable;
+the names themselves are frozen when preparation succeeds.
 
-Names are separate for each project and template. A new Reliability pass inherits the
-original pass's names when created, then keeps its own settings. CSV zone IDs and mask
+Names are saved with each project. A new Reliability pass inherits the
+original pass's coding setup. CSV zone IDs and mask
 files stay unchanged; the export metadata's **Zone Labels** maps IDs to custom names.
 
 ## 8. Gaze and parameters
 
 Below the diagram there are two groups of three buttons.
 
-**Parameters (limb-specific)** — apply to the currently selected limb on the current frame.
+**Channel parameters** — apply to the selected channel on the current frame.
 
-**Parameters (global)** — apply to the whole frame, regardless of the selected limb.
+**Parameters (global)** — apply to the whole frame, regardless of the selected channel.
 
 Every button is a three-state toggle. Clicking it cycles:
 
@@ -287,18 +293,18 @@ The button is colored to show the state, and the state of the current frame is r
 whenever you move between frames.
 
 **Gaze** can be recorded with **global Parameter 1** by study convention; there is no
-separate gaze control. The shipped labels are `P1`–`P3` and `LP1`–`LP3`. Rename global
+separate gaze control. The shipped labels are `P1`–`P3` and `CP1`–`CP3`. Rename global
 Parameter 1 to a meaningful label such as `Looking1` if you use it for gaze. One convention
 is `ON` when the infant is looking at the contact, `OFF` when demonstrably not looking,
 and unset when you cannot tell. Agree on both the meanings and which frames to label
 before coding begins; parameter values belong to individual frames.
 
-**The button labels are configurable.** Open **Settings** and edit the three global and the
-three limb-specific parameter labels. They are stored in `config.json` and written into the
-export metadata (`Param Labels`, `Limb Param Labels`) so a reader can tell what
-`Parameter_2` meant in your study. **The column names in the export do not change** — they
-stay `Parameter_1..3` and `{limb}_Parameter_1..3`. Agree on the labels before coding
-starts; changing them mid-study leaves you with one metadata file describing both halves.
+**Configure button labels before preparation.** The setup wizard edits the three
+global and three channel-specific labels. The same three channel-specific meanings
+apply to all four channels. Save a shared coding configuration to reuse these
+definitions. Each prepared video retains its own immutable copy, which is written
+into export metadata. Global columns are `Parameter_1..3`; channel-specific columns
+are `Channel1_Parameter_1..3` through `Channel4_Parameter_1..3`.
 
 Settings also holds the display options: video downscale (higher values render smaller frames), diagram scale,
 dot size, the fast-jump distance, and whether holding an arrow key starts playback
@@ -380,8 +386,9 @@ Two things to read carefully:
 - Heatmap totals can exceed the number of touches. A touch whose onset resolved to two
   zones and whose offset resolved to two zones contributes four counts, by design.
 - Any **open (unterminated) touch** is reported separately in the table and in a warning
-  banner at the top of the page, and is excluded from every duration statistic. If that
-  count is not zero, go and fix the data — see below.
+  banner at the top of the page, and is excluded from every duration statistic. The app
+  shows such touches in a dialog *before* it runs the analysis, so you can fix them first —
+  see below.
 
 The `Minimal Touch Length` readout in the app is a visual aid only. It never filters
 anything, in the app or in the analysis.
@@ -396,9 +403,26 @@ replace it. Such a touch is **unterminated**: it has no duration, and it is excl
 totals, means, standard deviations, percentages, transition counts and both histograms. It
 is not silently dropped — the analysis reports it separately with its start frame, in the
 summary table, in the banner on the dashboard page and in the log — but it contributes
-nothing to your statistics. **Run Analysis before you consider a video finished and check
-that the "Open (Unterminated) Touches" column is zero for all four limbs.** Then jump to the
-reported start frame and add the missing offset.
+nothing to your statistics.
+
+When you press **Analysis** with such a touch in the data, the app stops first and shows an
+**Open touches found** dialog listing every open onset (channel, onset frame, and how many
+frames remain until the end of the video). Choose one of:
+
+- **Go to onset** — jumps to the selected onset frame without running the analysis, so you
+  can step forward and place the missing offset (right-click) yourself. This is the right
+  choice when you simply forgot the offset.
+- **Close at video end** — writes the offset on the last frame of the video for every touch
+  listed, reusing the touch's last clicked position and zone, then runs the analysis. Use
+  it when the touch genuinely lasts until the recording ends. The touch then gets a normal
+  duration from its onset to the last frame. A touch whose onset *is* the last frame cannot
+  be closed this way and stays open.
+- **Analyze anyway** — runs the analysis with the touches left open. They are reported as
+  "open (unterminated)" and excluded from the durations, exactly as before.
+- **Cancel** — does nothing.
+
+**Run Analysis before you consider a video finished and check that the "Open
+(Unterminated) Touches" column is zero for all four limbs.**
 
 **A stray `OFF` is silently ignored.** An offset with no preceding onset belongs to no
 touch. It appears nowhere in the statistics and produces no warning, so it is harder to
