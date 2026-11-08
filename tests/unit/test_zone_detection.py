@@ -393,7 +393,6 @@ def _click_app(masks):
     app.diagram_scale = 1.0
     app.option_var_1 = SimpleNamespace(get=lambda: "RH")
     app.mark_bundle_changed = lambda: None
-    app._select_channel_at = lambda *_args: False
     # Unbound method on a stub: bind the real hit-test wrapper explicitly.
     app.find_image_with_white_pixel = (
         lambda x, y: LabelingApp.find_image_with_white_pixel(app, x, y)

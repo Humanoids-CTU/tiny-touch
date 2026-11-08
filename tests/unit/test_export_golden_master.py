@@ -8,7 +8,7 @@ drift in how a value is serialized — a changed float format, JSON separators
 without the space after commas, quoting changes, params leaking "None" strings —
 silently corrupts published datasets even though the schema test stays green.
 
-The checked-in fixture `fixtures/golden_export.csv` was generated from the
+The checked-in fixture `fixtures/golden_export_v2.csv` was generated from the
 CURRENT exporter (current behavior IS the contract) and covers every encoding
 case: multi-click cells, multi-zone buckets, empty frame gaps, params-only
 frames, the legacy "None" limb-param string, and a note with a comma + UTF-8.
@@ -28,7 +28,7 @@ import pandas as pd
 from adapters.export_writer import export_from_unified
 from domain.model import empty_bundle
 
-FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "golden_export.csv")
+FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "golden_export_v2.csv")
 
 GOLDEN_FPS = 25.0          # frame f -> Time_ms = f * 40.0
 GOLDEN_TOTAL_FRAMES = 6    # rows for frames 0..6 inclusive (7 rows)
@@ -106,7 +106,7 @@ def test_export_matches_golden_master_byte_for_byte(tmp_path):
 
     assert os.path.exists(FIXTURE), (
         "Golden fixture missing — it must be checked in at "
-        "tests/unit/fixtures/golden_export.csv (see module docstring)."
+        "tests/unit/fixtures/golden_export_v2.csv (see module docstring)."
     )
     with open(FIXTURE, "rb") as fh:
         expected = _normalized(fh.read())
@@ -115,7 +115,7 @@ def test_export_matches_golden_master_byte_for_byte(tmp_path):
     assert actual == expected, (
         "Export VALUE encoding drifted from the golden master — downstream "
         "pipelines parse these exact bytes. Diff the exported file against "
-        "tests/unit/fixtures/golden_export.csv before changing anything."
+        "tests/unit/fixtures/golden_export_v2.csv before changing anything."
     )
 
 
@@ -176,6 +176,6 @@ def test_export_zero_frame_rate_zeroes_time_only(tmp_path):
     df_fps = pd.read_csv(out_fps, dtype=str, keep_default_na=False)
     df_zero = pd.read_csv(out_zero, dtype=str, keep_default_na=False)
 
-    assert (df_zero["Time_ms"] == "0.0").all()
+    assert (df_zero["Time_ms"] == "").all()
     others = [c for c in df_fps.columns if c != "Time_ms"]
     assert df_zero[others].equals(df_fps[others])

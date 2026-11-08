@@ -106,8 +106,8 @@ def test_app_builds_wires_and_closes_cleanly(app, capfd):
     assert str(app.special_zones_btn.cget("state")) == "disabled"
     assert str(app.select_frame_button.cget("state")) == "disabled"
 
-    # The periodic diagram repaint (after(300, ...)) must survive a few ticks
-    # with no video loaded — that is the state the app starts in.
+    # With no video loaded (the state the app starts in) the diagram stays
+    # empty, idle and through a limb switch.
     pump(app, 0.7)
     assert isinstance(app.diagram_canvas, tk.Canvas)
     assert not app.diagram_canvas.find_all()
@@ -122,10 +122,9 @@ def test_app_builds_wires_and_closes_cleanly(app, capfd):
     assert app.video is None
 
     # --- the close path, and the timer bug it used to leak -------------------
-    # `periodic_print_dot` reschedules itself forever. Before the fix it was
-    # never cancelled, so the timer outlived the interpreter and Tcl reported
-    # `invalid command name "...periodic_print_dot"` on every exit. `close()`
-    # samples Tcl's `after` queue at the last instant before destroy: with no
+    # A self-rescheduling timer (once the 300 ms diagram repaint) that is not
+    # cancelled outlives the interpreter, and Tcl then reports
+    # `invalid command name "..."` on every exit. `close()` samples Tcl's `after` queue at the last instant before destroy: with no
     # video loaded nothing else schedules anything, so it must be EMPTY.
     still_scheduled = close(app)
     assert still_scheduled == [], (

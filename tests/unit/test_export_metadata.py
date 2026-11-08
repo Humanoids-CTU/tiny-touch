@@ -138,7 +138,11 @@ def test_metadata_non_ascii_survives_as_utf8_not_escapes(tmp_path):
 def test_fallback_metadata_freezes_zone_names_in_every_snapshot(tmp_path):
     path = _write(tmp_path, zone_labels={'I': 'Target'})
     meta = json.loads(path.read_text(encoding='utf-8'))
-    assert meta['Coding Setup']['zone_labels'] == {'I': 'Target'}
+    from adapters.zone_masks import list_zone_names
+    assert meta['Coding Setup']['zone_labels'] == {
+        zone: 'Target' if zone == 'I' else zone
+        for zone in list_zone_names('default')
+    }
     assert "zones" not in meta["Diagram"]
     assert "Zone Labels" not in meta
 
@@ -147,3 +151,20 @@ def test_fallback_metadata_rejects_invalid_zone_names_before_writing(tmp_path):
     with pytest.raises(ValueError):
         _write(tmp_path, zone_labels={'I': 'invalid\nname'})
     assert not (tmp_path / 'vid_metadata.json').exists()
+
+
+def test_metadata_lists_fixed_zone_ids_and_resolved_labels_once(tmp_path):
+    from adapters.zone_masks import list_zone_names
+    from domain.coding_setup import CodingSetup
+    path = _write(tmp_path, template="general", zone_labels={"1": "Head"})
+    metadata = json.loads(path.read_text(encoding="utf-8"))
+    setup = metadata["Coding Setup"]
+    assert set(setup["zone_labels"]) == set(list_zone_names("general"))
+    assert setup["zone_labels"]["1"] == "Head"
+    assert setup["zone_labels"]["9"] == "9"
+    assert setup["channel_zones"] == {
+        "Channel1": ["9"], "Channel2": ["10"],
+        "Channel3": ["11"], "Channel4": ["12"],
+    }
+    assert "Zone Labels" not in metadata
+    assert dict(CodingSetup.from_dict(setup).zone_labels) == {"1": "Head"}

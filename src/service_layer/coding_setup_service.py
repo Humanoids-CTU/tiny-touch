@@ -64,6 +64,7 @@ def inspect_legacy_coding_setup(repo, metadata=None):
     missing = []
     setup = CodingSetup(
         name="Reviewed project coding", template=template, zone_labels=zones,
+        zone_layout="legacy" if template == "general" else "numbered",
         channel_labels=metadata.get("Channel Labels", {channel.key: channel.label for channel in get_template(template).channels}),
         parameter_labels=_recover_parameters(metadata.get("Param Labels"), "Parameter_", "P", missing),
         limb_parameter_labels=_recover_parameters(metadata.get("Limb Param Labels"), "XX_Parameter_", "CP", missing),

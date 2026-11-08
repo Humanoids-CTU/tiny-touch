@@ -112,14 +112,14 @@ def test_renderer_setting_switches_without_losing_annotations(workspace, app_fac
         pytest.skip("No accelerated foreign-window renderer on this machine")
     app.video.frames.setdefault(0, {})["Note"] = "keep annotation"
     app._set_note_entry_text("unsaved draft")
-    app.open_settings()
-    window = app._settings_win
-    selector = next(widget for widget in walk(window)
-                    if isinstance(widget, ttk.Combobox)
-                    and "Automatic (GPU preferred)" in widget.cget("values"))
     for mode in ("cpu", "auto", "cpu"):
+        app.open_settings()
+        window = app._settings_win
+        selector = next(widget for widget in walk(window)
+                        if isinstance(widget, ttk.Combobox)
+                        and "Automatic (GPU preferred)" in widget.cget("values"))
         selector.set("CPU" if mode == "cpu" else "Automatic (GPU preferred)")
-        click(window, "Apply")
+        click(window, "Save")  # applies and closes the window
         assert config.load_config()["video_renderer"] == mode
         wait_until(app, lambda: app.displayed_frame == 0 and app.frame_buffer.get(0) is not None,
                    what=f"frame rebuilt for {mode}")

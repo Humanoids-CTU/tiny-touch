@@ -8,7 +8,7 @@ from adapters.plotting import display_limb_order, limb_image_paths
 from adapters.zone_masks import load_zone_masks, zones_dir
 from domain.model import LIMBS
 from domain.touch import zones_at
-from domain.templates import TEMPLATE_LABELS, get_template
+from domain.templates import TEMPLATE_LABELS, general_footer_box, get_template
 from gui.resource_utils import asset_path
 from gui.template_dialog import template_diagram
 
@@ -38,7 +38,7 @@ def test_existing_template_assets_and_labels(template, label, folder, suffix):
         assert image.size == (365, 696)
 
 
-def test_general_template_has_four_channels_and_eight_clickable_squares():
+def test_general_template_has_four_channels_and_twelve_clickable_zones():
     assert TEMPLATE_LABELS["general"] == "General"
     definition = get_template("general")
     assert definition.channel_noun == "Channel"
@@ -51,7 +51,9 @@ def test_general_template_has_four_channels_and_eight_clickable_squares():
         with Image.open(path) as image:
             assert image.size == definition.native_size == (450, 696)
     masks = load_zone_masks(zones_dir("general"))
-    assert {name for name, _ in masks} == {str(n) for n in range(1, 9)} | {"LINE", "OUTSIDE"}
+    assert {name for name, _ in masks} == (
+        {str(n) for n in range(1, 13)} | {"LINE", "OUTSIDE"}
+    )
     for row in range(4):
         for column in range(2):
             x, y = 81 + column * 160, 24 + row * 144
@@ -59,6 +61,12 @@ def test_general_template_has_four_channels_and_eight_clickable_squares():
             assert zones_at(masks, x + 64, y + 64) == [zone]
             assert zones_at(masks, x, y) == ["LINE"]
     assert zones_at(masks, 225, 100) == ["OUTSIDE"]
+    # Footer boxes have stable numeric IDs and remain ordinary touch targets.
+    for index in range(4):
+        left, top, right, bottom = general_footer_box(index)
+        assert zones_at(masks, (left + right) // 2, (top + bottom) // 2) == [str(index + 9)]
+        assert zones_at(masks, left, top) == ["LINE"]
+    assert zones_at(masks, 15 + 96 + 6, 640) == ["OUTSIDE"]  # the gap between two boxes
 
 
 @pytest.mark.parametrize("template", [None, True, "future", []])

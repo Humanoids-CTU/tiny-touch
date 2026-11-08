@@ -77,6 +77,46 @@ def test_hover_survives_frame_changes_and_clicks_leave_dots_alone(loaded_app):
     assert canvas.find_withtag(HOVER_TAG), "the next motion recreates it"
 
 
+def test_special_zones_window_highlights_names_and_marks_in_green(loaded_app):
+    from gui import theme
+    from gui_driver import click
+
+    app = loaded_app
+    click(app, "Special Zones")
+    special = app._special_zones_app
+    canvas = special.canvas2
+    pump(app, 0.3)  # Tk delivers synthetic pointer events only to a mapped window
+    assert canvas.winfo_ismapped()
+    assert special.top_level.grab_current() is special.top_level, "the window is modal"
+    # Tk drops SYNTHETIC pointer events while a grab is held (real ones pass),
+    # so release it for the rest of this test (and let Tk process the release).
+    special.top_level.grab_release()
+    pump(app, 0.1)
+    scale = special.diagram_scale / app.diagram_scale  # its own scale, same native masks
+    x, y = int(ZONE_I_CANVAS_XY[0] * scale), int(ZONE_I_CANVAS_XY[1] * scale)
+
+    _move(canvas, x, y)
+    pump(app, 0.3)
+    assert len(canvas.find_withtag(HOVER_TAG)) == 1
+    assert _tooltip_text(canvas) == ZONE_I_NAME
+    assert not _hover_timers(app)
+
+    click_canvas(canvas, "<Button-1>", x, y)
+    assert len(special.dots) == 1
+    dot_id = next(iter(special.dots))
+    assert str(canvas.itemcget(dot_id, "image")) == str(theme.dot_sprite(theme.DOT_ONSET, special.dot_radius)), (
+        "special zone dots are green"
+    )
+    pump(app, 0.8)
+    assert not _hover_timers(app), "the click flash settles"
+
+    click_canvas(canvas, "<Button-2>", x, y)
+    assert not special.dots, "middle-click on the dot still removes it with the overlay underneath"
+    special.on_close()
+    pump(app, 0.3)
+    assert not _hover_timers(app), "closing the window stops its timer"
+
+
 def test_hover_effects_can_be_switched_off(loaded_app):
     app = loaded_app
     canvas = app.diagram_canvas
@@ -92,3 +132,11 @@ def test_hover_effects_can_be_switched_off(loaded_app):
     pump(app, 0.3)
     assert not canvas.find_withtag(HOVER_TAG)
     assert not _hover_timers(app)
+
+
+def test_hover_shows_only_user_label(loaded_app):
+    from domain.zone_display import ZoneDisplaySettings
+    loaded_app.zone_display = ZoneDisplaySettings({ZONE_I_NAME: "Head"})
+    _move(loaded_app.diagram_canvas, *ZONE_I_CANVAS_XY)
+    pump(loaded_app, 0.3)
+    assert _tooltip_text(loaded_app.diagram_canvas) == "Head"

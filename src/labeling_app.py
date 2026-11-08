@@ -19,6 +19,7 @@ from adapters.frame_buffer import (
 )
 from adapters.frame_extractor import FrameExtractionCancelled, FrameExtractionError
 from adapters.timer_resolution import PreciseTimers
+from adapters.channel_diagram import render_channel_diagram
 from adapters.zone_masks import load_zone_masks, editable_zone_names, zone_label_positions
 from domain.playback import compute_play_step
 from domain.model import (
@@ -46,7 +47,7 @@ from gui.zone_names_dialog import edit_zone_names
 from gui.zone_labels import draw_zone_labels
 from gui.diagram_highlight import DiagramHighlighter
 from gui.resource_utils import asset_path
-from gui.ui_components import build_ui
+from gui.ui_components import build_ui, draw_startup_diagram
 from log_setup import open_logs_folder
 from perf_utils import PerfLogger
 from service_layer import analysis_service, annotation_service, project_service, save_service
@@ -63,6 +64,14 @@ annotation_logger = logging.getLogger("annot")
 # =============================================================================
 # Keep taps precise without waiting for the operating system's repeat delay.
 ARROW_HOLD_DELAY_MS = 150
+# Settings dialog: which optional sections and rows are shown. The settings
+# themselves keep working (config values, project data, and apply logic are
+# untouched); these flags only hide the widgets from the Settings window.
+SETTINGS_SHOW_ARROW_HOLD = False
+SETTINGS_SHOW_HOVER_HIGHLIGHT = False
+SETTINGS_SHOW_PARAMETER_LABELS = False
+SETTINGS_SHOW_PROJECT_TEMPLATE = False
+SETTINGS_SHOW_ZONE_NAME_EDITOR = False
 # Mouse-wheel navigation. Notches are queued and consumed one frame per video
 # frame interval, so a fast flick moves at playback speed (like holding an
 # arrow key) instead of racing the redraw. The queue is capped at
@@ -346,6 +355,7 @@ class LabelingApp(tk.Tk):
         self.labeling_timer = LabelingTimer()
         self._zone_masks = []
         self._zone_dir = None
+        self._zone_layout = None
         # Hover highlight + zone tag on the diagram (gui.diagram_highlight).
         # Built in _draw_diagram_base once masks and scale are known, keyed by
         # (zone directory, scale) so limb switches reuse it.
@@ -716,13 +726,12 @@ class LabelingApp(tk.Tk):
     def _hover_tooltip(self, zone, x, y):
         """Text of the tag next to the pointer at native diagram pixel (x, y).
 
-        The tag names the zone a click would record, renamed zones as
-        `Name (ID)` like the reports do. `NN` (no zone) shows nothing.
+        Show the user label, falling back to the fixed zone ID when unlabeled.
+        `NN` (no zone) shows nothing.
         """
         if zone == NO_ZONE:
             return None
-        label = self.zone_display.label(zone)
-        return label if label == zone else f"{label} ({zone})"
+        return self.zone_display.label(zone)
 
     def on_resize(self, event):
         """<Configure> on the video panel: rebuild the buffer once it settles.
@@ -1017,6 +1026,81 @@ class LabelingApp(tk.Tk):
         self._draw_diagram_base()
         self._draw_diagram_dots()
 
+    # === Diagram resize (corner grip) ==========================================
+    def _diagram_display_size(self, scale):
+        base_w, base_h = get_template(self.template).native_size
+        return int(base_w * scale), int(base_h * scale)
+
+    def _diagram_image_path(self):
+        definition = get_template(self.template)
+        if self.video is None:
+            return asset_path(definition.startup_diagram)
+        return asset_path(definition.diagram)
+
+    def preview_diagram_scale(self, scale):
+        """Cheap repaint while the grip is dragged: bilinear image plus the dots.
+
+        Zone labels and the hover highlighter wait for commit_diagram_scale;
+        the pointer is on the grip during the drag, so nothing hovers anyway.
+        """
+        scale = float(scale)
+        self.diagram_scale = scale
+        w, h = self._diagram_display_size(scale)
+        self.diagram_canvas.config(width=w, height=h)
+        self.diagram_canvas.delete("all")
+        path = self._diagram_image_path()
+        cache = getattr(self, "_diagram_native_cache", None)
+        if cache is None:
+            cache = self._diagram_native_cache = {}
+        native = cache.get((path, repr(getattr(self, "coding_setup", None)), self.option_var_1.get()))
+        if native is None:
+            try:
+                with Image.open(path) as img:
+                    native = img.convert("RGBA")
+                    if getattr(self, "coding_setup", None):
+                        native = render_channel_diagram(self.coding_setup, self.option_var_1.get(), self._zone_masks).convert("RGBA")
+                    cache[(path, repr(getattr(self, "coding_setup", None)), self.option_var_1.get())] = native
+            except Exception:
+                logger.debug("diagram preview skipped: %s unreadable", path)
+                native = None
+        if native is not None:
+            self.photo = ImageTk.PhotoImage(native.resize((w, h), Image.BILINEAR))
+            self.diagram_canvas.create_image(0, 0, anchor="nw", image=self.photo, tags=("diagram",))
+        if self._highlighter is not None:
+            self._highlighter.canvas_cleared()
+        self._draw_diagram_dots()
+
+    def commit_diagram_scale(self, scale):
+        """Grip released: full redraw at `scale` and remember it in config.json.
+
+        Stored click coordinates are native diagram pixels, so only the display
+        changes. The Settings dialog no longer edits this value; it writes the
+        live scale back so an open dialog cannot undo the drag.
+        """
+        scale = float(scale)
+        self.diagram_scale = scale
+        w, h = self._diagram_display_size(scale)
+        self.diagram_canvas.config(width=w, height=h)
+        if self.video is None:
+            self.diagram_canvas.delete("all")
+            draw_startup_diagram(self, scale)
+        else:
+            self.on_radio_click()
+        # Each scale adds a LANCZOS photo per limb to the cache; keep only the
+        # current scale so repeated drags do not accumulate old sizes.
+        cache = getattr(self, "_diagram_photo_cache", None)
+        if cache:
+            for key in [key for key in cache if key[1] != scale]:
+                del cache[key]
+        logger.debug("diagram scale set to %.3f (%sx%s px)", scale, w, h)
+        try:
+            cfg = config.load_config()
+            cfg["diagram_scale"] = round(scale, 3)
+            config.save_config(cfg)
+            self.config = config.load_app_config()
+        except Exception:
+            logger.exception("could not store the diagram scale in config.json")
+
     def _draw_diagram_dots(self):
         """Repaint only the current frame's dots + the open-onset ghost.
 
@@ -1187,10 +1271,13 @@ class LabelingApp(tk.Tk):
             return
         definition = get_template(self.template)
         expected_dir = asset_path(definition.masks_directory)
-        if getattr(self, "_zone_dir", None) != expected_dir:
+        zone_layout = getattr(getattr(self, "coding_setup", None), "zone_layout", None)
+        if getattr(self, "_zone_dir", None) != expected_dir or getattr(self, "_zone_layout", None) != zone_layout:
             self._reset_zone_cache()
             self._load_zone_masks()
-        image_path = asset_path(definition.channel(self.option_var_1.get()).image)
+        image_path = self._diagram_image_path()
+        setup = getattr(self, "coding_setup", None)
+        image_key = (image_path, repr(setup), self.option_var_1.get())
 
         scale = getattr(self, "diagram_scale", 1.0)
         # Cache the decoded+resized PhotoImage per (path, scale) so switching
@@ -1199,20 +1286,22 @@ class LabelingApp(tk.Tk):
         cache = getattr(self, "_diagram_photo_cache", None)
         if cache is None:
             cache = self._diagram_photo_cache = {}
-        cached = cache.get((image_path, scale))
+        cached = cache.get((image_key, scale))
         if cached is None:
-            with Image.open(image_path) as img:
+            with Image.open(image_path) as source:
+                img = (render_channel_diagram(setup, self.option_var_1.get(), self._zone_masks)
+                       if setup else source.convert("RGB"))
                 resized = img.resize(
                     (int(img.width * scale), int(img.height * scale)), Image.LANCZOS
                 )
             white = Image.new("RGBA", resized.size, (255, 255, 255, 255))
             flat = Image.alpha_composite(white, resized.convert("RGBA")).convert("RGB")
-            cached = cache[(image_path, scale)] = (ImageTk.PhotoImage(resized), flat)
+            cached = cache[(image_key, scale)] = (ImageTk.PhotoImage(resized), flat)
         self.photo, base_rgb = cached
         self.diagram_canvas.create_image(0, 0, anchor="nw", image=self.photo, tags=("diagram",))
         draw_zone_labels(self.diagram_canvas, self.zone_display, self._zone_label_positions, scale)
 
-        key = (self._zone_dir, scale)
+        key = (self._zone_dir, self._zone_layout, scale)
         if self._highlighter is None or self._highlighter_key != key:
             if self._highlighter is not None:
                 self._highlighter.destroy()
@@ -1227,10 +1316,15 @@ class LabelingApp(tk.Tk):
     # === Zone Masks & Lookups ==================================================
     def _load_zone_masks(self):
         directory = asset_path(get_template(self.template).masks_directory)
-        if getattr(self, "_zone_dir", None) == directory and getattr(self, "_zone_masks", None):
+        setup = getattr(self, "coding_setup", None)
+        layout = getattr(setup, "zone_layout", None)
+        if (getattr(self, "_zone_dir", None) == directory
+                and getattr(self, "_zone_layout", None) == layout
+                and getattr(self, "_zone_masks", None)):
             return
         self._zone_dir = directory
-        self._zone_masks = load_zone_masks(directory)
+        self._zone_layout = layout
+        self._zone_masks = load_zone_masks(directory, coding_setup=setup)
         self._zone_label_positions = zone_label_positions(self._zone_masks)
 
     def find_image_with_white_pixel(self, x, y):
@@ -2472,7 +2566,7 @@ class LabelingApp(tk.Tk):
             return self._save_zone_display(ZoneDisplaySettings(labels, self.zone_display.show_names))
 
         edit_zone_names(
-            self._settings_win, editable_zone_names(self.template), self.zone_display,
+            self._settings_win, editable_zone_names(self.template, coding_setup=getattr(self, "coding_setup", None)), self.zone_display,
             apply, center=center_over_parent,
         )
 
@@ -2965,6 +3059,8 @@ class LabelingApp(tk.Tk):
                     on_first_mark=self._lock_before_annotation,
                     zone_display=self.zone_display,
                     zone_positions=self._zone_label_positions,
+                    masks=self._zone_masks,
+                    hover_effects=self.diagram_hover_effects,
                 )
             except Exception:
                 self.special_zones_btn.config(state=tk.NORMAL)
@@ -3060,6 +3156,8 @@ class LabelingApp(tk.Tk):
         self._cancel_arrow_hold_state()
         self.play = False
         self._precise_timers.release_all()
+        if self._highlighter is not None:
+            self._highlighter.destroy()  # drops its fade timer, if one is running
         resize_id = getattr(self, "_resize_after_id", None)
         if resize_id is not None:
             try:
@@ -3134,7 +3232,8 @@ class LabelingApp(tk.Tk):
             "video_renderer": tk.StringVar(value=(
                 "CPU" if self.config.video_renderer == "cpu" else "Automatic (GPU preferred)")),
             "video_downscale": tk.StringVar(value=str(_v("video_downscale", 1.0))),
-            "diagram_scale": tk.StringVar(value=str(_v("diagram_scale", 1.0))),
+            # "diagram_scale": the diagram is resized by dragging its corner grip.
+            # "diagram_scale": tk.StringVar(value=str(_v("diagram_scale", 1.0))),
             "dot_size": tk.StringVar(value=str(_v("dot_size", 10))),
             "jump_seconds": tk.StringVar(value=str(_v("jump_seconds", 1.0))),
             "parameter1": tk.StringVar(value=str(_v("parameter1", "Parameter 1"))),
@@ -3186,13 +3285,15 @@ class LabelingApp(tk.Tk):
             row=row, column=1, sticky="w", padx=8, pady=4
         )
         row += 1
-        ttk.Label(content, text="Diagram scale").grid(
-            row=row, column=0, sticky="w", padx=8, pady=4
-        )
-        ttk.Entry(content, textvariable=vars_map["diagram_scale"], width=10).grid(
-            row=row, column=1, sticky="w", padx=8, pady=4
-        )
-        row += 1
+        # Diagram scale: set by dragging the grip in the diagram's bottom-left
+        # corner (LabelingApp.commit_diagram_scale) instead of this field.
+        # ttk.Label(content, text="Diagram scale").grid(
+        #     row=row, column=0, sticky="w", padx=8, pady=4
+        # )
+        # ttk.Entry(content, textvariable=vars_map["diagram_scale"], width=10).grid(
+        #     row=row, column=1, sticky="w", padx=8, pady=4
+        # )
+        # row += 1
         ttk.Label(content, text="Dot size").grid(
             row=row, column=0, sticky="w", padx=8, pady=4
         )
@@ -3207,29 +3308,40 @@ class LabelingApp(tk.Tk):
             row=row, column=1, sticky="w", padx=8, pady=4
         )
         row += 1
-        ttk.Label(content, text=f"Hold arrows to play ({ARROW_HOLD_DELAY_MS} ms tap delay; target: video FPS)").grid(
-            row=row, column=0, sticky="w", padx=8, pady=4
-        )
+        if SETTINGS_SHOW_ARROW_HOLD:
+            ttk.Label(content, text=f"Hold arrows to play ({ARROW_HOLD_DELAY_MS} ms tap delay; target: video FPS)").grid(
+                row=row, column=0, sticky="w", padx=8, pady=4
+            )
+            ttk.Checkbutton(
+                content,
+                variable=vars_map["realtime_arrow_hold"],
+                bootstyle="round-toggle",
+                takefocus=0,
+            ).grid(
+                row=row, column=1, sticky="w", padx=8, pady=4
+            )
+            row += 1
+        if SETTINGS_SHOW_HOVER_HIGHLIGHT:
+            ttk.Label(content, text="Highlight the zone under the pointer").grid(
+                row=row, column=0, sticky="w", padx=8, pady=4
+            )
+            ttk.Checkbutton(
+                content,
+                variable=vars_map["diagram_hover_effects"],
+                bootstyle="round-toggle",
+                takefocus=0,
+            ).grid(
+                row=row, column=1, sticky="w", padx=8, pady=4
+            )
+            row += 1
+        # Project-level toggle (saved with the project, not config.json), shown
+        # under Display; it only takes effect while a video is loaded.
+        ttk.Label(content, text="Show zone names on diagrams").grid(
+            row=row, column=0, sticky="w", padx=8, pady=4)
         ttk.Checkbutton(
-            content,
-            variable=vars_map["realtime_arrow_hold"],
-            bootstyle="round-toggle",
-            takefocus=0,
-        ).grid(
-            row=row, column=1, sticky="w", padx=8, pady=4
-        )
-        row += 1
-        ttk.Label(content, text="Highlight the zone under the pointer").grid(
-            row=row, column=0, sticky="w", padx=8, pady=4
-        )
-        ttk.Checkbutton(
-            content,
-            variable=vars_map["diagram_hover_effects"],
-            bootstyle="round-toggle",
-            takefocus=0,
-        ).grid(
-            row=row, column=1, sticky="w", padx=8, pady=4
-        )
+            content, variable=show_zone_names, bootstyle="round-toggle", takefocus=0,
+            state=tk.NORMAL if self.video is not None else tk.DISABLED,
+        ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
         row += 1
 
         def parse_float(value, key):
@@ -3243,74 +3355,75 @@ class LabelingApp(tk.Tk):
             except Exception:
                 raise ValueError(f"{key} must be a number")
 
-        ttk.Separator(content, orient="horizontal").grid(
-            row=row,
-            column=0,
-            columnspan=2,
-            sticky="ew",
-            padx=8,
-            pady=(10, 8),
-        )
-        row += 1
-        ttk.Label(content, text="Parameter Labels", font=theme.FONT_BOLD).grid(
-            row=row,
-            column=0,
-            columnspan=2,
-            sticky="w",
-            padx=8,
-            pady=(0, 6),
-        )
-        row += 1
-        channel_noun = "Channel"
-        coding_readonly = self.video is not None and self.state_repo.load_preparation_state() == "ready"
         if self.video is not None and getattr(self, "coding_setup", None):
             for i in range(1, 4):
                 vars_map[f"parameter{i}"].set(self.coding_setup.parameter_labels[f"Par{i}"])
                 vars_map[f"limb_parameter{i}"].set(self.coding_setup.limb_parameter_labels[f"Par{i}"])
-        ttk.Label(content, text=f"{channel_noun} Parameter 1").grid(
-            row=row, column=0, sticky="w", padx=8, pady=4
-        )
-        ttk.Entry(content, textvariable=vars_map["limb_parameter1"], width=18, state="readonly" if coding_readonly else "normal").grid(
-            row=row, column=1, sticky="w", padx=8, pady=4
-        )
-        row += 1
-        ttk.Label(content, text=f"{channel_noun} Parameter 2").grid(
-            row=row, column=0, sticky="w", padx=8, pady=4
-        )
-        ttk.Entry(content, textvariable=vars_map["limb_parameter2"], width=18, state="readonly" if coding_readonly else "normal").grid(
-            row=row, column=1, sticky="w", padx=8, pady=4
-        )
-        row += 1
-        ttk.Label(content, text=f"{channel_noun} Parameter 3").grid(
-            row=row, column=0, sticky="w", padx=8, pady=4
-        )
-        ttk.Entry(content, textvariable=vars_map["limb_parameter3"], width=18, state="readonly" if coding_readonly else "normal").grid(
-            row=row, column=1, sticky="w", padx=8, pady=4
-        )
-        row += 1
-        ttk.Label(content, text="Parameter 1").grid(
-            row=row, column=0, sticky="w", padx=8, pady=4
-        )
-        ttk.Entry(content, textvariable=vars_map["parameter1"], width=18, state="readonly" if coding_readonly else "normal").grid(
-            row=row, column=1, sticky="w", padx=8, pady=4
-        )
-        row += 1
-        ttk.Label(content, text="Parameter 2").grid(
-            row=row, column=0, sticky="w", padx=8, pady=4
-        )
-        ttk.Entry(content, textvariable=vars_map["parameter2"], width=18, state="readonly" if coding_readonly else "normal").grid(
-            row=row, column=1, sticky="w", padx=8, pady=4
-        )
-        row += 1
-        ttk.Label(content, text="Parameter 3").grid(
-            row=row, column=0, sticky="w", padx=8, pady=4
-        )
-        ttk.Entry(content, textvariable=vars_map["parameter3"], width=18, state="readonly" if coding_readonly else "normal").grid(
-            row=row, column=1, sticky="w", padx=8, pady=4
-        )
-        row += 1
+        if SETTINGS_SHOW_PARAMETER_LABELS:
+            ttk.Separator(content, orient="horizontal").grid(
+                row=row,
+                column=0,
+                columnspan=2,
+                sticky="ew",
+                padx=8,
+                pady=(10, 8),
+            )
+            row += 1
+            ttk.Label(content, text="Parameter Labels", font=theme.FONT_BOLD).grid(
+                row=row,
+                column=0,
+                columnspan=2,
+                sticky="w",
+                padx=8,
+                pady=(0, 6),
+            )
+            row += 1
+            channel_noun = "Channel"
+            coding_readonly = self.video is not None and self.state_repo.load_preparation_state() == "ready"
+            ttk.Label(content, text=f"{channel_noun} Parameter 1").grid(
+                row=row, column=0, sticky="w", padx=8, pady=4
+            )
+            ttk.Entry(content, textvariable=vars_map["limb_parameter1"], width=18, state="readonly" if coding_readonly else "normal").grid(
+                row=row, column=1, sticky="w", padx=8, pady=4
+            )
+            row += 1
+            ttk.Label(content, text=f"{channel_noun} Parameter 2").grid(
+                row=row, column=0, sticky="w", padx=8, pady=4
+            )
+            ttk.Entry(content, textvariable=vars_map["limb_parameter2"], width=18, state="readonly" if coding_readonly else "normal").grid(
+                row=row, column=1, sticky="w", padx=8, pady=4
+            )
+            row += 1
+            ttk.Label(content, text=f"{channel_noun} Parameter 3").grid(
+                row=row, column=0, sticky="w", padx=8, pady=4
+            )
+            ttk.Entry(content, textvariable=vars_map["limb_parameter3"], width=18, state="readonly" if coding_readonly else "normal").grid(
+                row=row, column=1, sticky="w", padx=8, pady=4
+            )
+            row += 1
+            ttk.Label(content, text="Parameter 1").grid(
+                row=row, column=0, sticky="w", padx=8, pady=4
+            )
+            ttk.Entry(content, textvariable=vars_map["parameter1"], width=18, state="readonly" if coding_readonly else "normal").grid(
+                row=row, column=1, sticky="w", padx=8, pady=4
+            )
+            row += 1
+            ttk.Label(content, text="Parameter 2").grid(
+                row=row, column=0, sticky="w", padx=8, pady=4
+            )
+            ttk.Entry(content, textvariable=vars_map["parameter2"], width=18, state="readonly" if coding_readonly else "normal").grid(
+                row=row, column=1, sticky="w", padx=8, pady=4
+            )
+            row += 1
+            ttk.Label(content, text="Parameter 3").grid(
+                row=row, column=0, sticky="w", padx=8, pady=4
+            )
+            ttk.Entry(content, textvariable=vars_map["parameter3"], width=18, state="readonly" if coding_readonly else "normal").grid(
+                row=row, column=1, sticky="w", padx=8, pady=4
+            )
+            row += 1
 
-        if self.video is not None:
+        if self.video is not None and (SETTINGS_SHOW_PROJECT_TEMPLATE or SETTINGS_SHOW_ZONE_NAME_EDITOR):
             # Project settings live in the project DB, not config.json.
             ttk.Separator(content, orient="horizontal").grid(
                 row=row, column=0, columnspan=2, sticky="ew", padx=8, pady=(10, 8))
@@ -3318,30 +3431,26 @@ class LabelingApp(tk.Tk):
             ttk.Label(content, text="Project", font=theme.FONT_BOLD).grid(
                 row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 6))
             row += 1
-            template_state = self.state_repo.load_template()
-            status = "locked after preparation" if template_state.locked else "changeable before preparation"
-            ttk.Label(content, text=f"Template: {TEMPLATE_LABELS[template_state.template]}\n({status})").grid(
-                row=row, column=0, sticky="w", padx=8, pady=4)
-            ttk.Button(
-                content, text="Change project template", command=self.change_project_template,
-                style="Tool.TButton", takefocus=0,
-                state=tk.DISABLED if template_state.locked else tk.NORMAL,
-            ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
-            row += 1
-            ttk.Label(content, text="Zone names").grid(
-                row=row, column=0, sticky="w", padx=8, pady=4)
-            ttk.Button(
-                content, text="Edit zone names", command=self.edit_project_zone_names,
-                state=tk.DISABLED if self.state_repo.load_preparation_state() == "ready" else tk.NORMAL,
-                style="Tool.TButton", takefocus=0,
-            ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
-            row += 1
-            ttk.Label(content, text="Show zone names on diagrams").grid(
-                row=row, column=0, sticky="w", padx=8, pady=4)
-            ttk.Checkbutton(
-                content, variable=show_zone_names, bootstyle="round-toggle", takefocus=0,
-            ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
-            row += 1
+            if SETTINGS_SHOW_PROJECT_TEMPLATE:
+                template_state = self.state_repo.load_template()
+                status = "locked after preparation" if template_state.locked else "changeable before preparation"
+                ttk.Label(content, text=f"Template: {TEMPLATE_LABELS[template_state.template]}\n({status})").grid(
+                    row=row, column=0, sticky="w", padx=8, pady=4)
+                ttk.Button(
+                    content, text="Change project template", command=self.change_project_template,
+                    style="Tool.TButton", takefocus=0,
+                    state=tk.DISABLED if template_state.locked else tk.NORMAL,
+                ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
+                row += 1
+            if SETTINGS_SHOW_ZONE_NAME_EDITOR:
+                ttk.Label(content, text="Zone names").grid(
+                    row=row, column=0, sticky="w", padx=8, pady=4)
+                ttk.Button(
+                    content, text="Edit zone names", command=self.edit_project_zone_names,
+                    state=tk.DISABLED if self.state_repo.load_preparation_state() == "ready" else tk.NORMAL,
+                    style="Tool.TButton", takefocus=0,
+                ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
+                row += 1
 
         def apply_settings(close=False):
             try:
@@ -3353,7 +3462,10 @@ class LabelingApp(tk.Tk):
                 if downscale <= 0:
                     downscale = 1.0
                 new_cfg["video_downscale"] = downscale
-                new_cfg["diagram_scale"] = parse_float(vars_map["diagram_scale"].get(), "diagram_scale")
+                # The corner grip owns the diagram scale; write the live value so a
+                # dialog opened before a drag does not restore the old size.
+                # new_cfg["diagram_scale"] = parse_float(vars_map["diagram_scale"].get(), "diagram_scale")
+                new_cfg["diagram_scale"] = round(float(self.diagram_scale), 3)
                 new_cfg["dot_size"] = parse_float(vars_map["dot_size"].get(), "dot_size")
                 jump_seconds = parse_float(vars_map["jump_seconds"].get(), "jump_seconds")
                 if jump_seconds <= 0:
@@ -3394,33 +3506,20 @@ class LabelingApp(tk.Tk):
             if close:
                 win.destroy()
 
+        # Save applies and closes; closing the window (title-bar X) discards.
         btn_frame = ttk.Frame(content)
         btn_frame.grid(row=row, column=0, columnspan=2, pady=(10, 8))
         ttk.Button(
             btn_frame,
-            text="Apply",
-            command=lambda: apply_settings(close=False),
-            style="Tool.TButton",
-            takefocus=0,
-        ).pack(side="left", padx=5)
-        ttk.Button(
-            btn_frame,
-            text="Apply & Close",
-            command=lambda: apply_settings(close=True),
-            style="Tool.TButton",
-            takefocus=0,
-        ).pack(side="left", padx=5)
-        ttk.Button(
-            btn_frame,
-            text="Open Logs Folder",
+            text="Logs",
             command=self._open_logs_folder,
             style="Tool.TButton",
             takefocus=0,
         ).pack(side="left", padx=5)
         ttk.Button(
             btn_frame,
-            text="Close",
-            command=win.destroy,
+            text="Save",
+            command=lambda: apply_settings(close=True),
             style="Tool.TButton",
             takefocus=0,
         ).pack(side="left", padx=5)
@@ -3517,6 +3616,8 @@ class LabelingApp(tk.Tk):
         self.diagram_hover_effects = bool(cfg.get("diagram_hover_effects", True))
         if self._highlighter is not None:
             self._highlighter.set_enabled(self.diagram_hover_effects)
+        if self._special_zones_app is not None:
+            self._special_zones_app.set_hover_effects(self.diagram_hover_effects)
         logger.debug("diagram hover effects: %s", self.diagram_hover_effects)
 
         new_scale = float(cfg.get("diagram_scale", 1.0))

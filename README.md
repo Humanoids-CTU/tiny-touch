@@ -8,6 +8,25 @@ events and observations.
 
 
 
+## New in 9.3.0
+
+- **Video library and guided setup:** resume a labeled video or prepare a new one
+  with its diagram, zone labels, channel names, and parameters. Loading an existing
+  video offers resume or an independent copy.
+- **Shareable coding configurations:** save and load JSON configurations so coders
+  can reuse the same settings. Each prepared video keeps its frozen configuration.
+- **Clear zone identities:** labels appear while coding; stable zone IDs remain in
+  exports. The General diagram has twelve selectable zones, with fixed channel
+  associations recorded in metadata.
+- **Updated exports:** one CSV row per frame, Channel1–4 columns, paired coordinates
+  and per-point zone lists, plus rounded millisecond timestamps. A JSON settings
+  snapshot and a labeled diagram image accompany each export.
+- **Coding improvements:** resize the diagram, see zone labels on hover, and review
+  touches missing an offset before analysis. Playback and timeline redraws are smoother.
+
+**Export compatibility:** the new CSV format differs from older releases. Update
+external analysis scripts using the [data format specification](docs/DATA_FORMAT.md).
+
 ## New in 9.1.0
 
 - **Dark mode:** choose Light or Dark in Settings; your preference is remembered.
@@ -23,22 +42,22 @@ Download TinyTouch from the
 [Releases page](https://github.com/Humanoids-CTU/tiny-touch/releases).
 
 **Windows 10/11 (64-bit):** download **windows-x64.zip**, extract it, and
-double-click **TinyTouch-v9.1.0.exe** (the version number matches your download).
+double-click **TinyTouch-v9.3.0.exe** (the version number matches your download).
 
 **Linux (Ubuntu 24.04 or newer, Intel/AMD 64-bit):** download **linux-x64.zip**
 and extract it. Open a terminal in the extracted folder and run
 (use the version number you downloaded):
 
 ```bash
-chmod +x TinyTouch-v9.1.0
-./TinyTouch-v9.1.0
+chmod +x TinyTouch-v9.3.0
+./TinyTouch-v9.3.0
 ```
 
 ## Label a video
 
 1. Click **Load Video** to open the video library. Resume an existing project or
    choose **Load new video** and select a video file. Review the diagram, zone
-   names, channel names, and parameters, then prepare the video. Preparing it may
+   labels, channel names, and parameters, then prepare the video. Preparing it may
    take a few minutes the first time.
 2. Use **Special Zones** to mark body areas of interest (e.g. covered by clothing) and
    describe them in its **Note** field.

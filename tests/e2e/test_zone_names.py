@@ -66,7 +66,7 @@ def test_zone_names_save_reopen_freeze_and_keep_annotation_ids(app, workspace, t
     assert "Light on" in _texts(special.canvas2)
     assert app.video.frames[0]["RH"]["Zones"] == [[zone]]
     meta = json.loads(Path(paths.export_metadata).read_text(encoding="utf-8"))
-    assert meta["Coding Setup"]["zone_labels"] == {zone: "Light on"}
+    assert meta["Coding Setup"]["zone_labels"][zone] == "Light on"
     with open(paths.export_csv, encoding="utf-8", newline="") as stream:
         assert json.loads(next(csv.DictReader(stream))["Channel1_Zones"]) == [[zone]]
     csv_before = Path(paths.export_csv).read_bytes()
@@ -96,7 +96,7 @@ def test_zone_names_save_reopen_freeze_and_keep_annotation_ids(app, workspace, t
     _set_visibility(settings, False)
     assert not app.diagram_canvas.find_withtag("zone-label")
     assert app.zone_display.label(zone) == "Light on"
-    assert json.loads(Path(paths.export_metadata).read_text())["Coding Setup"]["zone_labels"] == {zone: "Light on"}
+    assert json.loads(Path(paths.export_metadata).read_text())["Coding Setup"]["zone_labels"][zone] == "Light on"
     assert Path(paths.export_csv).read_bytes() == csv_before
     settings.destroy()
     click(app, "Special Zones")
@@ -128,7 +128,7 @@ def test_named_template_full_workflow_and_reliability(app, workspace, tmp_path, 
         click_canvas(app.diagram_canvas, "<Button-3>", *position)
         save(app)
         metadata = json.loads(Path(paths.export_metadata).read_text(encoding="utf-8"))
-        assert metadata["Coding Setup"]["zone_labels"] == {zone: "Acceptance target"}
+        assert metadata["Coding Setup"]["zone_labels"][zone] == "Acceptance target"
         assert metadata["Coding Setup"]["template"] == choice.lower()
         if choice == "General":
             assert metadata["Coding Setup"]["channel_labels"] == {

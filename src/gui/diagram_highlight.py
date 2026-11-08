@@ -27,6 +27,7 @@ import numpy as np
 from PIL import Image, ImageChops, ImageTk
 
 from domain.touch import LINE_ZONE, NO_ZONE, OUTSIDE_ZONE, zone_label_map
+from gui.zone_labels import ZONE_LABEL_TAG
 
 
 logger = logging.getLogger(__name__)
@@ -145,6 +146,12 @@ class DiagramHighlighter:
         self._flash = {}                # zone -> (0..1 flash level, (r, g, b))
         self._items = {}                # zone -> (canvas item id, PhotoImage)
         self._tip_items = None          # (background id, text id) or None
+        # The tick is scheduled on the ROOT, not the canvas: tkinter registers
+        # an `after` callback as a Tcl command owned by the widget it was
+        # scheduled on, and the app's close path cancels timers through the
+        # root. A canvas-owned command would then be deleted twice (once by
+        # the cancel, once by the canvas's own destroy) and raise mid-teardown.
+        self._timer_host = canvas.nametowidget(".")
         self._after_id = None
         self._last_tick = None
         logger.debug(
@@ -216,7 +223,7 @@ class DiagramHighlighter:
     def destroy(self):
         if self._after_id is not None:
             try:
-                self.canvas.after_cancel(self._after_id)
+                self._timer_host.after_cancel(self._after_id)
             except tk.TclError:
                 pass
             self._after_id = None
@@ -229,7 +236,7 @@ class DiagramHighlighter:
     def _schedule(self):
         if self._after_id is None:
             self._last_tick = time.perf_counter()
-            self._after_id = self.canvas.after(FRAME_MS, self._hover_tick)
+            self._after_id = self._timer_host.after(FRAME_MS, self._hover_tick)
 
     def _hover_tick(self):
         self._after_id = None
@@ -283,8 +290,10 @@ class DiagramHighlighter:
             item_id = self.canvas.create_image(
                 sprite.box[0], sprite.box[1], anchor="nw", image=photo, tags=(HOVER_TAG,),
             )
-            if self.canvas.find_withtag(DIAGRAM_TAG):
-                # Above the diagram, below the zone labels and the dots.
+            # Above the diagram, below the zone labels and the dots.
+            if self.canvas.find_withtag(ZONE_LABEL_TAG):
+                self.canvas.tag_lower(item_id, ZONE_LABEL_TAG)
+            elif self.canvas.find_withtag(DIAGRAM_TAG):
                 self.canvas.tag_raise(item_id, DIAGRAM_TAG)
             self._items[zone] = (item_id, photo)
         else:

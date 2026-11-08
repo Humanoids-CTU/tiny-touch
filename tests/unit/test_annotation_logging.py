@@ -18,6 +18,7 @@ def _base_app(frame=12, limb="LH"):
         option_var_1=SimpleNamespace(get=lambda: limb),
         mark_bundle_changed=lambda *_args: None,
         draw_timeline=lambda: None,
+        focus_set=lambda: None,
     )
 
 
@@ -25,7 +26,6 @@ def test_click_logs_one_completed_annotation_action(caplog):
     app = _base_app()
     app.diagram_scale = 1.0
     app.find_image_with_white_pixel = lambda _x, _y: ["Z"]
-    app._render_diagram_dots = lambda: None
 
     with caplog.at_level(logging.INFO, logger="annot"):
         LabelingApp.on_diagram_click(app, SimpleNamespace(x=10, y=20), True)
@@ -36,7 +36,6 @@ def test_click_logs_one_completed_annotation_action(caplog):
 def test_successful_delete_logs_once_but_miss_does_not(caplog):
     app = _base_app()
     app.diagram_scale = 1.0
-    app._render_diagram_dots = lambda: None
     bundle = empty_bundle()
     bundle["LH"].update({"X": [10], "Y": [20], "Zones": [["Z"]], "Onset": "ON"})
     app.video.frames[12] = bundle

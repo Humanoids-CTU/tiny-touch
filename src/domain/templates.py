@@ -6,6 +6,17 @@ DEFAULT_TEMPLATE = "default"
 ALTERNATE_TEMPLATE = "alternate"
 GENERAL_TEMPLATE = "general"
 
+# General's channel footer, in native diagram pixels. `generate_general_template.py`
+# draws the boxes AND their zone masks (`Channel1`..`Channel4`) from these values,
+# so the picture and the clickable zones cannot drift apart. A click on a box
+# records a touch of that channel like any other zone; it never changes the
+# selected channel (the radio buttons do that).
+GENERAL_FOOTER_Y = 610
+GENERAL_FOOTER_LEFT = 15
+GENERAL_FOOTER_BOX_WIDTH = 96
+GENERAL_FOOTER_BOX_HEIGHT = 70
+GENERAL_FOOTER_GAP = 12
+
 
 @dataclass(frozen=True)
 class ChannelDefinition:
@@ -33,6 +44,15 @@ class TemplateDefinition:
     def channel_label(self, key: str) -> str:
         """Preserve unknown report keys rather than inventing a display name."""
         return next((channel.label for channel in self.channels if channel.key == key), key)
+
+
+def general_footer_box(position: int) -> tuple[int, int, int, int]:
+    """Inclusive pixel bounds of the `position`-th (0-based) footer box, left to right."""
+    left = GENERAL_FOOTER_LEFT + position * (GENERAL_FOOTER_BOX_WIDTH + GENERAL_FOOTER_GAP)
+    return (
+        left, GENERAL_FOOTER_Y,
+        left + GENERAL_FOOTER_BOX_WIDTH - 1, GENERAL_FOOTER_Y + GENERAL_FOOTER_BOX_HEIGHT - 1,
+    )
 
 
 def _anatomical_template(label: str, masks_directory: str, image_suffix: str) -> TemplateDefinition:

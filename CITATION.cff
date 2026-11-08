@@ -8,7 +8,7 @@ authors:
   - family-names: Navara
     given-names: Lukáš
     orcid: https://orcid.org/0009-0003-5725-9021
-version: 9.1.0
+version: 9.3.0
 repository-code: https://github.com/Humanoids-CTU/tiny-touch
 url: https://github.com/Humanoids-CTU/tiny-touch
 license: GPL-3.0-only

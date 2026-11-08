@@ -67,10 +67,11 @@ External readers of new exports must use the paths below rather than the retired
 - `Program Version`, `Video Name`, `Labeling Mode`, `Frame Rate`: export context.
 - `Coding Setup`: the single authoritative settings snapshot. It includes the
   setup name and schema version, `template`, `zone_labels`, `channel_labels`,
-  `parameter_labels`, and `channel_parameter_labels`. Channel keys are Channel1..4;
+  `parameter_labels`, `channel_parameter_labels`, `channel_zones`, and `zone_layout`.
+  Channel keys are Channel1..4;
   parameter keys Par1..3 correspond to CSV Parameter_1..3 and
-  ChannelN_Parameter_1..3. Zone labels contain overrides; an unlisted zone retains
-  its ID as its name. The setup can still be reused as a coding configuration.
+  ChannelN_Parameter_1..3. Export metadata contains every zone ID paired with its resolved label;
+  unlabeled zones use the ID itself. Reusable configurations may store only overrides. The setup can still be reused as a coding configuration.
 - `Diagram`: source diagram/mask asset identifiers, `image` (the companion PNG's
   relative filename), and `image_sha256` (checksum of that PNG).
 - `Coordinate Convention`: native diagram size, top-left origin, x right, y down,
@@ -81,7 +82,8 @@ External readers of new exports must use the paths below rather than the retired
 
 Each normal application save publishes `<video>_diagram.png` alongside the CSV
 and JSON. It contains the project's diagram with CSV zone IDs burned into their
-regions and a full ID-to-saved-name legend, including boundary/unmatched markers.
+regions together with their saved names. A compact side panel shows the channels,
+parameters, channel parameters, and channel-to-zone assignments.
 The reference image is enlarged and has margins: exported XY coordinates still
 refer to the native diagram, not the reference PNG. It has no per-frame dots or
 selected-channel highlight. Labels come from the saved coding setup, not current
@@ -173,11 +175,29 @@ extension. Adding a PNG to the mask directory adds a zone; nothing else needs to
 | --- | --- | --- |
 | Default | [`src/resources/icons/zones3/`](../src/resources/icons/zones3/) | 38 masks: `A`–`Z`, `WB`, `XB`, `YB`, `ZB`, `BOX1`–`BOX6`, `LINE`, `OUTSIDE` |
 | Alternate | [`src/resources/icons/zones3_new_template/`](../src/resources/icons/zones3_new_template/) | 32 masks: `A`–`T`, `QB`, `RB`, `SB`, `TB`, `BOX1`–`BOX6`, `LINE`, `OUTSIDE` |
-| General | [`src/resources/icons/zones_general/`](../src/resources/icons/zones_general/) | 14 masks: `1`–`8`, `Channel1`–`Channel4`, `LINE`, `OUTSIDE`. Eight square targets, numbered left-to-right, top-to-bottom in two columns (the IDs are not printed on the diagram; the labeler draws them when zone names are shown), plus the four footer boxes, one per channel in portable order, so a channel can itself be the target of a touch (as a hand or leg can on the anatomical diagrams). |
+| General | [`src/resources/icons/zones_general/`](../src/resources/icons/zones_general/) | New setups use zones `1`–`12`, plus `LINE` and `OUTSIDE`. Zones `9`–`12` are the four bottom boxes. Historical setups retain `Channel1`–`Channel4` for these same regions. |
 
 Select a video from the library, then choose Default, Alternate, or General in the
 preparation wizard. The prepared project choice determines the annotation diagram, Special Zones outline, and channel images. **The zone name alone does not tell you which
 template produced it** — `A` means different anatomy in the two sets. Keep the metadata JSON with your dataset: its `Coding Setup.template` field identifies the set (top-level `template` in older metadata).
+
+### Channel-to-zone assignments
+
+Coding setup schema 2 adds `channel_zones`: each portable channel maps to a list
+of zone IDs fixed by the selected template. It identifies the acting channel's diagram regions;
+it does not restrict which zones that channel may touch. A zone belongs to at
+most one channel. User labels do not change IDs or relationships. New-video setup
+shows these relationships read-only; there is no mapping editor. `zone_layout` is
+`numbered` for new setups and `legacy` for historical General zone IDs.
+
+Defaults in Channel1–4 order are Default: N, M, B, A; Alternate: L, K, B, A;
+General: 9, 10, 11, 12. Setup files using schema 1 remain readable and receive
+the historical assignments (General: Channel1, Channel2, Channel3, Channel4).
+Loading a historical project does not rename its annotation zone IDs. The saved
+mapping is frozen with the other settings and inherited by Reliability passes.
+CSV format remains version 2. Hover displays the user label (or ID if unlabeled);
+the reference PNG displays the label with the ID beneath it. CSV zone cells always
+contain fixed IDs, never user labels. Existing prepared snapshots remain unchanged.
 
 Special names:
 

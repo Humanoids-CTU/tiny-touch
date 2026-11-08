@@ -1,0 +1,8 @@
+Frame,Time_ms,Channel1_XY,Channel1_Onset,Channel1_Zones,Channel2_XY,Channel2_Onset,Channel2_Zones,Channel3_XY,Channel3_Onset,Channel3_Zones,Channel4_XY,Channel4_Onset,Channel4_Zones,Parameter_1,Parameter_2,Parameter_3,Channel1_Parameter_1,Channel1_Parameter_2,Channel1_Parameter_3,Channel2_Parameter_1,Channel2_Parameter_2,Channel2_Parameter_3,Channel3_Parameter_1,Channel3_Parameter_2,Channel3_Parameter_3,Channel4_Parameter_1,Channel4_Parameter_2,Channel4_Parameter_3,Note
+0,0.000,[],,[],[],,[],[],,[],[],,[],,,,,,,,,,,,,,,,
+1,40.000,[],,[],"[[10, 30], [20, 40]]",ON,"[[""L""], [""I""]]","[[5, 6]]",OFF,"[[""17L""]]",[],,[],,,,,,,,,,,,,,,,
+2,80.000,"[[100, 200]]",OFF,"[[""FACE""]]",[],,[],[],,[],[],,[],,,,,,,,,,,,,,,,
+3,120.000,[],,[],[],,[],[],,[],[],,[],,,,,,,,,,,,,,,,
+4,160.000,[],,[],[],,[],[],,[],[],,[],ON,,OFF,,,OFF,,,,,,,,ON,,
+5,200.000,[],,[],[],,[],"[[7, 8]]",,"[[""L"", ""I""]]",[],,[],,,,,,,,,,,,,,,,"chlapec ěšč, poznámka"
+6,240.000,[],,[],"[[50, 60]]",OFF,"[[""B""]]",[],,[],[],,[],,,,,,,,,,,,,,,,

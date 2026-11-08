@@ -46,7 +46,7 @@ def _app(events, save_result=True, special_zones_app=None):
         save_last_position=lambda: events.append("last_position"),
         _finalize_video_time=lambda: events.append("finalize_time"),
         _reset_zone_cache=lambda: events.append("reset_zone_cache"),
-        _render_diagram_dots=lambda: None,
+        _redraw_diagram=lambda: None,
         _set_note_entry_text=lambda text: events.append(("note_entry", text)),
         _refresh_jump_label=lambda: None,
         update_frame_counter=lambda: None,

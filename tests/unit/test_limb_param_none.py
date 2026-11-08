@@ -69,4 +69,4 @@ def test_M1_export_writes_empty_for_none_string(tmp_path):
 
     with out.open(newline="", encoding="utf-8") as fh:
         row = next(csv.DictReader(fh))
-    assert row["LH_Parameter_1"] == ""
+    assert row["Channel2_Parameter_1"] == ""

@@ -8,9 +8,13 @@ from adapters.zone_masks import editable_zone_names
 
 
 def validate_coding_setup(setup):
-    unknown = set(setup.zone_labels) - set(editable_zone_names(setup.template))
+    allowed = set(editable_zone_names(setup.template, coding_setup=setup))
+    unknown = set(setup.zone_labels) - allowed
     if unknown:
         raise ValueError(f"Unknown zone aliases for {setup.template}: {', '.join(sorted(unknown))}")
+    unknown = {zone for zones in setup.channel_zones.values() for zone in zones} - allowed
+    if unknown:
+        raise ValueError(f"Unknown channel zones for {setup.template}: {', '.join(sorted(unknown))}")
     return setup
 
 

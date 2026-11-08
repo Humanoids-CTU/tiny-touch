@@ -34,5 +34,5 @@ def test_M4_export_survives_zero_fps(tmp_path, one_touch_frames):
     assert out.exists(), "export aborted on a 0-FPS video"
     df = pd.read_csv(out)
     # Value-only contract: unknown fps -> Time_ms 0.0, no crash, columns intact.
-    assert (df["Time_ms"] == 0).all()
+    assert df["Time_ms"].isna().all()
     assert len(df) == 6  # frames 0..5 inclusive

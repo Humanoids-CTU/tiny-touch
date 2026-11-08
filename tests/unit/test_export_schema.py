@@ -19,16 +19,15 @@ from adapters.export_writer import export_from_unified
 
 TOUCH_EXPORT_COLUMNS = [
     "Frame", "Time_ms",
-    "LH_X", "LH_Y", "LH_Onset", "LH_Zones",
-    "LL_X", "LL_Y", "LL_Onset", "LL_Zones",
-    "RH_X", "RH_Y", "RH_Onset", "RH_Zones",
-    "RL_X", "RL_Y", "RL_Onset", "RL_Zones",
+    "Channel1_XY", "Channel1_Onset", "Channel1_Zones",
+    "Channel2_XY", "Channel2_Onset", "Channel2_Zones",
+    "Channel3_XY", "Channel3_Onset", "Channel3_Zones",
+    "Channel4_XY", "Channel4_Onset", "Channel4_Zones",
     "Parameter_1", "Parameter_2", "Parameter_3",
-    "LH_Parameter_1", "LH_Parameter_2", "LH_Parameter_3",
-    "LL_Parameter_1", "LL_Parameter_2", "LL_Parameter_3",
-    "RH_Parameter_1", "RH_Parameter_2", "RH_Parameter_3",
-    "RL_Parameter_1", "RL_Parameter_2", "RL_Parameter_3",
-    "Note",
+    "Channel1_Parameter_1", "Channel1_Parameter_2", "Channel1_Parameter_3",
+    "Channel2_Parameter_1", "Channel2_Parameter_2", "Channel2_Parameter_3",
+    "Channel3_Parameter_1", "Channel3_Parameter_2", "Channel3_Parameter_3",
+    "Channel4_Parameter_1", "Channel4_Parameter_2", "Channel4_Parameter_3", "Note",
 ]
 
 

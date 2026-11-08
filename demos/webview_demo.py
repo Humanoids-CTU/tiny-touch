@@ -90,10 +90,13 @@ class VideoApi:
 
 def main():
     api = VideoApi()
+    html = Path(__file__).with_name("webview_demo.html").read_text(encoding="utf-8")
+    diagram = Path(__file__).resolve().parents[1] / "src/resources/icons/diagram0.png"
+    html = html.replace("../src/resources/icons/diagram0.png", "data:image/png;base64," + base64.b64encode(diagram.read_bytes()).decode("ascii"))
     api._window = webview.create_window(
         "TinyTouch · Web UI experiment",
-        html=Path(__file__).with_name("webview_demo.html").read_text(encoding="utf-8"),
-        js_api=api, width=1180, height=820, min_size=(800, 620), background_color="#11151d",
+        html=html,
+        js_api=api, width=1440, height=940, min_size=(960, 760), background_color="#f3f5f8",
     )
     try:
         webview.start()

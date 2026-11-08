@@ -6,10 +6,17 @@ import pytest
 
 from adapters.coding_configs import CodingConfigStore
 from adapters.sqlite_repo import SqliteRepository
-from domain.coding_setup import CodingSetup, default_coding_setup
+from domain.coding_setup import CodingSetup, channel_labels_following_zones, default_coding_setup
 from domain.templates import TemplateState
 from domain.zone_display import ZoneDisplaySettings
 from service_layer.coding_setup_service import adopt_legacy_coding_setup, inherit_coding_setup
+
+
+def test_channel_names_are_independent_of_zone_names():
+    setup = default_coding_setup("general")
+    assert channel_labels_following_zones(setup, {"9": "Mother", "10": "Toy"}) == dict(setup.channel_labels)
+    renamed = replace(setup, channel_labels={**setup.channel_labels, "RH": "Parent"})
+    assert channel_labels_following_zones(renamed, {"9": "Ball"})["RH"] == "Parent"
 
 
 @pytest.fixture
@@ -44,7 +51,7 @@ def test_portable_roundtrip_preserves_complete_setup(template):
 
 def test_incomplete_or_future_configs_fail():
     raw = default_coding_setup().to_dict()
-    raw["schema_version"] = 2
+    raw["schema_version"] = 3
     with pytest.raises(ValueError):
         CodingSetup.from_dict(raw)
     with pytest.raises(ValueError):

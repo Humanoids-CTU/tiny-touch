@@ -30,6 +30,7 @@ serialized by any backend.
 """
 import copy
 import csv
+import pytest
 
 from adapters.export_writer import export_from_unified
 from adapters.sqlite_repo import SqliteRepository
@@ -139,8 +140,19 @@ def test_full_lifecycle_state_db_roundtrip_and_export(tmp_path):
     # The repo -> exporter seam, which is the one this file exists to guard.
     # (The export BYTES are pinned by tests/unit/test_export_golden_master.py;
     # here we only assert the seam produces a complete, well-formed table.)
+    # A zone bucket without a point must not be silently dropped or paired with
+    # invented coordinates by the new format. The working DB retains it.
+    with pytest.raises(ValueError, match="point and zone buckets must align"):
+        export_from_unified(
+            loaded_b, export, program_version=8.0, video_name="vid",
+            labeling_mode="Normal", frame_rate=25.0, special_zones_list=None,
+            total_frames=TOTAL_FRAMES,
+        )
+    assert loaded_b[7]["LL"]["Zones"] == [["GHOST"]]
+    exportable = copy.deepcopy(loaded_b)
+    exportable[7]["LL"]["Zones"] = []
     export_from_unified(
-        loaded_b, export, program_version=8.0, video_name="vid",
+        exportable, export, program_version=8.0, video_name="vid",
         labeling_mode="Normal", frame_rate=25.0, special_zones_list=None,
         total_frames=TOTAL_FRAMES,
     )
@@ -152,7 +164,7 @@ def test_full_lifecycle_state_db_roundtrip_and_export(tmp_path):
     # One row per frame 0..TOTAL_FRAMES, labeled or not.
     assert [int(r["Frame"]) for r in rows] == list(range(TOTAL_FRAMES + 1))
     # The labeled frames carried their clicks and notes into the table.
-    assert rows[2]["LH_X"] and rows[2]["LH_Y"]
+    assert rows[2]["Channel2_XY"] == "[[120, 80], [140, 95]]"
     assert rows[2]["Note"] == "začátek ěšč"
     assert rows[5]["Note"] == "opraveno"
     assert rows[3]["Note"] == ""

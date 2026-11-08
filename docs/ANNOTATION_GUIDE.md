@@ -276,21 +276,26 @@ to sort first.
 
 ---
 
-### Custom zone names
+### Zone labels
 
-Set zone names in the new-video setup wizard. This works for **Default**,
+Add zone labels in the new-video setup wizard. Zone IDs are fixed. This works for **Default**,
 **Alternate**, and **General**. Enter names beside the zone IDs: for example,
-General's `1` could become `Light on`. General's four footer boxes are zones too,
-`Channel1` through `Channel4`, so a touch *of* a channel can be recorded; name them
-here like any other zone. A name given to a channel zone is carried over as that
-channel's name in the next step, unless you type a different channel name there. Names can contain up to 40 characters on one
+General's `1` could become `Light on`. Its four bottom boxes are ordinary zones
+`9` through `12` in new setups (older projects keep `Channel1` through `Channel4`).
+Name them like any other zone. Channel names are configured separately in the
+next step. Channel-to-zone relationships are fixed by the template and shown
+read-only: General channels 1–4 correspond to zones 9–12. Selecting a channel
+highlights its corresponding region blue. Clicking
+any region still records a touch for the selected channel. Names can contain up
+to 40 characters on one
 line. Leave a name blank to use the original ID again. `LINE` and `NN` remain fixed.
 
 Enable **Show zone names on diagrams** in Settings to show names on the annotation
 diagram and in **Special Zones**. This visibility preference remains editable;
 the names themselves are frozen when preparation succeeds.
 
-Names are saved with each project. A new Reliability pass inherits the
+Labels are saved with each project. Hover shows the label, or the fixed ID if
+no label was supplied. The exported diagram shows both; CSV rows retain IDs. A new Reliability pass inherits the
 original pass's coding setup. CSV zone IDs and mask
 files stay unchanged; the export metadata's **Coding Setup.zone_labels** maps IDs to custom names.
 
@@ -384,7 +389,7 @@ Practical rules:
 
 Saving also writes `<video>_diagram.png` into the export folder. Share it with the
 CSV and metadata JSON. The image shows CSV zone IDs on the diagram and a burned-in
-legend of the saved zone names, so a reader can locate each exported zone.
+saved names on the diagram, with channel and parameter settings beside it.
 The metadata stores labels once under `Coding Setup`; older exports are archived
 on their first save with this format. Existing files update on the next Save.
 
@@ -408,7 +413,7 @@ Reports use names from the exported metadata. Renamed zones appear as **Name (ID
 in heatmaps and trajectory hovers, keeping zones distinct even if they share a name.
 General uses channel names in titles, legends, and tables. Its diagram footer highlights
 the corresponding channel in both the app and each report trajectory panel. Clicking a
-footer box records a touch of that channel (zone `Channel1`–`Channel4`) for the channel
+footer box records a touch of that channel (zones `9`–`12` in new setups) for the channel
 selected in the radio buttons; it does not switch channels.
 Older exports without custom names use the original IDs and template defaults.
 The two analysis CSV files retain their original headers and channel IDs.

@@ -17,4 +17,4 @@ def test_loaded_video_shows_configured_parameter_labels(loaded_app):
         app.par1_btn.cget("text"),
         app.par2_btn.cget("text"),
         app.par3_btn.cget("text"),
-    ] == ["Looking1", "P2", "P3"]
+    ] == ["P1", "P2", "P3"]

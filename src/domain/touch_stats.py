@@ -434,6 +434,8 @@ def _row_clicks(rec, limb, has_xy: bool):
 
     xs = parse_xy_list(rec.get(f"{limb}_X", ""))
     ys = parse_xy_list(rec.get(f"{limb}_Y", ""))
+    if len(xs) != len(ys):
+        raise ExportSchemaError(f"{limb}: X/Y point lists must align")
     clicks = []
     for idx, (x, y) in enumerate(zip(xs, ys)):
         bucket = buckets[idx] if idx < len(buckets) else []

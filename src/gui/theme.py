@@ -12,6 +12,8 @@ DIAGRAM_BG = "#ffffff"
 # Surfaces / text.
 SURFACE = "#f8f9fa"
 SURFACE_ALT = "#eef0f2"
+# Top control bar; matches the white ttk widgets it holds in light mode.
+TOOLBAR_BG = "#ffffff"
 VIDEO_BG = "#ffffff"
 BORDER = "#ced4da"
 TEXT = "#212529"
@@ -60,7 +62,7 @@ TOUCH_END = TL_OFFSET_MARK
 # Diagram dots.
 DOT_ONSET = "#21a453"
 DOT_OFFSET = "#e2483d"
-SPECIAL_ZONE_DOT = DOT_OFFSET
+SPECIAL_ZONE_DOT = DOT_ONSET
 
 # Keep the existing role names for canvas painters. TinyTouch owns one Tk
 # interpreter; selecting a palette updates the roles before any widget repaints.
@@ -70,7 +72,7 @@ LIGHT_PALETTE = {
 }
 DARK_PALETTE = {
     **LIGHT_PALETTE,
-    "SURFACE": "#24282f", "SURFACE_ALT": "#2c313a",
+    "SURFACE": "#24282f", "SURFACE_ALT": "#2c313a", "TOOLBAR_BG": "#24282f",
     "VIDEO_BG": "#191d23", "BORDER": "#454d5a",
     "TEXT": "#e4e8ef", "TEXT_MUTED": "#a6b0bf",
     "DISABLED_BG": "#2c313a", "DISABLED_FG": "#a6b0bf",

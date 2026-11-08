@@ -10,7 +10,14 @@ This opens a separate native desktop window containing a local HTML/CSS/JavaScri
 page. The existing TinyTouch launcher, dependencies, annotation code and research
 projects are untouched. The demo reads videos only; it never creates a project.
 Open a video, play/pause with Space, step with the left/right arrows, or seek using
-the slider. The UI counts frames from 1; Python decoder indices start at 0.
+the slider. Double-arrow buttons jump ten frames; Stop pauses at the displayed
+frame. The UI counts frames from 1; Python decoder indices start at 0.
+
+The light layout follows the current Tkinter workspace: application tools and
+navigation above the video, two timeline tracks below it, and the actual TinyTouch
+body diagram, channel selector, parameters and notes in the right column. Settings,
+annotation, analysis and saving controls are disabled visual placeholders. The
+timeline tracks are empty placeholders; the separate seek slider works.
 
 Python/OpenCV decodes individual indexed frames and sends reduced-width JPEG
 previews through pywebview's Python bridge. Sequential playback avoids seeking;

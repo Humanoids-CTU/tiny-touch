@@ -140,18 +140,17 @@ def test_annotate_save_export_round_trip(loaded_app, workspace):
     zones_cell = json.dumps([[ZONE_I_NAME]])
     for frame, onset in ((ONSET_FRAME, "ON"), (OFFSET_FRAME, "OFF")):
         row = _export_row(paths.export_csv, frame)
-        assert row[f"{LIMB}_Onset"] == onset
-        assert row[f"{LIMB}_X"] == str(expected_x)
-        assert row[f"{LIMB}_Y"] == str(expected_y)
-        assert row[f"{LIMB}_Zones"] == zones_cell
+        assert row["Channel2_Onset"] == onset
+        assert json.loads(row["Channel2_XY"]) == [[expected_x, expected_y]]
+        assert row["Channel2_Zones"] == zones_cell
         # No other limb may have picked the click up.
-        for other in ("LL", "RH", "RL"):
+        for other in ("Channel4", "Channel1", "Channel3"):
             assert row[f"{other}_Onset"] == ""
             assert row[f"{other}_Zones"] == "[]"
 
     # One row per frame, 0..total_frames, exactly as the legacy schema demands.
     untouched = _export_row(paths.export_csv, 0)
-    assert untouched[f"{LIMB}_Onset"] == "" and untouched[f"{LIMB}_Zones"] == "[]"
+    assert untouched["Channel2_Onset"] == "" and untouched["Channel2_Zones"] == "[]"
     with open(paths.export_csv, "r", encoding="utf-8", newline="") as handle:
         assert len(list(csv.DictReader(handle))) == app.video.total_frames + 1
 
@@ -165,10 +164,11 @@ def test_annotate_save_export_round_trip(loaded_app, workspace):
     # --- close ---------------------------------------------------------------
     # `on_close` saves again, checkpoints the labeling clock, closes the DB and
     # cancels its repeating timers. The buffering thread may legitimately have an
-    # `after(0, ...)` in flight, so assert on the app's OWN repeating timer.
+    # `after(0, ...)` in flight, so assert on the app's OWN repeating timers.
     still_scheduled = close(app)
-    leaked = [entry for entry in still_scheduled if "periodic_print_dot" in entry[1]]
-    assert leaked == [], f"the diagram refresh timer outlived the root: {leaked}"
+    own = ("_display_pump", "_play_tick")
+    leaked = [entry for entry in still_scheduled if any(name in entry[1] for name in own)]
+    assert leaked == [], f"a repeating app timer outlived the root: {leaked}"
     assert app.state_repo is None, "the state DB was not closed on exit"
     assert _read_only_rows(
         paths.state_db, "SELECT value FROM meta WHERE key = 'last_frame'"

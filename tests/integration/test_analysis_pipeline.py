@@ -467,7 +467,9 @@ def test_alternate_metadata_selects_alternate_diagrams_and_zone_axis(tmp_path):
     paths = write_project(tmp_path, cat3_frames())
     with open(paths.export_metadata, encoding="utf-8") as stream:
         metadata = json.load(stream)
-    metadata["Coding Setup"]["template"] = "alternate"
+    from domain.coding_setup import default_coding_setup
+    setup = default_coding_setup("alternate")
+    metadata["Coding Setup"] = setup.to_dict()
     with open(paths.export_metadata, "w", encoding="utf-8") as stream:
         json.dump(metadata, stream)
     result = analysis_service.run_analysis(paths, limbs=("RH",))
@@ -478,7 +480,10 @@ def test_alternate_metadata_selects_alternate_diagrams_and_zone_axis(tmp_path):
     from adapters.zone_masks import list_zone_names
     assert set(list_zone_names("alternate")).issubset(json.loads(ticks.group(1)))
     trajectory = open(os.path.join(result.output_folder, "touch_trajectory.html"), encoding="utf-8").read()
-    with open(plotting.limb_image_paths("alternate")[2], "rb") as stream:
-        image_data = base64.b64encode(stream.read()).decode()
+    from io import BytesIO
+    from adapters.channel_diagram import render_channel_diagram
+    stream = BytesIO()
+    render_channel_diagram(setup, "RH").save(stream, format="PNG")
+    image_data = base64.b64encode(stream.getvalue()).decode()
     # Plotly escapes slash characters in embedded JSON strings.
     assert image_data in trajectory.replace("\\u002f", "/")

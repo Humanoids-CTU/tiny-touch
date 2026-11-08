@@ -268,8 +268,9 @@ ambiguous same-name sources must be rejected rather than silently reusing frames
 `domain.coding_setup.CodingSetup` is the immutable coding definition. Its portable
 JSON representation uses `Channel1` through `Channel4`; working-state adapters
 retain the established `RH`, `LH`, `RL`, `LL` keys in that order. This avoids
-reinterpreting existing annotation rows. Diagram geometry and zone IDs remain
-unchanged. New selectors use Channel 1–4 with user-supplied labels.
+reinterpreting existing annotation rows. Diagram geometry remains unchanged;
+General uses numbered bottom zones for new setups and preserves historical IDs
+through the saved zone_layout discriminator. New selectors use Channel 1–4 with user-supplied labels.
 
 `adapters.coding_configs.CodingConfigStore` reads and writes named JSON files in
 `config/` beside the application's `config.json`. The GUI supplies this directory,
@@ -300,14 +301,20 @@ the active project's template. Switching a draft template clears its mask cache.
 General uses eight square zones (`1`-`8`). Portable channel order is Channel1 (`RH`),
 Channel2 (`LH`), Channel3 (`RL`), Channel4 (`LL`), independently of historical CSV
 column order. New exports use these generic channel identifiers for every diagram.
-The squares carry no printed IDs; enabling "Show zone names" in Settings draws the
-zone IDs or project zone names on them. The footer boxes 1-4 are zones of their own,
-`Channel1`-`Channel4` in portable order, so a channel can be the target of a touch the
-way a hand or leg can on the anatomical diagrams: a click on a box records a dot and
-that zone for the *selected* channel and never changes the selection (the radio
-buttons do that). `general_<key>.png` fills the selected channel's box. The box
-geometry lives in `domain.templates` (`general_footer_box`), shared by
-`generate_general_template.py`, which draws the boxes and writes their masks.
+New General setups use bottom zones `9`–`12`, mapped to Channel1–4 by default.
+Historical snapshots keep the old bottom-zone IDs `Channel1`–`Channel4` using
+`zone_layout="legacy"`. Setup-aware mask adapters translate IDs without changing
+pixel geometry or existing annotations. Coding setup schema 2 stores explicit
+`channel_zones` independently of all display names; schema 1 is still readable.
+The setup wizard displays template-fixed assignments read-only and applies those
+defaults when importing a preset. Existing prepared snapshots retain their recorded
+assignments. Zone labels never rename annotation IDs; hover displays the label,
+CSV preserves IDs, and the reference PNG displays both. Export metadata resolves
+all zone-label pairs once within Coding Setup.zone_labels.
+`adapters.channel_diagram` renders the selected channel's mapped regions from
+masks, shared by annotation and analysis. Clicking a region always annotates the
+selected channel; it never selects a channel. Default anatomical mappings are
+N/M/B/A and Alternate L/K/B/A, in portable channel order.
 
 The existing template-only lock is retained for historical projects and becomes
 locked when a full setup is prepared. Deleting annotations never unlocks it.
@@ -651,7 +658,7 @@ git push origin v9.0.0
 ### Labeled export diagram and compact metadata
 
 Metadata revision 2 retains one `Coding Setup` snapshot. `adapters.export_diagram`
-renders the selected template with CSV zone IDs and a saved-name legend to
+renders the selected template with zone IDs/names and a settings sidebar to
 `<video>_diagram.png` without Tk. `save_service` stages and publishes CSV, JSON, and
 PNG together, rolling back ordinary replacement failures. The JSON references
 the PNG by relative filename and SHA-256. CSV format remains version 2; analysis

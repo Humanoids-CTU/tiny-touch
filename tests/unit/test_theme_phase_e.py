@@ -73,18 +73,19 @@ def _timeline_app(canvas, video):
 def test_playhead_helper_creates_and_moves_two_pixel_stem_with_cap():
     canvas = RecordingCanvas()
 
-    item_ids = LabelingApp._update_timeline_playhead(canvas, None, 50, 1, 28)
+    item_id = LabelingApp._update_timeline_playhead(canvas, None, 50, 1, 28)
 
-    line = next(call for call in canvas.calls if call[0] == "line")
+    # One polygon: 8 px cap tapering into a 2 px stem that reaches the bottom.
+    assert not [call for call in canvas.calls if call[0] == "line"]
     cap = next(call for call in canvas.calls if call[0] == "polygon")
-    assert line[1] == (50, 8, 50, 28)
-    assert line[2] == {"fill": theme.PLAYHEAD, "width": 2}
-    assert cap[1] == (46, 1, 54, 1, 50, 8)
+    assert cap[1] == (46, 1, 54, 1, 51, 8, 51, 28, 49, 28, 49, 8)
+    assert cap[2] == {"fill": theme.PLAYHEAD, "outline": ""}
 
-    LabelingApp._update_timeline_playhead(canvas, item_ids, 75, 1, 28)
+    LabelingApp._update_timeline_playhead(canvas, item_id, 75.4, 1, 28)
     moved = [call for call in canvas.calls if call[0] == "coords"]
-    assert moved[-2][1][1:] == (75, 8, 75, 28)
-    assert moved[-1][1][1:] == (71, 1, 79, 1, 75, 8)
+    assert moved[-1][1][0] == item_id
+    # Fractional x snaps to a whole pixel so the edges stay crisp.
+    assert moved[-1][1][1:] == (71, 1, 79, 1, 76, 8, 76, 28, 74, 28, 74, 8)
 
 
 def test_scrub_timeline_insets_interval_fill_from_semantic_ticks():
@@ -128,6 +129,7 @@ def test_zoom_timeline_uses_borderless_cells_and_one_shared_grid():
         dataRL={},
         dataLL={},
         data={},
+        frames={},
         touch_to_next_zone=[False],
     )
     app = _timeline_app(canvas, video)
@@ -161,6 +163,7 @@ def test_zoom_timeline_marks_frames_past_video_end_as_unavailable():
         dataRL={},
         dataLL={},
         data={},
+        frames={},
         touch_to_next_zone=[False],
     )
     app = _timeline_app(canvas, video)

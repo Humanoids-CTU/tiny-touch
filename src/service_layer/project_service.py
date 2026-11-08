@@ -24,6 +24,7 @@ import os
 import shutil
 import time
 import logging
+import hashlib
 from dataclasses import dataclass
 from typing import Optional
 
@@ -106,13 +107,9 @@ def plan_video_copy(source_path: str, videos_dir: str = DEFAULT_VIDEOS_DIR):
         return dest_path, "in_place", False
 
     if os.path.exists(dest_path):
-        size_mismatch = False
-        try:
-            size_mismatch = os.path.getsize(source_path) != os.path.getsize(dest_path)
-        except Exception:
-            logger.warning("could not compare video sizes; using existing copy")
-        logger.info("video already exists in videos folder: %s", dest_path)
-        return dest_path, "existing", size_mismatch
+        if not files_identical(source_path, dest_path):
+            raise ValueError("A different video already uses this filename. Rename the new source before loading it.")
+        return dest_path, "existing", False
 
     return dest_path, "copy", False
 
@@ -270,3 +267,141 @@ def load_special_zone_points_from_repo(repo, display_scale: float,
     return rescale_special_zone_points(
         points, repo.special_zones_diagram_scale(), display_scale, default_scale
     )
+
+# === Coding setup/source provenance ==========================================
+class _ProjectSnapshot:
+    """Repository-shaped read-only snapshot; opening a library never migrates a DB."""
+    def __init__(self, path):
+        import sqlite3
+        from pathlib import Path
+        connection = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            self.meta = dict(connection.execute("SELECT key, value FROM meta"))
+        finally:
+            connection.close()
+
+    def get_meta(self, key, default=None):
+        return self.meta.get(key, default)
+
+    def load_template(self):
+        return TemplateState(self.get_meta("template"), self.get_meta("template_locked", "0") == "1")
+
+    def load_zone_display(self, template):
+        import json
+        from domain.zone_display import ZoneDisplaySettings
+        raw = self.get_meta(f"zone_display:{template}")
+        return ZoneDisplaySettings(**json.loads(raw)) if raw else ZoneDisplaySettings()
+
+    def load_coding_setup(self):
+        import json
+        from domain.coding_setup import CodingSetup
+        raw = self.get_meta("coding_setup")
+        return CodingSetup.from_dict(json.loads(raw)) if raw else None
+
+    def load_preparation_state(self):
+        return self.get_meta("preparation_state", "draft")
+
+
+def inspect_coding_setup(paths):
+    """Read an existing snapshot without changing any files on Cancel."""
+    import json
+    from domain.coding_setup import default_coding_setup
+    def read(candidate):
+        if not os.path.isfile(candidate.state_db):
+            return None, False
+        repo = _ProjectSnapshot(candidate.state_db)
+        setup = repo.load_coding_setup()
+        if setup:
+            return setup, repo.load_preparation_state() == "ready"
+        metadata = {}
+        if os.path.isfile(candidate.export_metadata):
+            with open(candidate.export_metadata, encoding="utf-8") as stream:
+                metadata = json.load(stream)
+        from service_layer.coding_setup_service import inspect_legacy_coding_setup
+        review = inspect_legacy_coding_setup(repo, metadata)
+        return review.setup, not review.needs_review
+    own, ready = read(paths)
+    if own:
+        if paths.is_reliability:
+            original, original_ready = read(paths.original)
+            if original is None or not original_ready:
+                raise ValueError("Prepare the original coding setup before opening Reliability.")
+            if original != own:
+                raise ValueError("Normal and Reliability coding setups conflict. Resolve their provenance before opening them.")
+        else:
+            twin = ProjectPaths.for_video(paths.video_name, reliability=True, base_dir=paths.base_dir)
+            other, _ = read(twin)
+            if other is not None and other != own:
+                raise ValueError("Normal and Reliability coding setups conflict. Resolve their provenance before opening them.")
+        return own, ready, False
+    if paths.is_reliability:
+        original, original_ready = read(paths.original)
+        if not original_ready:
+            raise ValueError("Review and prepare the original video's coding setup before Reliability.")
+        return original, False, True
+    return default_coding_setup(), False, False
+
+
+def validate_source_association(paths, source):
+    """Reject project-stem collisions even when source extensions differ."""
+    from pathlib import Path
+    from adapters.project_catalog import SOURCE_META
+    source_hash = None
+    candidates = (paths, paths.original) if paths.is_reliability else (paths,)
+    for candidate in candidates:
+        if not os.path.isfile(candidate.state_db):
+            continue
+        snapshot = _ProjectSnapshot(candidate.state_db)
+        associated = snapshot.get_meta(SOURCE_META)
+        fingerprint = snapshot.get_meta("source_video_sha256")
+        if fingerprint:
+            source_hash = source_hash or source_fingerprint(source)
+            if fingerprint != source_hash:
+                raise ValueError("The source video content changed after preparation. Use the original source or a fresh project name.")
+            # Content identity survives moving the installation or its videos.
+            # A missing historical absolute path cannot override a verified hash.
+            continue
+        if associated and Path(associated).resolve() != Path(source).resolve():
+            if Path(associated).name != Path(source).name:
+                raise ValueError("A different source filename already owns this project name. Rename the new video.")
+            if not Path(associated).is_file() or not files_identical(associated, source):
+                raise ValueError("The source does not match the video associated with this project.")
+    matches = [p for p in Path(DEFAULT_VIDEOS_DIR).glob("*") if p.is_file() and p.stem == paths.original.video_name]
+    if any(p.name != Path(source).name for p in matches):
+        raise ValueError("A different video extension already uses this project name. Rename the new video.")
+
+
+def files_identical(first, second):
+    if os.path.getsize(first) != os.path.getsize(second):
+        return False
+    def digest(path):
+        result = hashlib.sha256()
+        with open(path, "rb") as stream:
+            for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+                result.update(chunk)
+        return result.digest()
+    return digest(first) == digest(second)
+
+
+def coding_setup_warning(paths):
+    """Explain exactly which legacy labels must be reviewed, without writing."""
+    import json
+    from service_layer.coding_setup_service import inspect_legacy_coding_setup
+    if not os.path.isfile(paths.state_db):
+        return ""
+    repo = _ProjectSnapshot(paths.state_db)
+    if repo.load_coding_setup():
+        return "Video preparation is incomplete. Review the saved setup before retrying."
+    metadata = {}
+    if os.path.isfile(paths.export_metadata):
+        with open(paths.export_metadata, encoding="utf-8") as stream:
+            metadata = json.load(stream)
+    return inspect_legacy_coding_setup(repo, metadata).warning
+
+
+def source_fingerprint(path):
+    result = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            result.update(chunk)
+    return result.hexdigest()

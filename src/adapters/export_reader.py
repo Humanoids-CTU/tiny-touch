@@ -45,7 +45,7 @@ def read_export_df(export_path: str) -> pd.DataFrame:
         df = pd.read_csv(export_path)
         if "Frame" in df.columns:
             logger.debug("read export CSV %s (%d rows, current layout)", export_path, len(df))
-            return df
+            return normalize_export_df(df)
         last_exc = ValueError("required 'Frame' column is missing")
         logger.warning("current export CSV parse failed for %s: %s", export_path, last_exc)
     except OSError as exc:
@@ -62,7 +62,7 @@ def read_export_df(export_path: str) -> pd.DataFrame:
             logger.debug(
                 "read export CSV %s (%d rows, legacy preamble layout)", export_path, len(df)
             )
-            return df
+            return normalize_export_df(df)
         last_exc = ValueError("required 'Frame' column is missing after legacy header")
         logger.warning("legacy export CSV parse failed for %s: %s", export_path, last_exc)
     except OSError as exc:
@@ -75,3 +75,39 @@ def read_export_df(export_path: str) -> pd.DataFrame:
     raise ExportReadError(
         f"Could not read export CSV {export_path}; current and legacy formats failed"
     ) from last_exc
+
+
+def normalize_export_df(df):
+    """Adapt v2 public channel columns to the private calculation vocabulary."""
+    import json
+    import math
+    from domain.coding_setup import PORTABLE_CHANNELS
+    if not any(column.startswith('Channel') for column in df.columns):
+        return df
+    result = df.copy()
+    for channel,key in PORTABLE_CHANNELS.items():
+        required = [f'{channel}_{suffix}' for suffix in ('XY','Onset','Zones')]
+        missing = [column for column in required if column not in df.columns]
+        if missing:
+            raise ExportReadError('Missing v2 export columns: ' + ', '.join(missing))
+        xs, ys = [], []
+        for index,row in df.iterrows():
+            try:
+                points = json.loads(row[f'{channel}_XY'])
+                zones = json.loads(row[f'{channel}_Zones'])
+                if not isinstance(points,list) or not isinstance(zones,list) or len(points) != len(zones):
+                    raise ValueError('point and zone buckets must align')
+                if any(not isinstance(p,list) or len(p)!=2 or any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in p) for p in points):
+                    raise ValueError('XY must contain finite numeric pairs')
+                if any(not isinstance(z,list) or any(not isinstance(v,str) for v in z) for z in zones):
+                    raise ValueError('Zones must contain lists of zone IDs')
+            except (ValueError, TypeError) as exc:
+                raise ExportReadError(f'Frame {index} {channel}: invalid aligned annotations: {exc}') from exc
+            xs.append(','.join(str(p[0]) for p in points))
+            ys.append(','.join(str(p[1]) for p in points))
+        result[f'{key}_X'], result[f'{key}_Y'] = xs,ys
+        for suffix in ('Onset','Zones','Parameter_1','Parameter_2','Parameter_3'):
+            if f'{channel}_{suffix}' in df:
+                result[f'{key}_{suffix}'] = df[f'{channel}_{suffix}']
+    result.attrs['export_format_version'] = 2
+    return result

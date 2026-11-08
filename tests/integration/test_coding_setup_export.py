@@ -63,7 +63,7 @@ def test_prepared_video_exports_its_snapshot_after_shared_config_changes(tmp_pat
     assert not any(key.startswith(("RH_", "LH_", "RL_", "LL_")) for key in row)
     with open(paths.export_metadata, encoding="utf-8") as stream:
         metadata = json.load(stream)
-    assert metadata["Coding Setup"] == original.to_dict()
+    assert type(original).from_dict(metadata["Coding Setup"]) == original
     assert metadata["Coding Setup"]["parameter_labels"]["Par1"] == "Looking"
     assert metadata["Coding Setup"]["channel_labels"]["Channel1"] == "Observer A"
     restored = read_export_df(paths.export_csv)

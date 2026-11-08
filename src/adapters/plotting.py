@@ -34,6 +34,7 @@ master page never links a file that was not written.
 import base64
 import logging
 import math
+from io import BytesIO
 from html import escape
 import os
 from typing import Dict, Sequence, Tuple
@@ -202,8 +203,8 @@ def write_transition_heatmap(transition_df: pd.DataFrame,
     fig.update_xaxes(tickangle=-90, **ticks)
     fig.update_yaxes(**ticks)
     return _write_figure(
-        fig, output_folder, heatmap_file(limb),
-        title=f"Transition heatmap — {labels.channel(limb)} ({limb})",
+        fig, output_folder, heatmap_file(labels.channel_id(limb)),
+        title=f"Transition heatmap — {labels.channel(limb)} ({labels.channel_id(limb)})",
         group=GROUP_TRANSITIONS,
         half_width=True,
         config=_STATIC_FIGURE_CONFIG,
@@ -234,7 +235,7 @@ def _hover_text(point, episode, labels: ReportLabels = ReportLabels()) -> str:
     zone_text = ", ".join(escape(labels.zone(zone)) for zone in point.zones) if point.zones else _MISSING
     state = "OPEN (no offset)" if not episode.closed else (point.onset or "-")
     return (
-        f"{escape(get_template(labels.template).channel_noun)}: {escape(labels.channel(episode.limb))}<br>"
+        f"{escape(labels.channel_noun)}: {escape(labels.channel(episode.limb))}<br>"
         f"Frame: {point.frame}<br>"
         f"Point: {point.click_index}/{point.clicks_in_frame}<br>"
         f"X: {point.x}<br>Y: {point.y}<br>"
@@ -302,11 +303,19 @@ def write_trajectory_plot(episodes_by_limb: Dict[str, Sequence[Episode]],
         row, col = divmod(i, cols)
         row, col = row + 1, col + 1
 
-        with Image.open(image_by_limb[limb]) as img:
+        if labels.coding_setup is not None:
+            from adapters.channel_diagram import render_channel_diagram
+            img = render_channel_diagram(labels.coding_setup, limb)
             img_width, img_height = img.size
+            image_file = BytesIO()
+            img.save(image_file, format="PNG")
+            encoded_image = base64.b64encode(image_file.getvalue()).decode()
+        else:
+            with Image.open(image_by_limb[limb]) as img:
+                img_width, img_height = img.size
+            with open(image_by_limb[limb], "rb") as image_file:
+                encoded_image = base64.b64encode(image_file.read()).decode()
         max_img_height = max(max_img_height, img_height)
-        with open(image_by_limb[limb], "rb") as image_file:
-            encoded_image = base64.b64encode(image_file.read()).decode()
 
         for n, episode in enumerate(episodes_by_limb.get(limb, ()), start=1):
             suffix = "" if episode.closed else " (open)"
@@ -355,7 +364,7 @@ def write_trajectory_plot(episodes_by_limb: Dict[str, Sequence[Episode]],
     )
     return _write_figure(
         fig, output_folder, TRAJECTORY_FILE,
-        title=f"Touch trajectories over the {definition.channel_noun.lower()} diagrams",
+        title=f"Touch trajectories over the {labels.channel_noun.lower()} diagrams",
         group=GROUP_TRAJECTORY,
     )
 
@@ -364,7 +373,7 @@ def write_trajectory_plot(episodes_by_limb: Dict[str, Sequence[Episode]],
 
 def write_analysis_tables(stats: Sequence[LimbStats],
                           fps,
-                          output_folder: str) -> Tuple[str, str]:
+                          output_folder: str, *, labels: ReportLabels = ReportLabels()) -> Tuple[str, str]:
     """Write both per-limb CSV tables and return their paths (frames, seconds).
 
     Column names are frozen (external tooling reads these CSVs). The only
@@ -373,10 +382,10 @@ def write_analysis_tables(stats: Sequence[LimbStats],
     When `fps` is unusable, every seconds column is empty rather than 0 so a
     reader cannot mistake "unknown" for "zero".
     """
-    limbs = [s.limb for s in stats]
+    limbs = [labels.channel_id(s.limb) for s in stats]
     df_frames = pd.DataFrame(
         {
-            "Limb": limbs,
+            ("Channel" if labels.export_format_version >= 2 else "Limb"): limbs,
             "Total Touches": [s.total_touches for s in stats],
             "Open (Unterminated) Touches": [s.open_touches for s in stats],
             "Touch Durations [Frames]": [list(s.durations_frames) for s in stats],
@@ -399,7 +408,7 @@ def write_analysis_tables(stats: Sequence[LimbStats],
 
     df_seconds = pd.DataFrame(
         {
-            "Limb": limbs,
+            ("Channel" if labels.export_format_version >= 2 else "Limb"): limbs,
             "Total Touches": [s.total_touches for s in stats],
             "Open (Unterminated) Touches": [s.open_touches for s in stats],
             "Touch Durations [Seconds]": [
@@ -445,7 +454,7 @@ def write_summary_table(stats: Sequence[LimbStats],
     """
     stats = _display_stats(stats, labels)
     columns = {
-        get_template(labels.template).channel_noun: [escape(labels.channel(s.limb)) for s in stats],
+        labels.channel_noun: [escape(labels.channel(s.limb)) for s in stats],
         "Total Touches": [_fmt(s.total_touches, integer=True) for s in stats],
         "Open (Unterminated)": [_fmt(s.open_touches, integer=True) for s in stats],
         "Total Duration [Seconds]": [_fmt(s.total_duration_seconds) for s in stats],
@@ -505,7 +514,7 @@ def write_zone_table(stats: Sequence[LimbStats], output_folder: str, *,
     ]
     values = [list(column) for column in zip(*rows)] if rows else [[], [], [], []]
     figure = go.Figure(data=[go.Table(
-        header=dict(values=[get_template(labels.template).channel_noun, "Zone ID", "Zone", "Touches"],
+        header=dict(values=[labels.channel_noun, "Zone ID", "Zone", "Touches"],
                     fill_color=TABLE_HEADER_FILL, align="left"),
         cells=dict(values=values, fill_color=TABLE_CELL_FILL, align="left", height=26),
     )])

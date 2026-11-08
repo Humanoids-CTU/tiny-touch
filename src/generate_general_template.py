@@ -1,7 +1,23 @@
-"""Rebuild General's diagram and masks; run from the repository with uv run."""
+"""Rebuild General's diagram and masks; run from the repository with uv run.
+
+The squares carry no printed numbers: zone IDs (and any project zone names)
+are drawn by the labeler when "Show zone names" is enabled in Settings.
+
+The footer boxes are zones too (`9`..`12`, one per channel in
+portable order), so a channel can be recorded as the target of a touch the
+way a hand or leg can on the anatomical diagrams. Each box carries a small
+index in its corner, leaving the centre free for the zone-name overlay, and
+`general_<key>.png` fills the box of the selected channel.
+"""
+import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from domain.coding_setup import PORTABLE_CHANNELS  # noqa: E402
+from domain.templates import general_footer_box  # noqa: E402
 
 
 ICONS_DIR = Path(__file__).resolve().parent / "resources" / "icons"
@@ -15,36 +31,46 @@ TOP_MARGIN = 24
 HORIZONTAL_GAP = 32
 VERTICAL_GAP = 16
 OUTLINE_WIDTH = 3
-LABEL_SIZE = 28
-CHANNEL_KEYS = ("RH", "LH", "RL", "LL")
+# Footer boxes: zone `9` belongs to the first box (channel RH), and so
+# on in portable order. Geometry lives in domain.templates.
+CHANNEL_ZONES = tuple((str(index), key) for index, key in enumerate(PORTABLE_CHANNELS.values(), 9))  # (zone, channel key)
 CHANNEL_HIGHLIGHT = "#1bafd0"
-FOOTER_Y = 610
-FOOTER_LEFT = 15
-FOOTER_BOX_WIDTH = 96
-FOOTER_BOX_HEIGHT = 70
-FOOTER_GAP = 12
-FOOTER_LABEL_SIZE = 32
+FOOTER_OUTLINE_WIDTH = 2
+FOOTER_INDEX_SIZE = 16
+FOOTER_INDEX_INSET = (6, 4)
 
 
 def with_channel_footer(diagram: Image.Image, selected: str | None) -> Image.Image:
+    """Fill the selected channel's box and print each box's index in its corner."""
     result = diagram.copy()
     draw = ImageDraw.Draw(result)
-    font = ImageFont.load_default(size=FOOTER_LABEL_SIZE)
-    for index, key in enumerate(CHANNEL_KEYS):
-        x = FOOTER_LEFT + index * (FOOTER_BOX_WIDTH + FOOTER_GAP)
-        draw.rectangle((x, FOOTER_Y, x + FOOTER_BOX_WIDTH - 1, FOOTER_Y + FOOTER_BOX_HEIGHT - 1),
+    font = ImageFont.load_default(size=FOOTER_INDEX_SIZE)
+    for index, (_zone, key) in enumerate(CHANNEL_ZONES):
+        left, top, right, bottom = general_footer_box(index)
+        draw.rectangle((left, top, right, bottom),
                        fill=CHANNEL_HIGHLIGHT if key == selected else "white",
-                       outline="black", width=2)
-        draw.text((x + (FOOTER_BOX_WIDTH - 1) / 2, FOOTER_Y + (FOOTER_BOX_HEIGHT - 1) / 2),
-                  str(index + 1), font=font, fill="black", anchor="mm")
+                       outline="black", width=FOOTER_OUTLINE_WIDTH)
+        draw.text((left + FOOTER_INDEX_INSET[0], top + FOOTER_INDEX_INSET[1]),
+                  str(index + 9), font=font, fill="black", anchor="la")
     return result
+
+
+def _zone_mask(bounds: tuple[int, int, int, int], outline_width: int) -> Image.Image:
+    """Black interior of `bounds` minus its outline; the outline stays LINE."""
+    left, top, right, bottom = bounds
+    mask = Image.new("L", CANVAS_SIZE, 255)
+    ImageDraw.Draw(mask).rectangle(
+        (left + outline_width, top + outline_width,
+         right - outline_width, bottom - outline_width),
+        fill=0,
+    )
+    return mask
 
 
 def main() -> None:
     MASKS_DIR.mkdir(parents=True, exist_ok=True)
     diagram = Image.new("RGB", CANVAS_SIZE, "white")
     draw = ImageDraw.Draw(diagram)
-    font = ImageFont.load_default(size=LABEL_SIZE)
     outside = Image.new("L", CANVAS_SIZE, 0)
     outside_draw = ImageDraw.Draw(outside)
 
@@ -55,28 +81,23 @@ def main() -> None:
             y = TOP_MARGIN + row * (SQUARE_SIZE + VERTICAL_GAP)
             bounds = (x, y, x + SQUARE_SIZE - 1, y + SQUARE_SIZE - 1)
             draw.rectangle(bounds, outline="black", width=OUTLINE_WIDTH)
-            draw.text(
-                (x + (SQUARE_SIZE - 1) / 2, y + (SQUARE_SIZE - 1) / 2),
-                zone, fill="black", font=font, anchor="mm",
-            )
 
-            # Black pixels are hits. Include the printed number in its zone;
-            # only the square's border is reserved for LINE.
-            mask = Image.new("L", CANVAS_SIZE, 255)
-            ImageDraw.Draw(mask).rectangle(
-                (x + OUTLINE_WIDTH, y + OUTLINE_WIDTH,
-                 x + SQUARE_SIZE - 1 - OUTLINE_WIDTH,
-                 y + SQUARE_SIZE - 1 - OUTLINE_WIDTH),
-                fill=0,
-            )
-            mask.save(MASKS_DIR / f"{zone}.png")
+            # Black pixels are hits. The square's interior is the zone; only
+            # its border is reserved for LINE.
+            _zone_mask(bounds, OUTLINE_WIDTH).save(MASKS_DIR / f"{zone}.png")
             outside_draw.rectangle(bounds, fill=255)
 
+    # The footer boxes are zones of their own, outlined in LINE like the squares.
+    for index, (zone, _key) in enumerate(CHANNEL_ZONES):
+        bounds = general_footer_box(index)
+        draw.rectangle(bounds, outline="black", width=FOOTER_OUTLINE_WIDTH)
+        _zone_mask(bounds, FOOTER_OUTLINE_WIDTH).save(MASKS_DIR / f"{zone}.png")
+        outside_draw.rectangle(bounds, fill=255)
+
     with_channel_footer(diagram, None).save(ICONS_DIR / "general.png")
-    for key in CHANNEL_KEYS:
+    for _zone, key in CHANNEL_ZONES:
         with_channel_footer(diagram, key).save(ICONS_DIR / f"general_{key}.png")
     # LINE doubles as the preview, matching the existing template convention.
-    # Zone interiors take precedence over the number glyphs during hit testing.
     diagram.convert("L").point(lambda pixel: 0 if pixel < 128 else 255).save(
         MASKS_DIR / "LINE.png"
     )

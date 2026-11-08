@@ -13,9 +13,38 @@ import sys
 from gui.resource_utils import asset_path
 from domain.templates import get_template
 from gui import theme
+from gui.diagram_resize import DiagramResizeGrip, clamp_scale
 
 # Width of the frame drawn around the diagram canvas so its edge is visible.
 DIAGRAM_BORDER_PX = 1
+# Screen height kept free of the diagram so its corner grip stays reachable:
+# window caption, taskbar and the panel padding above the canvas.
+DIAGRAM_SCREEN_MARGIN_PX = 160
+
+
+def max_diagram_scale(app):
+    """Largest display scale whose diagram still fits the screen height."""
+    _, base_h = get_template(app.template).native_size
+    try:
+        screen_h = int(app.winfo_screenheight())
+    except tk.TclError:
+        return clamp_scale(float("inf"))
+    return clamp_scale((screen_h - DIAGRAM_SCREEN_MARGIN_PX) / float(base_h))
+
+
+def draw_startup_diagram(app, scale):
+    """Show the template's neutral diagram (no video loaded) at `scale`."""
+    definition = get_template(app.template)
+    base_w, base_h = definition.native_size
+    w, h = int(base_w * scale), int(base_h * scale)
+    try:
+        img = Image.open(asset_path(definition.startup_diagram))
+        img = img.resize((w, h), Image.LANCZOS)
+        app.photo = ImageTk.PhotoImage(img)
+        app.diagram_canvas.create_image(0, 0, anchor="nw", image=app.photo)
+    except Exception:
+        # If the image is missing, keep empty canvas — controller will redraw on first radio click.
+        pass
 
 
 def build_ui(app):
@@ -51,7 +80,9 @@ def build_ui(app):
 
     # Diagram scale / dot size come from the AppConfig snapshot the app holds
     # (loaded once in LabelingApp.__init__) — the GUI never re-reads config.json.
-    scale = app.config.diagram_scale
+    # A configured scale too large for this screen is shown smaller (not saved)
+    # so the diagram's resize grip is on screen; dragging it stores the new value.
+    scale = clamp_scale(app.config.diagram_scale, max_diagram_scale(app))
     app.diagram_scale = scale
     dot_size = app.config.dot_size
     app.dot_size = dot_size
@@ -59,10 +90,10 @@ def build_ui(app):
     # === Containers ===
     app.video_frame = tk.Frame(app, bg=theme.VIDEO_BG, bd=0)
     app.timeline_frame = tk.Frame(app, bg=theme.SURFACE_ALT, height=50)
-    app.control_frame = tk.Frame(app, bg=theme.SURFACE, height=100)
+    app.control_frame = tk.Frame(app, bg=theme.TOOLBAR_BG, height=100)
     theme.bind_colors(app.video_frame, bg="VIDEO_BG")
     theme.bind_colors(app.timeline_frame, bg="SURFACE_ALT")
-    theme.bind_colors(app.control_frame, bg="SURFACE")
+    theme.bind_colors(app.control_frame, bg="TOOLBAR_BG")
     app.diagram_frame = ttk.Frame(app)
 
     # Match original grid positions exactly
@@ -312,14 +343,21 @@ def _build_diagram_panel(app, scale):
     app.diagram_canvas.pack(padx=DIAGRAM_BORDER_PX, pady=DIAGRAM_BORDER_PX)
     theme.bind_colors(app.diagram_canvas, bg="DIAGRAM_BG")
 
-    try:
-        img = Image.open(asset_path(definition.startup_diagram))
-        img = img.resize((w, h), Image.LANCZOS)
-        app.photo = ImageTk.PhotoImage(img)
-        app.diagram_canvas.create_image(0, 0, anchor="nw", image=app.photo)
-    except Exception:
-        # If the image is missing, keep empty canvas — controller will redraw on first radio click.
-        pass
+    draw_startup_diagram(app, scale)
+
+    # Drag the small grip beside the bottom-left corner to resize the diagram
+    # (aspect ratio kept). It sits in the gutter outside the diagram frame, so
+    # it hides nothing; the controller redraws and persists the scale
+    # (LabelingApp.commit_diagram_scale).
+    app.diagram_grip = DiagramResizeGrip(
+        app.diagram_frame,
+        app.diagram_border,
+        native_size=lambda: get_template(app.template).native_size,
+        get_scale=lambda: app.diagram_scale,
+        max_scale=lambda: max_diagram_scale(app),
+        on_preview=app.preview_diagram_scale,
+        on_commit=app.commit_diagram_scale,
+    )
 
     # Bind clicks on the diagram (these call back into the controller)
     app.diagram_canvas.bind("<Motion>", app.update_last_mouse_position)

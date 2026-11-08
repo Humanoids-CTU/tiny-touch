@@ -70,6 +70,6 @@ def test_shared_json_prefills_wizard_and_reopening_uses_frozen_copy(app, workspa
     assert app.coding_setup == setup
     save(app)
     metadata = json.loads(Path(workspace.project().export_metadata).read_text(encoding="utf-8"))
-    assert metadata["Coding Setup"] == setup.to_dict()
+    assert type(setup).from_dict(metadata["Coding Setup"]) == setup
     assert metadata["Coding Setup"]["channel_labels"]["Channel1"] == "Observer"
     assert not workspace.errors()

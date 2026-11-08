@@ -198,10 +198,10 @@ def test_general_channels_annotate_all_squares_and_restore_across_diagrams(app, 
     for index, key in enumerate(("RH", "LH", "RL", "LL"), start=1):
         select_radio(app, f"Channel {index}")
         assert app.option_var_1.get() == key
-        with Image.open(asset_path(f"icons/general_{key}.png")) as source:
-            expected = source.convert("RGB").resize(
-                (int(450 * scale), int(696 * scale)), Image.Resampling.LANCZOS,
-            )
+        from adapters.channel_diagram import render_channel_diagram
+        expected = render_channel_diagram(app.coding_setup, key).resize(
+            (int(450 * scale), int(696 * scale)), Image.Resampling.LANCZOS,
+        )
         rendered = ImageTk.getimage(app.photo).convert("RGB")
         assert ImageChops.difference(rendered, expected).getbbox() is None
         for row in range(4):

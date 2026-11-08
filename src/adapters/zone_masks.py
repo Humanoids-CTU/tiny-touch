@@ -28,7 +28,18 @@ def zones_dir(template: str = DEFAULT_TEMPLATE) -> str:
     return asset_path(get_template(template).masks_directory)
 
 
-def list_zone_names(template: str = DEFAULT_TEMPLATE) -> list:
+def _general_zone_names(names, coding_setup=None):
+    """Expose one footer vocabulary while retaining old project zone IDs."""
+    legacy = coding_setup is not None and coding_setup.zone_layout == "legacy"
+    footer = {f"Channel{i}": str(i + 8) for i in range(1, 5)}
+    result = {footer.get(name, name) for name in names}
+    if legacy:
+        inverse = {value: key for key, value in footer.items()}
+        result = {inverse.get(name, name) for name in result}
+    return result
+
+
+def list_zone_names(template: str = DEFAULT_TEMPLATE, coding_setup=None) -> list:
     """Zone NAMES for the active template, sorted for display.
 
     Directory scan (adding a PNG adds a zone — see ARCHITECTURE.md), so this is I/O
@@ -46,6 +57,8 @@ def list_zone_names(template: str = DEFAULT_TEMPLATE) -> list:
     except OSError as exc:
         logger.warning("could not list zone names in %r: %r", directory, exc)
         names = []
+    if template == "general":
+        names = list(_general_zone_names(names, coding_setup))
     if NO_ZONE not in names:
         names.append(NO_ZONE)
     logger.debug(
@@ -54,7 +67,7 @@ def list_zone_names(template: str = DEFAULT_TEMPLATE) -> list:
     return sorted(names, key=zone_sort_key)
 
 
-def load_zone_masks(directory):
+def load_zone_masks(directory, coding_setup=None):
     """Load every readable grayscale mask image in `directory`.
 
     Returns an ordered list of (zone_name, image) tuples — the zone name is
@@ -68,21 +81,28 @@ def load_zone_masks(directory):
     if not os.path.isdir(directory):
         logger.warning("Zones directory not found: %s", directory)
         return masks
-    for filename in sorted(os.listdir(directory)):
+    filenames = sorted(os.listdir(directory))
+    general = os.path.basename(os.path.normpath(directory)) == "zones_general"
+    obsolete = {f"Channel{i}.png" for i in range(1, 5) if f"{i + 8}.png" in filenames}
+    for filename in filenames:
+        if general and filename in obsolete:
+            continue
         fp = os.path.join(directory, filename)
         if os.path.isfile(fp) and fp.lower().endswith(('.png', '.jpg', '.jpeg')):
             image = cv2.imread(fp, cv2.IMREAD_GRAYSCALE)
             if image is None:
                 continue
             zone_name = filename.rsplit('.', 1)[0]
+            if general:
+                zone_name = next(iter(_general_zone_names([zone_name], coding_setup)))
             masks.append((zone_name, image))
     logger.debug("Loaded touch zone masks from %s: %d masks", directory, len(masks))
     return masks
 
 
-def editable_zone_names(template: str) -> list[str]:
+def editable_zone_names(template: str, coding_setup=None) -> list[str]:
     """Target names, including OUTSIDE; boundary/unassigned markers keep their IDs."""
-    return [name for name in list_zone_names(template) if name not in {LINE_ZONE, NO_ZONE}]
+    return [name for name in list_zone_names(template, coding_setup=coding_setup) if name not in {LINE_ZONE, NO_ZONE}]
 
 
 def zone_label_positions(masks) -> dict[str, tuple[int, int]]:

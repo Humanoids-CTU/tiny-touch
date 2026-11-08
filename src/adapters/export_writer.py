@@ -10,6 +10,7 @@ import pandas as pd
 
 from adapters.atomic_io import atomic_write
 from adapters.export_diagram import write_export_diagram
+from adapters.zone_masks import list_zone_names
 from domain.coding_setup import PORTABLE_CHANNELS, default_coding_setup
 from domain.templates import get_template, validate_template
 from domain.model import FrameBundle, _normalize_param_state, empty_bundle
@@ -38,6 +39,11 @@ def write_export_metadata(meta_path, program_version, video_name, labeling_mode,
     diagram = {'asset': definition.diagram, 'zone_masks': definition.masks_directory}
     if diagram_path is not None:
         diagram.update(write_export_diagram(diagram_path, setup))
+    setup_snapshot = setup.to_dict()
+    setup_snapshot['zone_labels'] = {
+        zone: setup.zone_labels.get(zone, zone)
+        for zone in list_zone_names(template, coding_setup=setup)
+    }
     meta = {
         'Export Format Version': EXPORT_FORMAT_VERSION,
         'Metadata Format Version': 2,
@@ -50,7 +56,7 @@ def write_export_metadata(meta_path, program_version, video_name, labeling_mode,
         'Coordinate Convention': {'origin': 'top-left', 'x_direction': 'right',
                                   'y_direction': 'down', 'unit': 'diagram pixel',
                                   'diagram_size': list(definition.native_size)},
-        'Coding Setup': setup.to_dict(),
+        'Coding Setup': setup_snapshot,
         'Diagram': diagram,
         'Special Zones': special_zones_list, 'Special Zones Note': special_zones_note,
     }

@@ -162,7 +162,7 @@ def resolve_report_labels(metadata_path: str, template=None) -> ReportLabels:
     if version >= 2:
         from domain.coding_setup import PORTABLE_CHANNELS
         channels = {PORTABLE_CHANNELS.get(key,key): value for key,value in channels.items()}
-    return ReportLabels(recorded, setup.zone_labels if setup else metadata.get("Zone Labels", {}), channels, version)
+    return ReportLabels(recorded, setup.zone_labels if setup else metadata.get("Zone Labels", {}), channels, version, setup)
 
 
 def run_analysis(paths: ProjectPaths,
@@ -216,7 +216,12 @@ def run_analysis(paths: ProjectPaths,
     # 3) COMPUTE everything first (see module docstring).
     stats: List[LimbStats] = []
     matrices: Dict[str, tuple] = {}
-    zones_default = list_zone_names(resolved_template)
+    zone_setup = labels.coding_setup
+    if zone_setup is None and resolved_template == "general":
+        from dataclasses import replace
+        from domain.coding_setup import default_coding_setup
+        zone_setup = replace(default_coding_setup("general"), zone_layout="legacy", channel_zones=None)
+    zones_default = list_zone_names(resolved_template, coding_setup=zone_setup)
     for limb in limbs:
         episodes = data.episodes.get(limb, [])
         limb_stats = summarize(episodes, fps=fps, total_frames=data.total_frames, limb=limb)
