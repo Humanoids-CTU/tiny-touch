@@ -142,13 +142,27 @@ def resolve_report_labels(metadata_path: str, template=None) -> ReportLabels:
         raise ValueError(f"Cannot read export metadata {metadata_path}: {exc}") from exc
     if not isinstance(metadata, dict):
         raise ValueError("Export metadata must contain a JSON object.")
-    recorded = validate_template(metadata.get("template"))
+    metadata_version = metadata.get("Metadata Format Version", 1)
+    if type(metadata_version) is not int or metadata_version not in (1, 2):
+        raise ValueError(f"Unsupported metadata format version: {metadata_version!r}")
+    setup = None
+    if metadata_version == 2:
+        from domain.coding_setup import CodingSetup
+        setup = CodingSetup.from_dict(metadata.get("Coding Setup"))
+    recorded = setup.template if setup else validate_template(metadata.get("template"))
     if template is not None:
         if recorded != validate_template(template):
             raise ValueError(
                 f"Export uses template {recorded}; the requested template is {template}."
             )
-    return ReportLabels(recorded, metadata.get("Zone Labels", {}), metadata.get("Channel Labels", {}))
+    channels = dict(setup.channel_labels) if setup else metadata.get("Channel Labels", {})
+    version = metadata.get("Export Format Version", 1)
+    if type(version) is not int or version not in (1, 2):
+        raise ValueError(f"Unsupported export format version: {version!r}")
+    if version >= 2:
+        from domain.coding_setup import PORTABLE_CHANNELS
+        channels = {PORTABLE_CHANNELS.get(key,key): value for key,value in channels.items()}
+    return ReportLabels(recorded, setup.zone_labels if setup else metadata.get("Zone Labels", {}), channels, version)
 
 
 def run_analysis(paths: ProjectPaths,
@@ -245,7 +259,7 @@ def run_analysis(paths: ProjectPaths,
         ))
 
     written: List[str] = [figure.path for figure in figures]
-    written.extend(plotting.write_analysis_tables(stats, fps, output_folder))
+    written.extend(plotting.write_analysis_tables(stats, fps, output_folder, labels=labels))
 
     fps_text = f"{fps:g} fps ({fps_source})" if fps is not None else "frame rate unknown"
     subtitle = f"{data.total_frames} frames · {fps_text} · template {resolved_template}"

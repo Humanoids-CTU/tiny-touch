@@ -173,15 +173,21 @@ Click **Special Zones** to open the dialog. It shows the whole-body diagram and 
 **Note** field. Use it to mark any project-wide set of body zones, for example zones
 covered by clothing.
 
-- **Left-click** places a dot on a zone.
-- **Middle-click** removes the nearest dot.
+- Moving the pointer lights the zone under it and names it, exactly as on the coding
+  diagram, so you can see which zone a dot will mark before you click.
+- **Left-click** places a green dot on a zone.
+- **Middle-click** on a dot removes it.
 - Type in **Note** what the marked zones mean (e.g. "covered by diaper and socks").
-- Closing the window stores the current dots and the note.
+- Closing the window stores the current dots and the note. The window stays in front of
+  the main window and blocks it until you close it, so it cannot get lost behind the app.
 
 The zones under the dots are resolved with the same masks used for touch coding. The
 resulting list is written to the export metadata as `Special Zones`, and the note as
-`Special Zones Note`. Do this once, before you start coding, so downstream analysis
+`Special Zones Note`. It is best done before you start coding, so downstream analysis
 knows, for example, which contacts were skin-to-skin and which were through clothing.
+You can reopen the window at any time, also after coding has started, to fix a mark
+or add a zone you noticed later: the existing dots and note come back, and closing
+the window saves the new state.
 
 ---
 
@@ -276,7 +282,8 @@ Set zone names in the new-video setup wizard. This works for **Default**,
 **Alternate**, and **General**. Enter names beside the zone IDs: for example,
 General's `1` could become `Light on`. General's four footer boxes are zones too,
 `Channel1` through `Channel4`, so a touch *of* a channel can be recorded; name them
-here like any other zone (the channels themselves are named in the next step). Names can contain up to 40 characters on one
+here like any other zone. A name given to a channel zone is carried over as that
+channel's name in the next step, unless you type a different channel name there. Names can contain up to 40 characters on one
 line. Leave a name blank to use the original ID again. `LINE` and `NN` remain fixed.
 
 Enable **Show zone names on diagrams** in Settings to show names on the annotation
@@ -285,7 +292,7 @@ the names themselves are frozen when preparation succeeds.
 
 Names are saved with each project. A new Reliability pass inherits the
 original pass's coding setup. CSV zone IDs and mask
-files stay unchanged; the export metadata's **Zone Labels** maps IDs to custom names.
+files stay unchanged; the export metadata's **Coding Setup.zone_labels** maps IDs to custom names.
 
 ## 8. Gaze and parameters
 
@@ -318,9 +325,12 @@ definitions. Each prepared video retains its own immutable copy, which is writte
 into export metadata. Global columns are `Parameter_1..3`; channel-specific columns
 are `Channel1_Parameter_1..3` through `Channel4_Parameter_1..3`.
 
-Settings also holds the display options: video downscale (higher values render smaller frames), diagram scale,
+Settings also holds the display options: video downscale (higher values render smaller frames),
 dot size, the fast-jump distance, and whether holding an arrow key starts playback
 after a 150 ms tap delay at the video's target frame rate. Changes apply on **Apply** or **Apply & Close**.
+The diagram size is not a Settings field: drag the grip in the diagram's bottom-left corner
+(the pointer turns into a resize arrow there). The proportions stay fixed, recorded coordinates
+are unaffected, and the chosen size is remembered for the next launch.
 
 Choose **Appearance: Light / Dark** to change the interface colors. Your choice is
 remembered after closing the app. The body diagrams keep their white background.
@@ -356,7 +366,7 @@ Click **Save** regularly. Saving:
 1. writes your annotations to the project's working database
    (`data/<video>/state/<video>.db`), and
 2. rewrites the published dataset,
-   `data/<video>/export/<video>_export.csv` plus `<video>_metadata.json`.
+   `data/<video>/export/<video>_export.csv` plus `<video>_metadata.json` and `<video>_diagram.png`.
 
 TinyTouch also saves automatically before loading another video and when you close the
 window. A progress dialog appears during the export; on a long video this takes a few
@@ -369,6 +379,14 @@ Practical rules:
   before switching.
 - The application keeps a labeling-time counter per video and reports it in the metadata as
   `Total Labeling Time (hours)`.
+
+### Export diagram reference
+
+Saving also writes `<video>_diagram.png` into the export folder. Share it with the
+CSV and metadata JSON. The image shows CSV zone IDs on the diagram and a burned-in
+legend of the saved zone names, so a reader can locate each exported zone.
+The metadata stores labels once under `Coding Setup`; older exports are archived
+on their first save with this format. Existing files update on the next Save.
 
 ---
 

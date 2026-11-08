@@ -68,6 +68,7 @@ tiny-touch/
 │   ├── gui/                      # Tkinter only
 │   │   ├── ui_components.py      # Layout, widgets, key/mouse bindings
 │   │   ├── diagram_highlight.py  # Hover highlight, zone tag and click flash on the diagram
+│   │   ├── diagram_resize.py     # Corner grip: drag to rescale the diagram (aspect kept)
 │   │   ├── theme.py              # Colors / fonts / widget styling
 │   │   ├── native_title_bar.py   # Windows title-bar colors; no-op on Linux
 │   │   ├── special_zones_app.py  # Special-zone selector + note dialog (Toplevel)
@@ -300,10 +301,13 @@ General uses eight square zones (`1`-`8`). Portable channel order is Channel1 (`
 Channel2 (`LH`), Channel3 (`RL`), Channel4 (`LL`), independently of historical CSV
 column order. New exports use these generic channel identifiers for every diagram.
 The squares carry no printed IDs; enabling "Show zone names" in Settings draws the
-zone IDs or project zone names on them. The footer boxes 1-4 are clickable:
-`ChannelDefinition.hit_box` holds each box in native pixels (shared with
-`generate_general_template.py`), and `on_diagram_click` selects that channel instead
-of recording a dot when a click lands on one.
+zone IDs or project zone names on them. The footer boxes 1-4 are zones of their own,
+`Channel1`-`Channel4` in portable order, so a channel can be the target of a touch the
+way a hand or leg can on the anatomical diagrams: a click on a box records a dot and
+that zone for the *selected* channel and never changes the selection (the radio
+buttons do that). `general_<key>.png` fills the selected channel's box. The box
+geometry lives in `domain.templates` (`general_footer_box`), shared by
+`generate_general_template.py`, which draws the boxes and writes their masks.
 
 The existing template-only lock is retained for historical projects and becomes
 locked when a full setup is prepared. Deleting annotations never unlocks it.
@@ -320,7 +324,7 @@ remain stable; names belong in metadata and presentation only.
 - **Select Frame**, between `<` and `>`, pauses playback and cancels queued wheel/arrow movement before opening a modal integer dialog. OK/Enter validates the range and jumps through `next_frame`; Cancel/Escape leaves the frame unchanged. Wheel navigation and queued playback advances are suppressed while the dialog is open. The frame counter is read-only; Notes is only for annotations.
 - Pick Channel 1–4 via radio buttons; each selector includes its configured name and the diagram re-renders with that channel's overlays.
 - **Left-click** on the diagram = touch-onset (green dot), **right-click** = touch-offset (red dot), **middle-click** or `d` = remove the dot nearest the pointer (within ~20 display px).
-- **Hover feedback** (`gui.diagram_highlight.DiagramHighlighter`, toggled by `diagram_hover_effects`): the zone under the pointer fades in with an amber tint, glow and outline, a tag next to the pointer names it (renamed zones as `Name (ID)`; General's footer boxes read `Select Channel n`), and a click flashes the zone in the dot's colour. The zone comes from `domain.touch.zone_label_map`, the per-pixel form of `zones_at`, so it is always the zone the click would record. The overlay is a canvas item of its own (`hover`, below the zone labels and dots), repainted on one `after` loop that exists only while a fade is in progress, so an idle or steadily hovered diagram costs nothing during playback. The dots-only repaint leaves it alone; a full repaint deletes it and the next motion recreates it.
+- **Hover feedback** (`gui.diagram_highlight.DiagramHighlighter`, toggled by `diagram_hover_effects`): the zone under the pointer fades in with an amber tint, glow and outline, a tag next to the pointer names it (renamed zones as `Name (ID)`), and a click flashes the zone in the dot's colour. The zone comes from `domain.touch.zone_label_map`, the per-pixel form of `zones_at`, so it is always the zone the click would record. The overlay is a canvas item of its own (`hover`, below the zone labels and dots), repainted on one `after` loop that exists only while a fade is in progress, so an idle or steadily hovered diagram costs nothing during playback. The dots-only repaint leaves it alone; a full repaint deletes it and the next motion recreates it. The Special Zones window (`gui.special_zones_app`) runs a second instance on its own canvas with the same masks, so its green dots land on the zone that was lit.
 - Zones under each click are auto-detected from per-zone PNG masks under [src/resources/icons/zones3/](src/resources/icons/zones3/) (or [src/resources/icons/zones3_new_template/](src/resources/icons/zones3_new_template/) when the project uses `alternate`). Both directories are loaded by directory scan (`adapters.zone_masks.load_zone_masks`), so *every* PNG in them is live -- adding a file adds a zone. Masks are black-on-white; a hit is pixel `== 0` and a miss yields the `NN` sentinel (`domain.touch.zones_at`). The masks OVERLAP on 1.4% / 2.2% of the diagram (almost all of it the `LINE` mask lying over the zones it separates), so overlaps resolve by **precedence, not filename order**: real anatomical zone > `BOX1..BOX6` > `OUTSIDE` > `LINE` > `NN`. `LINE` means "the click is exactly between two zones", so it is only recorded when nothing else claims the pixel; sorted filename order is just the tie-break inside one tier (in practice only box-vs-box borders). The real/catch-all split is one predicate, `domain.touch.is_catch_all_zone`, shared with `touch_stats.zone_sort_key`. A click that resolves to `NN` is logged with a `WARN` naming the frame, limb and coordinates.
 - Track infant gaze and up to 3 global + 3 per-channel parameters. Each button is a three-state toggle (`unset → ON → OFF → unset`, `domain.touch.cycle_param_state`); gaze can use global `Par1` by study convention. Button labels come from the frozen project coding setup and are included in export metadata.
 - Six "boxes" on the diagram act as catch-all zones (ground, prop, etc).
@@ -454,7 +458,7 @@ survive a Settings round-trip (`AppConfig.raw` keeps the full parsed dict). Keys
 
 | Key | Settings UI | Purpose |
 | --- | --- | --- |
-| `diagram_scale` | yes | Diagram render scale (1.0 = native). Display only — stored click coordinates are always at native scale. |
+| `diagram_scale` | no (corner grip) | Diagram render scale (1.0 = native), set by dragging the grip in the diagram's bottom-left corner (`gui.diagram_resize`, committed by `LabelingApp.commit_diagram_scale`). A value too tall for the screen is shown clamped until the next drag stores a new one. Display only — stored click coordinates are always at native scale. |
 | `appearance` | yes | `light` (default) or `dark`. Applied immediately and remembered across restarts; body diagrams stay white. |
 | `dot_size` | yes | Click-marker radius on the diagram. |
 | `minimal_touch_length` | no | Visualization threshold (ms) shown as the "Minimal Touch Length" readout, converted to frames. **Filters nothing**, in the app or in Analysis. |
@@ -562,7 +566,8 @@ exports retain `heatmap_<LIMB>.html`), `touch_trajectory.html`,
 touch counts with readable names and separate stable IDs.
 
 Analysis resolves `domain.report_labels.ReportLabels` from export metadata before
-creating the output directory. Optional `Zone Labels` and `Channel Labels` are validated;
+creating the output directory. New metadata validates its single `Coding Setup` snapshot;
+older metadata validates optional `Zone Labels` and `Channel Labels`;
 older exports fall back to zone IDs and template channel names. Labels affect only
 presentation: renamed zones display as `Name (ID)` so duplicate names remain distinct.
 Heatmap ticks and hover data, trajectory hovers, summary/zone tables, and histogram
@@ -642,3 +647,13 @@ README version badge, executable examples, and versioned documentation links tog
 git tag v9.0.0
 git push origin v9.0.0
 ```
+
+### Labeled export diagram and compact metadata
+
+Metadata revision 2 retains one `Coding Setup` snapshot. `adapters.export_diagram`
+renders the selected template with CSV zone IDs and a saved-name legend to
+`<video>_diagram.png` without Tk. `save_service` stages and publishes CSV, JSON, and
+PNG together, rolling back ordinary replacement failures. The JSON references
+the PNG by relative filename and SHA-256. CSV format remains version 2; analysis
+accepts both metadata revisions. Older export revisions are archived before
+replacement. See `docs/DATA_FORMAT.md` for field paths and coordinate conventions.

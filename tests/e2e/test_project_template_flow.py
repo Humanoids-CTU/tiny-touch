@@ -7,6 +7,8 @@ import tkinter as tk
 from pathlib import Path
 
 import pytest
+
+import labeling_app
 from PIL import Image, ImageChops, ImageTk
 
 from gui.resource_utils import asset_path
@@ -71,7 +73,7 @@ def test_special_zones_displays_selected_template_and_permanently_locks_it(
     app._special_zones_app.on_close()
     assert _metadata(paths)["template_locked"] == "1"
     save(app)
-    assert json.loads(Path(paths.export_metadata).read_text())["template"] == template
+    assert json.loads(Path(paths.export_metadata).read_text())["Coding Setup"]["template"] == template
 
     opposite = "Alternate" if choice == "Default" else "Default"
     load_video(app, workspace, workspace.video, template=opposite)
@@ -120,9 +122,9 @@ def test_reliability_inherits_template_and_locks_both_empty_projects(app, worksp
     save(app)
     metadata = Path(workspace.project("tiny_reliability").export_metadata)
     exported = json.loads(metadata.read_text())
-    assert exported["template"] == template
+    assert exported["Coding Setup"]["template"] == template
     if template == "general":
-        assert exported["Channel Labels"] == {
+        assert exported["Coding Setup"]["channel_labels"] == {
             "Channel1": "Channel 1", "Channel2": "Channel 2", "Channel3": "Channel 3", "Channel4": "Channel 4",
         }
         assert find_widget(app.mode_controls_frame, text="Channel 1") is not None
@@ -170,6 +172,10 @@ def test_switching_templates_updates_annotation_masks(app, workspace, tmp_path):
     assert not workspace.errors()
 
 
+@pytest.mark.skipif(
+    not labeling_app.SETTINGS_SHOW_PROJECT_TEMPLATE,
+    reason="Project template controls are hidden from Settings",
+)
 def test_empty_prepared_project_cannot_change_template_through_settings(loaded_app, workspace):
     app = loaded_app
     assert not app.video.frames
@@ -206,7 +212,7 @@ def test_general_channels_annotate_all_squares_and_restore_across_diagrams(app, 
 
     click(app, "Settings")
     settings = find_toplevel(app, "Settings")
-    assert find_widget(settings, text="Channel Parameter 1") is not None
+    assert (find_widget(settings, text="Channel Parameter 1") is not None) == labeling_app.SETTINGS_SHOW_PARAMETER_LABELS
     assert find_widget(settings, text="Limb Parameter 1") is None
     settings.destroy()
 
@@ -227,7 +233,7 @@ def test_general_channels_annotate_all_squares_and_restore_across_diagrams(app, 
         assert app.video.frames[0][key]["Zones"] == [[str(n)] for n in range(1, 9)]
     save(app)
     exported = json.loads(Path(workspace.project().export_metadata).read_text())
-    assert exported["Channel Labels"] == {
+    assert exported["Coding Setup"]["channel_labels"] == {
         "Channel1": "Channel 1", "Channel2": "Channel 2", "Channel3": "Channel 3", "Channel4": "Channel 4",
     }
     assert not workspace.errors()

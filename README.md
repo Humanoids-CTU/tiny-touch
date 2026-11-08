@@ -12,7 +12,8 @@ events and observations.
 
 - **Dark mode:** choose Light or Dark in Settings; your preference is remembered.
 - **General-purpose template:** eight numbered zones and four annotation channels
-  for coding schemes beyond anatomical body maps.
+  for coding schemes beyond anatomical body maps. The four channel boxes are zones
+  too, so one channel can be recorded as touching another.
 - **GPU-accelerated video rendering:** uses the GPU for video scaling and drawing
   to improve playback performance on supported hardware, with automatic CPU fallback.
 
@@ -35,16 +36,18 @@ chmod +x TinyTouch-v9.1.0
 
 ## Label a video
 
-1. Click **Load Video**, choose **Normal**, select a body diagram and open your
-   video. Preparing it may take a few minutes the first time.
+1. Click **Load Video** to open the video library. Resume an existing project or
+   choose **Load new video** and select a video file. Review the diagram, zone
+   names, channel names, and parameters, then prepare the video. Preparing it may
+   take a few minutes the first time.
 2. Use **Special Zones** to mark body areas of interest (e.g. covered by clothing) and
    describe them in its **Note** field.
-3. Select the hand or leg you are labeling. (It’s easier to focus on one limb at a time.)
+3. Select the channel you are labeling. Each of the four channels shows its study-specific name.
 4. At the **first frame of a touch**, **left-click** its location on the body
    diagram. A green dot marks the start.
 5. At the **first frame after the touch ends**, **right-click** its last location.
    A red dot marks the end.
-6. Use the global or limb-specific parameter buttons to label additional
+6. Use the global or channel-specific parameter buttons to label additional
    observations as **ON** or **OFF**.
 7. Add text notes to individual frames as needed.
 
@@ -62,6 +65,19 @@ chmod +x TinyTouch-v9.1.0
 The boxes beside the body diagram can represent custom actions, such as touching
 or picking up an object; agree on what each box means before labeling.
 
+### Share a coding configuration
+
+Put shared setup files such as `coding_look.json` in the `config/` folder beside
+the application's `config.json`. Select a configuration while preparing a new
+video to prefill its diagram, zone names, four channel names, and all six
+parameter labels. Review or edit the values before preparing the video. You can
+also save a configuration from the setup wizard and give that JSON file to another
+coder. See [config/README.md](config/README.md) for the file format.
+
+Successful preparation freezes a complete copy of the coding setup inside the
+video project. Later edits to a shared JSON file never change prepared videos.
+Appearance, playback preferences, and annotations remain editable.
+
 ## Settings
 
 | Setting | What it does |
@@ -69,11 +85,11 @@ or picking up an object; agree on what each box means before labeling.
 | Appearance | Chooses Light or Dark. Applies immediately and remembers your choice; body diagrams stay white. |
 | Video renderer | Automatic prefers GPU drawing, including integrated graphics, and falls back to CPU. Choose CPU to compare. The active renderer is shown underneath. Changing renderer pauses playback. |
 | Video downscale | Makes video images smaller. Try `2` (half size) if the app feels slow. |
-| Diagram scale | Makes the body diagram larger or smaller to suit your screen. |
+| Diagram size | Not in Settings: drag the small grip in the diagram's bottom-left corner to make the body diagram larger or smaller. The proportions stay fixed and the size is remembered. |
 | Dot size | Changes the size of the marks on the diagram. |
 | Fast-jump seconds | Sets how far **<< / >>** and **Shift + arrow** jump. |
 | Hold arrows to play | Steps once on key-down, starts playback after a 150 ms hold, and stops on release. Targets the video's frame rate without skipping frames; slower rendering slows playback. Disable for keyboard-repeat stepping. **< / >** always step one frame. |
-| Parameter Labels | Names your limb-specific and global observations. |
+| Coding setup | Shows the prepared project's fixed diagram and naming configuration. Set these names in the new-video wizard. |
 
 Newly generated video frames fit within **1920 × 1080**, preserving aspect ratio
 and every frame index. Smaller inputs are not enlarged during preparation.
@@ -93,15 +109,20 @@ For example, labels for `infant_042.mp4` are saved in:
 
 ```text
 data/infant_042/export/infant_042_metadata.json
+data/infant_042/export/infant_042_diagram.png
 data/infant_042/export/infant_042_export.csv
 ```
-The **JSON** records supporting information such as frame rate, body diagram and
-parameter names.
+The **JSON** records the export format version, frame rate, diagram, coordinate
+conventions, and the complete coding setup used by this video.
 
 The **CSV** has one row for each video frame. Its columns contain your labels:
 touch starts and ends (onsets and offsets), body areas, notes, and ON/OFF values
-for global and limb-specific parameters. You can use these data in your own
-analysis to study infant behaviour.
+for global and channel-specific parameters. `Channel1` through `Channel4` are
+stable export identifiers; metadata maps them to the names used in your study.
+Each channel's `XY` cell contains JSON coordinate pairs and its `Zones` cell
+contains matching zone groups, preserving multiple points and multiple zones
+per point. Standard CSV quoting is expected when viewing the raw file. See
+[DATA_FORMAT.md](docs/DATA_FORMAT.md) before updating an analysis script.
 
 For a quick overview, click **Analysis** to open a report in your browser with
 touch counts, durations and charts.
@@ -113,6 +134,7 @@ Open `master_infant_042.html` to view it again, or share the whole `plots/` fold
 ## Reliability between two coders
 
 For a second coder's pass, load the same video and choose **Reliability**.
+The new pass inherits the original's complete coding setup.
 TinyTouch adds `_reliability` to the project and output names, keeping the two
 coders' labels separate. Compare the two exports in your own analysis to measure
 agreement between coders. TinyTouch does not calculate reliability itself.

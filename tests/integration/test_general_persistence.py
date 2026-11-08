@@ -60,13 +60,13 @@ def test_general_reopens_and_exports_all_four_channels_without_csv_changes(tmp_p
     run_export(restored, paths, 25, metadata, total_frames=3)
     exported = json.loads(Path(paths.export_metadata).read_text(encoding="utf-8"))
     assert exported["Labeling Mode"] == mode
-    assert exported["Channel Labels"] == {
-        "RH": "Channel 1", "LH": "Channel 2", "RL": "Channel 3", "LL": "Channel 4",
+    assert exported["Coding Setup"]["channel_labels"] == {
+        "Channel1": "Channel 1", "Channel2": "Channel 2", "Channel3": "Channel 3", "Channel4": "Channel 4",
     }
     with open(paths.export_csv, encoding="utf-8", newline="") as stream:
         rows = list(csv.DictReader(stream))
     assert len(rows) == 4
-    for key, zone in zip(("RH", "LH", "RL", "LL"), range(1, 5)):
+    for key, zone in zip(("Channel1", "Channel2", "Channel3", "Channel4"), range(1, 5)):
         assert rows[0][f"{key}_Zones"] == json.dumps([[str(zone)]])
         assert rows[0][f"{key}_Onset"] == "ON"
         assert rows[2][f"{key}_Onset"] == "OFF"

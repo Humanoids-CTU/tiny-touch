@@ -114,7 +114,7 @@ def test_full_save_pipeline_writes_state_and_export(tmp_path):
     meta = json.load(open(paths.export_metadata, encoding="utf-8"))
     assert meta["Video Name"] == "vid"
     assert meta["Total Labeling Time (hours)"] == 1.0
-    assert meta["template"] == "alternate"
+    assert meta["Coding Setup"]["template"] == "alternate"
     assert not os.path.exists(os.path.join(paths.export_dir, "vid_project.json"))
 
 

@@ -104,5 +104,10 @@ class ProjectPaths:
         return os.path.join(self.export_dir, f"{self.video_name}_export.csv")
 
     @property
+    def export_diagram(self) -> str:
+        """Labeled diagram reference distributed alongside CSV and metadata."""
+        return os.path.join(self.export_dir, f"{self.video_name}_diagram.png")
+
+    @property
     def export_metadata(self) -> str:
         return os.path.join(self.export_dir, f"{self.video_name}_metadata.json")

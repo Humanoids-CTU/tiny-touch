@@ -16,17 +16,7 @@ import pytest
 from adapters.export_writer import write_export_metadata
 
 
-BASE_KEYS = [
-    "Program Version",
-    "Video Name",
-    "Labeling Mode",
-    "template",
-    "Frame Rate",
-    "Special Zones",
-    "Special Zones Note",
-    "Param Labels",
-    "Limb Param Labels",
-]
+BASE_KEYS = ["Export Format Version", "Metadata Format Version", "Program Version", "Video Name", "Labeling Mode", "Frame Rate", "Frame Provenance", "Coordinate Convention", "Coding Setup", "Diagram", "Special Zones", "Special Zones Note"]
 
 
 def _write(tmp_path, **overrides):
@@ -59,12 +49,12 @@ def test_metadata_key_set_and_order_without_labeling_time(tmp_path, template):
 def test_general_metadata_maps_stored_keys_to_channel_labels(tmp_path, labeling_time):
     path = _write(tmp_path, template="general", labeling_time_seconds=labeling_time)
     meta = json.loads(path.read_text(encoding="utf-8"))
-    assert meta["template"] == "general"
-    assert meta["Channel Labels"] == {
-        "RH": "Channel 1", "LH": "Channel 2", "RL": "Channel 3", "LL": "Channel 4",
+    assert meta["Coding Setup"]["template"] == "general"
+    assert meta["Coding Setup"]["channel_labels"] == {
+        "Channel1": "Channel 1", "Channel2": "Channel 2", "Channel3": "Channel 3", "Channel4": "Channel 4",
     }
-    assert list(meta["Channel Labels"]) == ["RH", "LH", "RL", "LL"]
-    expected_keys = BASE_KEYS + ["Channel Labels"]
+    assert list(meta["Coding Setup"]["channel_labels"]) == ["Channel1", "Channel2", "Channel3", "Channel4"]
+    expected_keys = BASE_KEYS.copy()
     if labeling_time is not None:
         expected_keys.append("Total Labeling Time (hours)")
     assert list(meta) == expected_keys
@@ -82,18 +72,18 @@ def test_metadata_exact_values_roundtrip(tmp_path):
     path = _write(tmp_path, labeling_time_seconds=7200.0)
     with open(path, encoding="utf-8") as fh:
         meta = json.load(fh)
-    assert meta == {
-        "Program Version": 8.0,
-        "Video Name": "vid",
-        "Labeling Mode": "Normal",
-        "template": "default",
-        "Frame Rate": 25.0,
-        "Special Zones": ["BELLY", "17L"],
-        "Special Zones Note": "diaper and socks",
-        "Param Labels": {"Par1": "Looking1"},
-        "Limb Param Labels": {"Par1": "Grasp"},
-        "Total Labeling Time (hours)": 2.0,
-    }
+    assert meta["Export Format Version"] == 2
+    assert "limb_parameter_labels" not in meta["Coding Setup"]
+    assert "Limb Param Labels" not in meta
+    assert meta["Program Version"] == 8.0
+    assert meta["Video Name"] == "vid"
+    assert meta["Frame Rate"] == 25.0
+    assert meta["Coding Setup"]["parameter_labels"]["Par1"] == "Looking1"
+    assert meta["Coding Setup"]["channel_parameter_labels"]["Par1"] == "Grasp"
+    assert meta["Special Zones"] == ["BELLY", "17L"]
+    assert meta["Special Zones Note"] == "diaper and socks"
+    assert meta["Total Labeling Time (hours)"] == 2.0
+
 
 
 def test_metadata_labeling_time_rounds_to_4dp(tmp_path):
@@ -112,8 +102,8 @@ def test_metadata_special_zones_none_stays_null_and_labels_default_to_empty(tmp_
     meta = json.loads(path.read_text(encoding="utf-8"))
     assert meta["Special Zones"] is None
     assert meta["Special Zones Note"] is None
-    assert meta["Param Labels"] == {}
-    assert meta["Limb Param Labels"] == {}
+    assert meta["Coding Setup"]["parameter_labels"] == {f"Par{i}": f"P{i}" for i in (1,2,3)}
+    assert meta["Coding Setup"]["channel_parameter_labels"] == {f"Par{i}": f"CP{i}" for i in (1,2,3)}
     assert '"Special Zones": null' in path.read_text(encoding="utf-8")
 
 
@@ -123,7 +113,7 @@ def test_metadata_is_indent2_json(tmp_path):
     Windows) — diffs and hand-inspection depend on this layout."""
     raw = _write(tmp_path).read_bytes()
     text = raw.decode("utf-8")
-    assert text.startswith('{\n  "Program Version": '), text[:40]
+    assert text.startswith('{\n  "Export Format Version": 2,'), text[:40]
     assert '\n  "Video Name": "vid",\n' in text
     assert b"\r\n" not in raw
 
@@ -142,4 +132,18 @@ def test_metadata_non_ascii_survives_as_utf8_not_escapes(tmp_path):
     assert b"\\u" not in raw
     meta = json.loads(path.read_text(encoding="utf-8"))
     assert meta["Special Zones"] == ["Bříško"]
-    assert meta["Param Labels"]["Par1"] == "Pohled ěšč"
+    assert meta["Coding Setup"]["parameter_labels"]["Par1"] == "Pohled ěšč"
+
+
+def test_fallback_metadata_freezes_zone_names_in_every_snapshot(tmp_path):
+    path = _write(tmp_path, zone_labels={'I': 'Target'})
+    meta = json.loads(path.read_text(encoding='utf-8'))
+    assert meta['Coding Setup']['zone_labels'] == {'I': 'Target'}
+    assert "zones" not in meta["Diagram"]
+    assert "Zone Labels" not in meta
+
+
+def test_fallback_metadata_rejects_invalid_zone_names_before_writing(tmp_path):
+    with pytest.raises(ValueError):
+        _write(tmp_path, zone_labels={'I': 'invalid\nname'})
+    assert not (tmp_path / 'vid_metadata.json').exists()

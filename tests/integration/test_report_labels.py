@@ -33,6 +33,8 @@ def test_reports_use_exported_names_without_changing_calculations(tmp_path, monk
     paths = project(tmp_path, template, zones)
     metadata_path = Path(paths.export_metadata)
     metadata = json.loads(metadata_path.read_text())
+    metadata.pop("Metadata Format Version")
+    metadata["template"] = metadata.pop("Coding Setup")["template"]
     # Missing optional mappings are valid, including old General exports.
     metadata.pop("Channel Labels", None)
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
@@ -55,7 +57,7 @@ def test_reports_use_exported_names_without_changing_calculations(tmp_path, monk
     assert Path(paths.export_csv).read_bytes() == source_csv
     for filename in ("analysis_table_frames.csv", "analysis_table_seconds.csv"):
         assert (tmp_path / "baseline" / filename).read_bytes() == (tmp_path / "renamed" / filename).read_bytes()
-    heatmap = figures["heatmap_RH.html"]
+    heatmap = figures["heatmap_Channel1.html"]
     assert heatmap.layout.xaxis.type == heatmap.layout.yaxis.type == "category"
     assert list(heatmap.layout.xaxis.categoryarray) == list(heatmap.data[0].x)
     assert zones[0] in heatmap.data[0].x and zones[1] in heatmap.data[0].x
@@ -65,17 +67,17 @@ def test_reports_use_exported_names_without_changing_calculations(tmp_path, monk
     assert any(escape(f"Light <on> & off ({zones[0]})") in text
                for trace in trajectory.data for text in trace.text)
     assert len(figures["zone_table.html"].data[0].cells.values[0]) == 8
-    channel = "Channel One" if template == "general" else "Right Hand"
+    channel = "Channel One" if template == "general" else "Channel 1"
     assert channel in heatmap.layout.title.text
     assert any(trace.name == channel for trace in figures["histogram.html"].data)
     assert any(trace.name == channel for trace in figures["histogram_2.html"].data)
     summary = figures["table.html"].data[0]
     assert channel in summary.cells.values[0]
     expected_channels = (["Channel One", "Channel 2", "Channel 3", "Channel 4"] if template == "general"
-                         else ["Right Hand", "Left Hand", "Right Leg", "Left Leg"])
+                         else ["Channel 1", "Channel 2", "Channel 3", "Channel 4"])
     assert list(summary.cells.values[0]) == expected_channels
     assert [trace.name for trace in figures["histogram.html"].data] == expected_channels
-    assert summary.header.values[0] == ("Channel" if template == "general" else "Limb")
+    assert summary.header.values[0] == "Channel"
     assert any(channel in trace.name for trace in trajectory.data)
     master = Path(result.master_html).read_text(encoding="utf-8")
     assert "Zone touch counts" in master
@@ -89,6 +91,8 @@ def test_reports_use_exported_names_without_changing_calculations(tmp_path, monk
 def test_bad_labels_fail_before_creating_reports(tmp_path, key, value):
     paths = project(tmp_path, "general", ("1", "2"))
     metadata = json.loads(Path(paths.export_metadata).read_text())
+    metadata.pop("Metadata Format Version")
+    metadata["template"] = metadata.pop("Coding Setup")["template"]
     metadata[key] = value
     Path(paths.export_metadata).write_text(json.dumps(metadata), encoding="utf-8")
     with pytest.raises(ValueError):

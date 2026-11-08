@@ -3,8 +3,13 @@ import csv
 import json
 import shutil
 from pathlib import Path
+from dataclasses import replace
+
+from domain.coding_setup import default_coding_setup
 
 import pytest
+
+import labeling_app
 
 from gui_driver import click, click_canvas, find_toplevel, find_widget, goto_frame, load_video, save, walk
 
@@ -18,33 +23,15 @@ def _show_toggle(settings):
     return next(widget for widget in label.master.grid_slaves(row=info["row"], column=1))
 
 
-def _edit(app, settings, zone, name, show, *, cancel=False):
-    errors = []
-
-    def fill():
-        window = find_toplevel(settings, "Zone names")
-        if window is None:
-            app.after(20, fill)
-            return
-        try:
-            entry = next(widget for widget in walk(window) if getattr(widget, "zone_id", None) == zone)
-            entry.delete(0, "end")
-            entry.insert(0, name)
-            click(window, "Cancel" if cancel else "Apply")
-        except Exception as exc:
-            errors.append(exc)
-            window.destroy()
-
-    app.after(20, fill)
-    click(settings, "Edit zone names")
-    assert not errors
-    if cancel:
-        return
-    # Visibility is a Settings toggle applied with the other settings.
+def _set_visibility(settings, show):
     toggle = _show_toggle(settings)
     if bool(toggle.instate(["selected"])) != show:
         toggle.invoke()
-    click(settings, "Apply")
+    click(settings, "Save")  # applies and closes the window
+
+
+def _named_setup(choice, zone, name):
+    return replace(default_coding_setup(choice.lower()), zone_labels={zone: name})
 
 
 def _texts(canvas):
@@ -57,8 +44,8 @@ def _texts(canvas):
     ("Alternate", "G", (192, 336)),
     ("General", "1", (137, 102)),
 ])
-def test_zone_names_save_reopen_reset_and_keep_annotation_ids(app, workspace, tmp_path, choice, zone, point):
-    load_video(app, workspace, workspace.video, template=choice)
+def test_zone_names_save_reopen_freeze_and_keep_annotation_ids(app, workspace, tmp_path, choice, zone, point):
+    load_video(app, workspace, workspace.video, template=choice, setup=_named_setup(choice, zone, "Light on"))
     paths = workspace.project()
     assert not app.diagram_canvas.find_withtag("zone-label")
     click_point = tuple(int(value * app.diagram_scale) for value in point)
@@ -71,15 +58,17 @@ def test_zone_names_save_reopen_reset_and_keep_annotation_ids(app, workspace, tm
     assert not special.canvas2.find_withtag("zone-label")
     click(app, "Settings")
     settings = find_toplevel(app, "Settings")
-    _edit(app, settings, zone, "Light on", True)
+    _set_visibility(settings, True)
+    if labeling_app.SETTINGS_SHOW_ZONE_NAME_EDITOR:
+        assert find_widget(settings, text="Edit zone names").instate(["disabled"])
     assert app._get_note_entry_text() == "Unsubmitted draft"
     assert "Light on" in _texts(app.diagram_canvas)
     assert "Light on" in _texts(special.canvas2)
     assert app.video.frames[0]["RH"]["Zones"] == [[zone]]
     meta = json.loads(Path(paths.export_metadata).read_text(encoding="utf-8"))
-    assert meta["Zone Labels"] == {zone: "Light on"}
+    assert meta["Coding Setup"]["zone_labels"] == {zone: "Light on"}
     with open(paths.export_csv, encoding="utf-8", newline="") as stream:
-        assert json.loads(next(csv.DictReader(stream))["RH_Zones"]) == [[zone]]
+        assert json.loads(next(csv.DictReader(stream))["Channel1_Zones"]) == [[zone]]
     csv_before = Path(paths.export_csv).read_bytes()
     # Labels stay below dots and do not interfere with marking or deletion.
     anchor = app._zone_label_positions[zone]
@@ -102,13 +91,12 @@ def test_zone_names_save_reopen_reset_and_keep_annotation_ids(app, workspace, tm
 
     click(app, "Settings")
     settings = find_toplevel(app, "Settings")
-    _edit(app, settings, zone, "Discard this", False, cancel=True)
-    assert app.zone_display.label(zone) == "Light on"
-    assert app.zone_display.show_names
-    _edit(app, settings, zone, "", False)
+    if labeling_app.SETTINGS_SHOW_ZONE_NAME_EDITOR:
+        assert find_widget(settings, text="Edit zone names").instate(["disabled"])
+    _set_visibility(settings, False)
     assert not app.diagram_canvas.find_withtag("zone-label")
-    assert not app.zone_display.labels
-    assert "Zone Labels" not in json.loads(Path(paths.export_metadata).read_text())
+    assert app.zone_display.label(zone) == "Light on"
+    assert json.loads(Path(paths.export_metadata).read_text())["Coding Setup"]["zone_labels"] == {zone: "Light on"}
     assert Path(paths.export_csv).read_bytes() == csv_before
     settings.destroy()
     click(app, "Special Zones")
@@ -125,11 +113,11 @@ def test_zone_names_save_reopen_reset_and_keep_annotation_ids(app, workspace, tm
 def test_named_template_full_workflow_and_reliability(app, workspace, tmp_path, choice, zone, point):
     """Exercise Settings -> annotate -> reopen -> Analysis in both labeling passes."""
     assert not app.diagram_canvas.find_all()
-    load_video(app, workspace, workspace.video, template=choice)
+    load_video(app, workspace, workspace.video, template=choice, setup=_named_setup(choice, zone, "Acceptance target"))
     assert app.diagram_canvas.find_withtag("diagram")
     click(app, "Settings")
     settings = find_toplevel(app, "Settings")
-    _edit(app, settings, zone, "Acceptance target", True)
+    _set_visibility(settings, True)
     settings.destroy()
     position = tuple(int(value * app.diagram_scale) for value in point)
 
@@ -140,11 +128,11 @@ def test_named_template_full_workflow_and_reliability(app, workspace, tmp_path, 
         click_canvas(app.diagram_canvas, "<Button-3>", *position)
         save(app)
         metadata = json.loads(Path(paths.export_metadata).read_text(encoding="utf-8"))
-        assert metadata["Zone Labels"] == {zone: "Acceptance target"}
-        assert metadata["template"] == choice.lower()
+        assert metadata["Coding Setup"]["zone_labels"] == {zone: "Acceptance target"}
+        assert metadata["Coding Setup"]["template"] == choice.lower()
         if choice == "General":
-            assert metadata["Channel Labels"] == {
-                "RH": "Channel 1", "LH": "Channel 2", "RL": "Channel 3", "LL": "Channel 4",
+            assert metadata["Coding Setup"]["channel_labels"] == {
+                "Channel1": "Channel 1", "Channel2": "Channel 2", "Channel3": "Channel 3", "Channel4": "Channel 4",
             }
         click(app, "Analysis")
         assert workspace.opened_urls
@@ -154,7 +142,7 @@ def test_named_template_full_workflow_and_reliability(app, workspace, tmp_path, 
         assert "Acceptance target" in (report.parent / "zone_table.html").read_text(encoding="utf-8")
         with (report.parent / "analysis_table_frames.csv").open(encoding="utf-8", newline="") as stream:
             rows = list(csv.DictReader(stream))
-        rh = next(row for row in rows if row["Limb"] == "RH")
+        rh = next(row for row in rows if row["Channel"] == "Channel1")
         assert float(rh["Total Duration [Frames]"]) == 2
         assert not workspace.errors()
 

@@ -42,7 +42,7 @@ from service_layer import analysis_service
 CAT3_TOTAL_FRAMES = 324          # frames 0..323
 CAT3_FPS = 25.0
 EXPECTED_FILES = [
-    "heatmap_LH.html", "heatmap_RH.html", "heatmap_LL.html", "heatmap_RL.html",
+    "heatmap_Channel2.html", "heatmap_Channel1.html", "heatmap_Channel4.html", "heatmap_Channel3.html",
     "touch_trajectory.html",
     "analysis_table_frames.csv", "analysis_table_seconds.csv",
     "table.html", "histogram.html", "histogram_2.html",
@@ -164,19 +164,19 @@ def test_cat3_written_tables_carry_the_ground_truth(tmp_path):
         paths, frame_rate=CAT3_FPS, output_folder=str(out), open_browser=BrowserSpy()
     )
 
-    frames_table = pd.read_csv(out / "analysis_table_frames.csv").set_index("Limb")
-    seconds_table = pd.read_csv(out / "analysis_table_seconds.csv").set_index("Limb")
+    frames_table = pd.read_csv(out / "analysis_table_frames.csv").set_index("Channel")
+    seconds_table = pd.read_csv(out / "analysis_table_seconds.csv").set_index("Channel")
 
-    assert frames_table.at["RH", "Total Touches"] == 2
-    assert frames_table.at["RH", "Total Duration [Frames]"] == 11
-    assert frames_table.at["RH", "Average Touch Duration [Frames]"] == pytest.approx(5.5)
-    assert frames_table.at["RH", "Percentage Touching"] == pytest.approx(3.3951, abs=1e-4)
-    assert frames_table.at["RH", "Standard Deviation [Frames]"] == pytest.approx(4.9497, abs=1e-4)
-    assert frames_table.at["RH", "Open (Unterminated) Touches"] == 0
+    assert frames_table.at["Channel1", "Total Touches"] == 2
+    assert frames_table.at["Channel1", "Total Duration [Frames]"] == 11
+    assert frames_table.at["Channel1", "Average Touch Duration [Frames]"] == pytest.approx(5.5)
+    assert frames_table.at["Channel1", "Percentage Touching"] == pytest.approx(3.3951, abs=1e-4)
+    assert frames_table.at["Channel1", "Standard Deviation [Frames]"] == pytest.approx(4.9497, abs=1e-4)
+    assert frames_table.at["Channel1", "Open (Unterminated) Touches"] == 0
 
-    assert seconds_table.at["RH", "Total Duration [Seconds]"] == pytest.approx(0.44)
-    assert seconds_table.at["RH", "Average Touch Duration [Seconds]"] == pytest.approx(0.22)
-    assert seconds_table.at["RH", "Touch Rate [Touches per Minute]"] == pytest.approx(
+    assert seconds_table.at["Channel1", "Total Duration [Seconds]"] == pytest.approx(0.44)
+    assert seconds_table.at["Channel1", "Average Touch Duration [Seconds]"] == pytest.approx(0.22)
+    assert seconds_table.at["Channel1", "Touch Rate [Touches per Minute]"] == pytest.approx(
         9.2593, abs=1e-4
     )
 
@@ -190,7 +190,7 @@ def test_cat3_heatmap_reflects_pairwise_transitions(tmp_path):
         paths, frame_rate=CAT3_FPS, output_folder=str(out), open_browser=BrowserSpy()
     )
 
-    html = (out / "heatmap_RH.html").read_text(encoding="utf-8")
+    html = (out / "heatmap_Channel1.html").read_text(encoding="utf-8")
     assert "Touch Transition Heatmap Right Hand" in html
     assert "one count per zone pair" in html
 
@@ -217,11 +217,11 @@ def test_master_page_is_one_document(tmp_path):
     assert page.count('src="plotly.min.js"') == 1
     assert (out / "plotly.min.js").is_file()
     for title in (
-        "Touch trajectories over the limb diagrams",
+        "Touch trajectories over the channel diagrams",
         "Summary table",
         "Touch length distribution",
         "Touch duration distribution",
-        "Transition heatmap — Right Hand (RH)",
+        "Transition heatmap — Right Hand (Channel1)",
     ):
         assert title in page, f"missing card title {title!r}"
 
@@ -273,7 +273,7 @@ def test_trajectory_panels_are_pinned_to_the_diagram(tmp_path):
 
 def test_heatmap_height_follows_zone_count(tmp_path):
     out = _run_cat3(tmp_path)
-    html = (out / "heatmap_RH.html").read_text(encoding="utf-8")
+    html = (out / "heatmap_Channel1.html").read_text(encoding="utf-8")
     height = re.search(r'"height"\s*:\s*(\d+)', html)
     ticks = re.search(r'"ticktext"\s*:\s*(\[[^\]]*\])', html)
     assert height and ticks, "heatmap layout carries no height/ticktext"
@@ -307,9 +307,9 @@ def test_zero_or_missing_fps_completes_without_crash(tmp_path, bad_fps):
     assert rh.total_duration_seconds is None             # seconds omitted
     assert rh.touch_rate_per_minute is None
 
-    seconds_table = pd.read_csv(out / "analysis_table_seconds.csv").set_index("Limb")
-    assert pd.isna(seconds_table.at["RH", "Total Duration [Seconds]"])
-    assert pd.isna(seconds_table.at["RH", "Touch Rate [Touches per Minute]"])
+    seconds_table = pd.read_csv(out / "analysis_table_seconds.csv").set_index("Channel")
+    assert pd.isna(seconds_table.at["Channel1", "Total Duration [Seconds]"])
+    assert pd.isna(seconds_table.at["Channel1", "Touch Rate [Touches per Minute]"])
 
     assert any("Frame rate unavailable" in w for w in result.warnings)
     table_html = (out / "table.html").read_text(encoding="utf-8")
@@ -362,8 +362,8 @@ def test_open_touch_does_not_pollute_stats_but_is_reported(tmp_path):
     assert rh.open_touches == 1
     assert rh.open_start_frames == (300,)
     assert any("open/unterminated" in w for w in result.warnings)
-    frames_table = pd.read_csv(out / "analysis_table_frames.csv").set_index("Limb")
-    assert frames_table.at["RH", "Open (Unterminated) Touches"] == 1
+    frames_table = pd.read_csv(out / "analysis_table_frames.csv").set_index("Channel")
+    assert frames_table.at["Channel1", "Open (Unterminated) Touches"] == 1
     # plotly serializes the title into JSON (which escapes "/"), so match on a
     # slash-free fragment; the master page is plain HTML we write ourselves.
     assert "unterminated" in (out / "table.html").read_text(encoding="utf-8").lower()
@@ -467,13 +467,13 @@ def test_alternate_metadata_selects_alternate_diagrams_and_zone_axis(tmp_path):
     paths = write_project(tmp_path, cat3_frames())
     with open(paths.export_metadata, encoding="utf-8") as stream:
         metadata = json.load(stream)
-    metadata["template"] = "alternate"
+    metadata["Coding Setup"]["template"] = "alternate"
     with open(paths.export_metadata, "w", encoding="utf-8") as stream:
         json.dump(metadata, stream)
     result = analysis_service.run_analysis(paths, limbs=("RH",))
     page = open(result.master_html, encoding="utf-8").read()
     assert "template alternate" in page
-    heatmap = open(os.path.join(result.output_folder, "heatmap_RH.html"), encoding="utf-8").read()
+    heatmap = open(os.path.join(result.output_folder, "heatmap_Channel1.html"), encoding="utf-8").read()
     ticks = re.search(r'"ticktext"\s*:\s*(\[[^\]]*\])', heatmap)
     from adapters.zone_masks import list_zone_names
     assert set(list_zone_names("alternate")).issubset(json.loads(ticks.group(1)))

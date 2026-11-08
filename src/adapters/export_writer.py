@@ -1,126 +1,105 @@
-"""
-adapters/export_writer.py
-The frozen CSV export contract plus its JSON metadata sidecar. The metadata
-includes the project template; the CSV format is unchanged. Moved from data_utils.py — the byte-level golden
-master tests (tests/unit/test_export_golden_master.py) pin this file's output;
-any encoding drift silently corrupts published research datasets.
-"""
-
+"""Version 2 research exports. SQLite storage keys remain private to the app."""
 import json
 import logging
-import pandas as pd
+import math
+from decimal import Decimal
+from dataclasses import replace
 from typing import Dict
 
-from adapters.atomic_io import atomic_write
-from domain.templates import GENERAL_TEMPLATE, get_template, validate_template
-from domain.zone_display import ZoneDisplaySettings
-from domain.model import FrameBundle, _normalize_param_state, empty_bundle
+import pandas as pd
 
+from adapters.atomic_io import atomic_write
+from adapters.export_diagram import write_export_diagram
+from domain.coding_setup import PORTABLE_CHANNELS, default_coding_setup
+from domain.templates import get_template, validate_template
+from domain.model import FrameBundle, _normalize_param_state, empty_bundle
+from domain.touch_stats import fps_is_usable
 
 logger = logging.getLogger(__name__)
+EXPORT_FORMAT_VERSION = 2
 
 
-def write_export_metadata(meta_path: str,
-                          program_version,
-                          video_name,
-                          labeling_mode,
-                          frame_rate,
-                          special_zones_list,
-                          param_labels: dict | None = None,
-                          limb_param_labels: dict | None = None,
-                          labeling_time_seconds: float | None = None,
-                          *, template: str,
-                          special_zones_note: str | None = None,
-                          zone_labels: dict | None = None) -> None:
-    """
-    Writes a JSON sidecar with all non-tabular export metadata that used to be
-    stuffed into the first 5 lines of *_export.csv.
-    """
+def write_export_metadata(meta_path, program_version, video_name, labeling_mode,
+                          frame_rate, special_zones_list, param_labels=None,
+                          limb_param_labels=None, labeling_time_seconds=None, *,
+                          template, special_zones_note=None, zone_labels=None,
+                          coding_setup=None, diagram_path=None):
     template = validate_template(template)
-    zone_labels = ZoneDisplaySettings(labels=zone_labels if zone_labels is not None else {}).labels
+    setup = coding_setup or default_coding_setup(
+        template,
+        {f'Par{i}': (param_labels or {}).get(f'Parameter_{i}', (param_labels or {}).get(f'Par{i}', f'P{i}')) for i in (1,2,3)},
+        {f'Par{i}': (limb_param_labels or {}).get(f'XX_Parameter_{i}', (limb_param_labels or {}).get(f'Par{i}', f'CP{i}')) for i in (1,2,3)},
+    )
+    if coding_setup is None:
+        setup = replace(setup, zone_labels=zone_labels if zone_labels is not None else {})
+    if setup.template != template:
+        raise ValueError('Coding setup template does not match export template')
+    definition = get_template(template)
+    diagram = {'asset': definition.diagram, 'zone_masks': definition.masks_directory}
+    if diagram_path is not None:
+        diagram.update(write_export_diagram(diagram_path, setup))
     meta = {
-        "Program Version": program_version,
-        "Video Name": video_name,
-        "Labeling Mode": labeling_mode,
-        "template": template,
-        "Frame Rate": frame_rate,
-        "Special Zones": special_zones_list,
-        "Special Zones Note": special_zones_note,
-        "Param Labels": param_labels or {},
-        "Limb Param Labels": limb_param_labels or {},
+        'Export Format Version': EXPORT_FORMAT_VERSION,
+        'Metadata Format Version': 2,
+        'Program Version': program_version, 'Video Name': video_name,
+        'Labeling Mode': labeling_mode,
+        'Frame Rate': float(frame_rate) if fps_is_usable(frame_rate) else None,
+        'Frame Provenance': {'index_origin': 0, 'time_unit': 'milliseconds',
+                             'time_decimal_places': 3, 'time_source': 'frame_index / source_fps',
+                             'frame_rate_source': 'source video probe'},
+        'Coordinate Convention': {'origin': 'top-left', 'x_direction': 'right',
+                                  'y_direction': 'down', 'unit': 'diagram pixel',
+                                  'diagram_size': list(definition.native_size)},
+        'Coding Setup': setup.to_dict(),
+        'Diagram': diagram,
+        'Special Zones': special_zones_list, 'Special Zones Note': special_zones_note,
     }
-    if template == GENERAL_TEMPLATE:
-        meta["Channel Labels"] = {
-            channel.key: channel.label for channel in get_template(template).channels
-        }
-    if zone_labels:
-        meta["Zone Labels"] = dict(zone_labels)
     if labeling_time_seconds is not None:
-        meta["Total Labeling Time (hours)"] = round(float(labeling_time_seconds) / 3600.0, 4)
-    atomic_write(meta_path, lambda f: json.dump(meta, f, indent=2, ensure_ascii=False))
+        meta['Total Labeling Time (hours)'] = round(float(labeling_time_seconds) / 3600, 4)
+    atomic_write(meta_path, lambda f: json.dump(meta, f, indent=2, ensure_ascii=False, allow_nan=False))
 
 
-def export_from_unified(frames: Dict[int, FrameBundle],
-                        out_csv: str,
-                        program_version: float,
-                        video_name: str,
-                        labeling_mode: str,
-                        frame_rate: float,
-                        special_zones_list,
-                        total_frames: int,
-                        param_labels: Dict[str, str] | None = None,
-                        limb_param_labels: Dict[str, str] | None = None) -> None:
-    """
-    Emit the legacy *_export.csv with EXACT schema/order and a row for EVERY frame 0..total_frames.
-    - Global Params: Par1..Par3 → Parameter_1..3
-    - Limb Params:  Par1..Par3 → {LH,LL,RH,RL}_Parameter_1..3
-    """
+def _paired_annotations(rec, frame, channel):
+    xs, ys = rec.get('X') or [], rec.get('Y') or []
+    if len(xs) != len(ys):
+        raise ValueError(f'Frame {frame} {channel}: X/Y point lists must align')
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in [*xs, *ys]):
+        raise ValueError(f'Frame {frame} {channel}: coordinates must be finite numbers')
+    zones = rec.get('Zones') or []
+    # Older state may have clicks without zone hits. Retain the clicks explicitly.
+    if not zones:
+        zones = [[] for _ in xs]
+    elif len(xs) == 1 and all(isinstance(z, str) for z in zones):
+        zones = [zones]  # old flat multi-zone bucket, no relationship is lost
+    else:
+        zones = [[z] if isinstance(z, str) else z for z in zones]
+    if len(zones) != len(xs) or any(not isinstance(z,list) or any(not isinstance(v,str) for v in z) for z in zones):
+        raise ValueError(f'Frame {frame} {channel}: point and zone buckets must align')
+    return list(map(list, zip(xs,ys))), zones
+
+
+def export_from_unified(frames: Dict[int, FrameBundle], out_csv, program_version,
+                        video_name, labeling_mode, frame_rate, special_zones_list,
+                        total_frames, param_labels=None, limb_param_labels=None):
+    """Write one row per zero-based frame, including the last frame index."""
     rows = []
-
-    def _xy_str(lst):
-        return ",".join(map(str, lst)) if lst else ""
-
-    for f in range(total_frames + 1):
-        b = frames.get(f, empty_bundle())
-        # 0-FPS probe (some containers) must not abort the export.
-        row = {"Frame": f, "Time_ms": (f / frame_rate) * 1000.0 if frame_rate else 0.0}
-
-        # Limb blocks in order: LH, LL, RH, RL
-        for limb in ["LH", "LL", "RH", "RL"]:
-            rec = b.get(limb, {}) if isinstance(b, dict) else {}
-            row[f"{limb}_X"] = _xy_str(rec.get("X", []))
-            row[f"{limb}_Y"] = _xy_str(rec.get("Y", []))
-            row[f"{limb}_Onset"] = rec.get("Onset", "")
-            row[f"{limb}_Zones"] = json.dumps(rec.get("Zones", []) or [])
-
-        # Global params (canonical keys → fixed columns)
-        params = (b.get("Params") or {}) if isinstance(b, dict) else {}
-        for i in (1, 2, 3):
-            val = params.get(f"Par{i}")
-            row[f"Parameter_{i}"] = "" if (val is None or val == "") else val
-
-        # Limb-specific params (canonical keys → fixed columns)
-        for limb in ["LH", "LL", "RH", "RL"]:
-            rec = b.get(limb, {}) if isinstance(b, dict) else {}
-            lp = rec.get("LimbParams", {}) if isinstance(rec, dict) else {}
-            for i in (1, 2, 3):
-                val = _normalize_param_state(lp.get(f"Par{i}"))
-                row[f"{limb}_Parameter_{i}"] = "" if (val is None or val == "") else val
-
-        row["Note"] = b.get("Note", "") if isinstance(b, dict) else ""
+    fps = Decimal(str(frame_rate)) if fps_is_usable(frame_rate) else None
+    for frame in range(total_frames + 1):
+        bundle = frames.get(frame, empty_bundle())
+        row = {'Frame':frame, 'Time_ms': f'{Decimal(frame)*1000/fps:.3f}' if fps else ''}
+        for channel, key in PORTABLE_CHANNELS.items():
+            rec = bundle.get(key) or {}
+            xy, zones = _paired_annotations(rec, frame, channel)
+            row[f'{channel}_XY'] = json.dumps(xy, ensure_ascii=False, allow_nan=False)
+            row[f'{channel}_Onset'] = rec.get('Onset') or ''
+            row[f'{channel}_Zones'] = json.dumps(zones, ensure_ascii=False)
+        for i in (1,2,3):
+            row[f'Parameter_{i}'] = _normalize_param_state((bundle.get('Params') or {}).get(f'Par{i}')) or ''
+        for channel,key in PORTABLE_CHANNELS.items():
+            params = (bundle.get(key) or {}).get('LimbParams') or {}
+            for i in (1,2,3):
+                row[f'{channel}_Parameter_{i}'] = _normalize_param_state(params.get(f'Par{i}')) or ''
+        row['Note'] = bundle.get('Note') or ''
         rows.append(row)
-
-    # Exact legacy column order
-    cols = ["Frame", "Time_ms"]
-    for limb in ["LH", "LL", "RH", "RL"]:
-        cols += [f"{limb}_X", f"{limb}_Y", f"{limb}_Onset", f"{limb}_Zones"]
-    cols += ["Parameter_1", "Parameter_2", "Parameter_3"]
-    for limb in ["LH", "LL", "RH", "RL"]:
-        cols += [f"{limb}_Parameter_1", f"{limb}_Parameter_2", f"{limb}_Parameter_3"]
-    cols += ["Note"]
-
-    df = pd.DataFrame(rows, columns=cols)
-    atomic_write(out_csv, lambda f: df.to_csv(f, index=False))
-
-    # CSV remains clean (no preamble). Metadata is written separately by caller.
-    logger.debug("Export -> %s (rows=%d)", out_csv, len(rows))
+    atomic_write(out_csv, lambda f: pd.DataFrame(rows).to_csv(f, index=False))
+    logger.debug('Export v2 -> %s (rows=%d)', out_csv, len(rows))

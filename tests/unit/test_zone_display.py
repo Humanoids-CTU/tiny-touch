@@ -108,8 +108,8 @@ def test_save_service_exports_aliases_without_changing_csv(tmp_path, template, z
     run_export({}, paths, 25, replace(metadata, zone_labels={zone: "Light on"}), 2)
     assert Path(paths.export_csv).read_bytes() == before
     exported = json.loads(Path(paths.export_metadata).read_text(encoding="utf-8"))
-    assert exported["Zone Labels"] == {zone: "Light on"}
-    assert list(exported)[-1] == "Zone Labels"
+    assert exported["Coding Setup"]["zone_labels"] == {zone: "Light on"}
+    assert "Zone Labels" not in exported
 
 
 def test_failed_inheritance_does_not_leave_a_partly_initialized_project(tmp_path, monkeypatch):

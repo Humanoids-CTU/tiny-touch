@@ -1,228 +1,102 @@
-# TinyTouch Export Data Format
+# TinyTouch export data format
 
-This is the specification of the files TinyTouch publishes for downstream analysis. It is
-written for people who consume the data — statisticians, pipeline authors, reviewers — not
-for people who modify the app.
+## Version 2 contract
 
-Two files per labeled video make up the published dataset:
+New saves write export format **2**. This is an intentional breaking change from
+unversioned anatomical-column exports. Keep the CSV together with its metadata JSON and labeled diagram PNG.
+SQLite working state still uses its established internal keys; no state migration occurs.
 
-```
-data/<video_name>/export/<video_name>_export.csv        the table, one row per frame
-data/<video_name>/export/<video_name>_metadata.json     the sidecar (fps, mode, labels, ...)
-```
+Paths remain `data/<video>/export/<video>_export.csv` and
+`data/<video>/export/<video>_metadata.json`. Before the first version 2 save replaces
+an older export, both existing files are copied unchanged into a timestamped
+`export/legacy-<UTC timestamp>/` folder. Analysis can still read those older CSVs,
+including the pre-v8 six-line preamble, without modifying them.
 
-Everything else under `data/<video_name>/` is internal: `state/<video_name>.db` is the
-app's working state, `frames/` holds the extracted JPEGs, and `plots/` holds the analysis
-dashboards. Do not parse those; they are free to change between versions. (One practical
-note: the HTML files in `plots/` share a single `plotly.min.js` in the same folder, so
-copy or share the folder as a whole.)
+The save service validates and stages all three files before replacing published
+files. Ordinary replacement failures restore the previous set. Separate files
+cannot be replaced in one filesystem transaction: a process or machine crash between
+replacements may require regenerating exports from the SQLite working state.
 
-**The CSV columns and cell encoding are unchanged.** The column set, the
-column order and the byte-level encoding of every cell are frozen and pinned by tests
-(`tests/unit/test_export_schema.py` for the order, `tests/unit/test_export_golden_master.py`
-for the bytes, `tests/unit/test_export_metadata.py` for the sidecar). Pre-v8 files require
-handling the legacy preamble described below. Current metadata also records the body
-template; preserving CSV compatibility does not make older working projects importable.
+## CSV columns and values
 
----
+UTF-8 without BOM, standard comma-separated CSV with a header and **one row for every
+frame**, including empty frames. `Frame` is zero based. The last frame index is
+included. The exact 30-column order is:
 
-## 1. The export CSV
+1. `Frame`, `Time_ms`
+2. For each of `Channel1`, `Channel2`, `Channel3`, `Channel4`, in order:
+   `ChannelN_XY`, `ChannelN_Onset`, `ChannelN_Zones`
+3. `Parameter_1`, `Parameter_2`, `Parameter_3`
+4. For each channel in the same order:
+   `ChannelN_Parameter_1`, `ChannelN_Parameter_2`, `ChannelN_Parameter_3`
+5. `Note`
 
-### File-level properties
+Public channel IDs are stable and independent of editable study labels. Their
+private state mapping is RH -> Channel1, LH -> Channel2, RL -> Channel3,
+LL -> Channel4. No anatomical prefix is emitted in version 2 columns.
 
-| Property | Value |
-| --- | --- |
-| Encoding | UTF-8, **no** BOM. Non-ASCII notes are stored as literal UTF-8, never `\uXXXX` escapes. |
-| Header | The **first line is the header row**. There is no preamble. |
-| Line terminator | Whatever `os.linesep` is on the machine that wrote the file: `\r\n` on Windows, `\n` on Linux. Read with a CSV reader in universal-newline mode; do not split on `\n` naively. |
-| Quoting | `QUOTE_MINIMAL` (pandas default). A cell is quoted only when it contains a comma or a quote; embedded quotes are doubled (`""`). |
-| Rows | Exactly one row per frame index, `0 .. total_frames` **inclusive**, in ascending order. Frames the annotator never touched are still present, with empty cells. |
-| Writes | The file is rewritten in full on every Save, atomically (temp file + `os.replace`), so a reader never sees a half-written export. |
+`ChannelN_XY` is a JSON array of numeric coordinate pairs, for example
+`[[120, 130], [9, 0]]`. `ChannelN_Zones` is a matching array of zone buckets,
+for example `[["A", "B"], ["OUTSIDE"]]`. The first point belongs to A and B;
+the second belongs to OUTSIDE. All points and all zone memberships are retained.
+An empty annotation has `[]` in both cells. A point without a recorded zone has
+an empty bucket, such as `[[]]`. X/Y length differences and ambiguous point/zone
+alignment are rejected instead of silently dropping data. Legacy state containing
+one point with flat multiple zones is normalized into one multi-zone bucket.
 
-> **Legacy preamble.** Exports written before v8 prefixed the table with a 6-line
-> human-readable metadata block. TinyTouch's own reader still tolerates it
-> (`src/adapters/export_reader.py`, `LEGACY_PREAMBLE_LINES = 6`). If you hit an old file
-> whose first line is not `Frame,Time_ms,...`, skip 6 lines.
+`Time_ms` is `Frame * 1000 / source_fps`, serialized to **three decimal places**:
+frame 201 at 25 FPS is `8040.000`; frame 1 at 30 FPS is `33.333`.
+Missing, zero, negative or non-finite FPS produces an **empty time cell**. Frame
+indices remain usable. FPS is retained at the source probe precision, not rounded
+to one decimal place. This is a constant-frame-rate index-derived time, not an
+independently probed presentation timestamp for variable-frame-rate video.
 
-### Column list, in order
+Onset and parameter cells contain `ON`, `OFF`, or an empty cell. `Note` is arbitrary
+text. Read empty scalar cells as empty strings, for example with pandas
+`keep_default_na=False`. Use a real CSV parser before applying `json.loads` to XY
+and Zones. CSV necessarily quotes fields containing commas or quotes and doubles
+embedded quotes: this is CSV encoding, not extra annotation data.
 
-34 columns. The limb blocks are ordered **LH, LL, RH, RL** — alphabetical, and
-deliberately *not* the order the limb selector shows in the GUI (RH, LH, RL, LL). The
-per-limb parameter block repeats the same LH, LL, RH, RL order.
+## Metadata snapshot
 
-| # | Column | Type | Meaning |
-| --- | --- | --- | --- |
-| 1 | `Frame` | int | Frame index, 0-based. Matches `frames/frame<N>.jpg`. |
-| 2 | `Time_ms` | float | `Frame / frame_rate * 1000`. **`0.0` for every row** when the frame rate could not be probed (see "Zero frame rate" below). |
-| 3 | `LH_X` | str | Comma-joined X coordinates of every click on this frame for the left hand. |
-| 4 | `LH_Y` | str | Comma-joined Y coordinates, index-aligned with `LH_X`. |
-| 5 | `LH_Onset` | str | `ON`, `OFF`, or empty. Applies to the whole row/limb, not to an individual click. |
-| 6 | `LH_Zones` | str | JSON list of zone buckets, one bucket per click (see "Zone buckets"). |
-| 7–10 | `LL_X`, `LL_Y`, `LL_Onset`, `LL_Zones` | | Same, left leg. |
-| 11–14 | `RH_X`, `RH_Y`, `RH_Onset`, `RH_Zones` | | Same, right hand. |
-| 15–18 | `RL_X`, `RL_Y`, `RL_Onset`, `RL_Zones` | | Same, right leg. |
-| 19 | `Parameter_1` | str | Global (whole-frame) parameter 1: `ON`, `OFF`, or empty. Can represent gaze by study convention — see "Gaze". |
-| 20 | `Parameter_2` | str | Global parameter 2: `ON`, `OFF`, or empty. |
-| 21 | `Parameter_3` | str | Global parameter 3: `ON`, `OFF`, or empty. |
-| 22–24 | `LH_Parameter_1`, `LH_Parameter_2`, `LH_Parameter_3` | str | Per-limb parameters for the left hand: `ON`, `OFF`, or empty. |
-| 25–27 | `LL_Parameter_1..3` | str | Same, left leg. |
-| 28–30 | `RH_Parameter_1..3` | str | Same, right hand. |
-| 31–33 | `RL_Parameter_1..3` | str | Same, right leg. |
-| 34 | `Note` | str | Free-text note for this frame, or empty. May contain commas and non-ASCII text (then quoted). |
+CSV format remains **2**. New metadata has `"Metadata Format Version": 2`;
+metadata without that key is the older revision. Analysis reads both revisions.
+External readers of new exports must use the paths below rather than the retired
+`Param Labels`, `Channel Param Labels`, `Channel Labels`, and `Zone Labels` fields.
 
-The human-readable names of the six parameter buttons are **not** in the CSV — they live in
-the metadata sidecar under `Param Labels` / `Limb Param Labels`. The CSV column names are
-fixed regardless of how the buttons are labeled in the app.
+- `Program Version`, `Video Name`, `Labeling Mode`, `Frame Rate`: export context.
+- `Coding Setup`: the single authoritative settings snapshot. It includes the
+  setup name and schema version, `template`, `zone_labels`, `channel_labels`,
+  `parameter_labels`, and `channel_parameter_labels`. Channel keys are Channel1..4;
+  parameter keys Par1..3 correspond to CSV Parameter_1..3 and
+  ChannelN_Parameter_1..3. Zone labels contain overrides; an unlisted zone retains
+  its ID as its name. The setup can still be reused as a coding configuration.
+- `Diagram`: source diagram/mask asset identifiers, `image` (the companion PNG's
+  relative filename), and `image_sha256` (checksum of that PNG).
+- `Coordinate Convention`: native diagram size, top-left origin, x right, y down,
+  and diagram-pixel units. These are not video-pixel coordinates.
+- `Frame Provenance`: zero-based indexing, milliseconds, and the rounding rule.
+- `Special Zones`, `Special Zones Note`, and optional cumulative
+  `Total Labeling Time (hours)` retain their existing meanings.
 
-### Cell encodings
+Each normal application save publishes `<video>_diagram.png` alongside the CSV
+and JSON. It contains the project's diagram with CSV zone IDs burned into their
+regions and a full ID-to-saved-name legend, including boundary/unmatched markers.
+The reference image is enlarged and has margins: exported XY coordinates still
+refer to the native diagram, not the reference PNG. It has no per-frame dots or
+selected-channel highlight. Labels come from the saved coding setup, not current
+machine preferences. Assets are the selected template assets installed at export
+time; this does not reconstruct historical assets from an older app installation.
 
-**Coordinates (`{limb}_X`, `{limb}_Y`).** Integers, comma-joined, no spaces, no brackets:
-`10,20` means two clicks at x=10 and x=20. A single click is a bare number (`50`), so the
-cell is unquoted; two or more clicks contain a comma and are therefore quoted (`"10,20"`).
-No clicks on that frame for that limb yields an **empty cell**. `X` and `Y` are always the
-same length and are positionally aligned. Coordinates are in **diagram image pixels** at
-native scale — the app divides display coordinates by the current `diagram_scale` before
-storing, so the numbers are independent of the user's zoom setting.
+Before replacing an older metadata revision, existing export files are archived
+unchanged in `legacy-<UTC timestamp>/`. CSV, JSON, and PNG are staged before
+publication, and ordinary replacement failures restore the previous files. A
+process/machine crash between replacements can still require regenerating the
+export from SQLite. Keep all three files together when sharing a dataset.
 
-**Zone buckets (`{limb}_Zones`).** A JSON array whose length equals the number of clicks;
-element *i* is the list of zone names hit by click *i*. Serialized with Python's
-`json.dumps` defaults, which put a **space after each comma**:
-
-```
-[]                       no clicks (this is the value in every "empty" row, not an empty cell)
-[["L"]]                  one click, one zone
-[["L"], ["I"]]           two clicks, one zone each
-[["L", "I"]]             one click that resolved to two zones
-[["NN"]]                 one click that hit no zone mask (see "NN")
-```
-
-Because the JSON contains quotes, the cell is quoted by the CSV writer and the inner quotes
-are doubled. The raw bytes for `[["L"], ["I"]]` are:
-
-```
-"[[""L""], [""I""]]"
-```
-
-An empty bucket list is the two-byte cell `[]` and is **not** quoted. Note the asymmetry:
-"no clicks" is an empty string in `{limb}_X` / `{limb}_Y` but the literal `[]` in
-`{limb}_Zones`.
-
-In practice TinyTouch writes at most **one** zone name per bucket: the mask hit test
-returns a single winning mask (see "Zone names" for how overlaps resolve), or the sentinel
-`NN`. Two-element buckets occur only
-in hand-edited or legacy data; readers should still handle them.
-
-**Onset (`{limb}_Onset`).** Exactly `ON`, `OFF`, or the empty string. The value describes
-the whole limb-row: when several clicks are placed on one frame for one limb, the most
-recent click's onset state overwrites the record's onset. Legacy archived data may contain
-a null (empty) onset where a modern file would contain `""`; both read back as empty.
-
-**Parameters.** `ON`, `OFF`, or empty. Empty means "not set" for this frame. There is no
-third stored state: the buttons cycle *unset → ON → OFF → unset*. Historic files could
-contain the literal string `None` for a per-limb parameter; the writer normalizes that to
-an empty cell.
-
-**Note.** Empty string when there is no note. Leading and trailing whitespace is stripped
-before storing.
-
-**Empty vs. null.** The exporter never writes the tokens `NaN`, `null`, `None` or `NA`.
-Every "absent" value is an empty cell. When reading with pandas, pass
-`keep_default_na=False` (and `dtype=str` if you want the raw tokens) so empty cells arrive
-as `""` instead of `NaN`.
-
-### Zero frame rate
-
-Some containers report `0` for the OpenCV frame-rate property. That does not abort the
-export: `Time_ms` becomes `0.0` on every row and all other cells are byte-identical to a
-normal export. The sidecar then records `"Frame Rate": 0.0` (or whatever was probed), and
-the analysis pipeline falls back to frame-based results only. If `Time_ms` is all zeros,
-derive time from `Frame` and a frame rate you know independently.
-
-### Gaze
-
-There is no `Look` column and there never was one in the current format. Infant gaze can
-be recorded through the **global `Parameter_1`** column by study convention. Its shipped
-label is `P1`; a study may rename it to `Looking1`, as in the example below. The configured
-label is written to the metadata sidecar under `Param Labels["Parameter_1"]`. Check the
-study's coding scheme before interpreting this parameter as gaze. See "Legacy notes" below.
-
----
-
-## 2. The metadata sidecar
-
-`data/<video_name>/export/<video_name>_metadata.json`, UTF-8, `indent=2`, LF newlines,
-literal UTF-8 (no `\uXXXX` escaping), keys in this exact order:
-
-| Key | Type | Meaning |
-| --- | --- | --- |
-| `Program Version` | str | The TinyTouch build that wrote the export, e.g. `"9.0.0 (Windows)"`. Matches the release tag. |
-| `Video Name` | str | Project folder name. Carries the `_reliability` suffix when the file came from a Reliability pass. |
-| `Labeling Mode` | str | `"Normal"` or `"Reliability"`. |
-| `template` | str | `"default"`, `"alternate"`, or `"general"`, selected for this project. Required by analysis; determines the diagrams and zone masks. |
-| `Frame Rate` | float | Frames per second as probed from the video, rounded to one decimal. May be `0.0` — see "Zero frame rate". |
-| `Special Zones` | list of str \| null | Zone names the annotator marked in the Special Zones dialog. What the marks mean (e.g. covered by clothing) is described by `Special Zones Note`. `null` means no zone was marked. Deduplicated but unsorted; a dot that resolved to several zones contributes one comma-joined string as a single entry. Replaces `Zones Covered With Clothes` from exports written before this change. |
-| `Special Zones Note` | str \| null | Free-text, project-wide description of what the special zones mark, as typed in the Special Zones dialog. Leading and trailing whitespace is stripped. `null` when no note was written. |
-| `Param Labels` | object | Display labels of the three global parameter buttons, keyed `"Parameter_1"`, `"Parameter_2"`, `"Parameter_3"`. `{}` when unavailable. |
-| `Limb Param Labels` | object | Display labels of the three per-limb parameter buttons, keyed `"XX_Parameter_1"`, `"XX_Parameter_2"`, `"XX_Parameter_3"`. The `XX` is a placeholder standing for any of the four limbs — the same three labels apply to all of them. `{}` when unavailable. |
-| `Channel Labels` | object | **General only.** Maps the existing CSV prefixes to channel labels, in selector order: `"RH": "Channel 1"`, `"LH": "Channel 2"`, `"RL": "Channel 3"`, `"LL": "Channel 4"`. Absent for Default and Alternate. |
-| `Zone Labels` | object | Optional for every template. Maps customized zone IDs to display names, e.g. `{"1": "Light on"}` or `{"I": "Target"}`. Omitted when no names are customized. An unlisted ID uses its own text as its display name. |
-| `Total Labeling Time (hours)` | float | Cumulative wall-clock time spent labeling this video, in hours, rounded to 4 decimals. Accumulated across sessions. **Present only when the app had a running labeling clock**; absent from files written without one. |
-
-General retains the same 34 CSV columns and cell encoding. The `LH`, `LL`, `RH`, and
-`RL` prefixes identify annotation channels; they carry no anatomical meaning for this
-template. `Channel Labels` applies to both the coordinate/onset/zone blocks and the
-per-channel parameter columns. Its key order follows the selector, while CSV column
-order remains **LH, LL, RH, RL**. The metadata key `Limb Param Labels` keeps its existing
-name and describes per-channel parameter buttons for General too.
-
-General metadata written before this extension can lack `Channel Labels`. The mapping
-above is fixed by the `general` template; reopening and saving the project adds the
-field. No database migration or CSV conversion is required. Default and Alternate
-metadata keep their existing key set and order when no zone names are customized.
-
-Zone renaming changes display names only. CSV `{limb}_Zones` cells, `Special Zones`,
-and mask filenames retain their original IDs. Join them to `Zone Labels` for display;
-never replace IDs with names when combining datasets. Names are project-specific and
-template-specific, can be edited after annotation starts, and are independent of the
-diagram visibility toggle. The `LINE` boundary marker and `NN` unassigned marker are
-not renameable. Names use one line of at most 40 characters. Blank names restore the ID.
-Older metadata without `Zone Labels` remains valid. When present, this key follows
-`Channel Labels` (if any) and precedes `Total Labeling Time (hours)` (if any).
-
-HTML analysis reports use these exported mappings for display. A renamed zone appears
-as `Name (ID)`, including in heatmap hover text and the additional `zone_table.html`.
-Metadata mappings do not rename matrix axes used for calculations or columns/values
-in `analysis_table_frames.csv` and `analysis_table_seconds.csv`. Report file names,
-including `heatmap_RH.html` for General's Channel 1, remain unchanged. Exports without
-the optional mappings use template defaults. Invalid mappings are rejected before
-report files are written.
-
-Example for Default (General additionally includes `Channel Labels` before labeling time):
-
-```json
-{
-  "Program Version": "9.0.0 (Windows)",
-  "Video Name": "infant_042",
-  "Labeling Mode": "Normal",
-  "template": "default",
-  "Frame Rate": 25.0,
-  "Special Zones": ["A", "B"],
-  "Special Zones Note": "Covered by clothing (diaper, socks)",
-  "Param Labels": {
-    "Parameter_1": "Looking1",
-    "Parameter_2": "P2",
-    "Parameter_3": "P3"
-  },
-  "Limb Param Labels": {
-    "XX_Parameter_1": "LP1",
-    "XX_Parameter_2": "LP2",
-    "XX_Parameter_3": "LP3"
-  },
-  "Total Labeling Time (hours)": 3.2517
-}
-```
-
----
+Version 2 analysis tables use a `Channel` ID column and heatmap files use
+`heatmap_ChannelN.html`. Internal calculations retain their established keys.
+Old unversioned exports retain their legacy analysis filenames/table IDs.
 
 ## 3. Semantic conventions
 
@@ -292,18 +166,18 @@ labeled "number of onsets" rather than a duration.
 
 ## 4. Zone names
 
-Zone names in `{limb}_Zones` are the **file names of the zone-mask PNGs**, minus the
+Zone names in `ChannelN_Zones` are the **file names of the zone-mask PNGs**, minus the
 extension. Adding a PNG to the mask directory adds a zone; nothing else needs to change.
 
 | Template | Directory | Zones |
 | --- | --- | --- |
 | Default | [`src/resources/icons/zones3/`](../src/resources/icons/zones3/) | 38 masks: `A`–`Z`, `WB`, `XB`, `YB`, `ZB`, `BOX1`–`BOX6`, `LINE`, `OUTSIDE` |
 | Alternate | [`src/resources/icons/zones3_new_template/`](../src/resources/icons/zones3_new_template/) | 32 masks: `A`–`T`, `QB`, `RB`, `SB`, `TB`, `BOX1`–`BOX6`, `LINE`, `OUTSIDE` |
-| General | [`src/resources/icons/zones_general/`](../src/resources/icons/zones_general/) | 10 masks: `1`–`8`, `LINE`, `OUTSIDE`. Eight square targets, numbered left-to-right, top-to-bottom in two columns. |
+| General | [`src/resources/icons/zones_general/`](../src/resources/icons/zones_general/) | 14 masks: `1`–`8`, `Channel1`–`Channel4`, `LINE`, `OUTSIDE`. Eight square targets, numbered left-to-right, top-to-bottom in two columns (the IDs are not printed on the diagram; the labeler draws them when zone names are shown), plus the four footer boxes, one per channel in portable order, so a channel can itself be the target of a touch (as a hand or leg can on the anatomical diagrams). |
 
-Select Default, Alternate, or General in the template picker before selecting a video. The saved
-project choice determines the annotation diagram, Special Zones outline, and channel images. **The zone name alone does not tell you which
-template produced it** — `A` means different anatomy in the two sets. Keep the metadata JSON with your dataset: its `template` field identifies the set.
+Select a video from the library, then choose Default, Alternate, or General in the
+preparation wizard. The prepared project choice determines the annotation diagram, Special Zones outline, and channel images. **The zone name alone does not tell you which
+template produced it** — `A` means different anatomy in the two sets. Keep the metadata JSON with your dataset: its `Coding Setup.template` field identifies the set (top-level `template` in older metadata).
 
 Special names:
 
@@ -315,7 +189,7 @@ Special names:
   precedence below), which makes it a meaningful "cannot tell" marker rather than an
   artifact of zone naming.
 - `NN` — **no mask matched**. This is a sentinel produced by the hit test, not a mask file.
-  It appears in `{limb}_Zones` cells and, for transitions only, stands in for an episode
+  It appears in `ChannelN_Zones` cells and, for transitions only, stands in for an episode
   edge that carries no zone at all.
 
 Masks are grayscale PNGs where the zone is drawn in **black on white**; a click hits a zone
@@ -343,122 +217,21 @@ share.
 
 ---
 
-## 5. Reading the export
-
-### Python (pandas)
+## Reading version 2
 
 ```python
 import json
 import pandas as pd
 
-df = pd.read_csv(
-    "data/infant_042/export/infant_042_export.csv",
-    keep_default_na=False,   # empty cells stay "" instead of becoming NaN
-)
-
-with open("data/infant_042/export/infant_042_metadata.json", encoding="utf-8") as fh:
-    meta = json.load(fh)
-fps = meta["Frame Rate"] or None
-
-# Coordinates: comma-joined -> list of ints
-def coords(cell):
-    return [int(t) for t in cell.split(",") if t.strip()]
-
-# Zone buckets: JSON -> list of lists, one bucket per click
-def zones(cell):
-    return json.loads(cell) if cell else []
-
-# Reconstruct closed episodes for one limb, half-open [ON, OFF).
-def episodes(df, limb):
-    out, start = [], None
-    for frame, onset in zip(df["Frame"], df[f"{limb}_Onset"]):
-        if onset == "ON" and start is None:
-            start = frame
-        elif onset == "OFF" and start is not None:
-            out.append((start, frame, frame - start))   # (on, off, duration_frames)
-            start = None
-    if start is not None:
-        print(f"WARN: {limb} has an unterminated touch starting at frame {start}")
-    return out
-
-for limb in ("LH", "LL", "RH", "RL"):
-    eps = episodes(df, limb)
-    total = sum(d for _, _, d in eps)
-    print(limb, len(eps), "touches,", total, "frames",
-          f"({total / fps:.2f} s)" if fps else "(no frame rate)")
+df = pd.read_csv("video_export.csv", keep_default_na=False)
+points = json.loads(df.loc[0, "Channel1_XY"])
+buckets = json.loads(df.loc[0, "Channel1_Zones"])
+assert len(points) == len(buckets)
+for (x, y), zones in zip(points, buckets):
+    print(x, y, zones)
 ```
 
-`{limb}_Zones` is the one column that always needs `json.loads`; everything else is a plain
-scalar or a comma-joined list.
-
-### R
-
-```r
-df <- read.csv(
-  "data/infant_042/export/infant_042_export.csv",
-  colClasses = "character",     # keep ON/OFF and the JSON cells verbatim
-  na.strings = character(0)     # empty cells stay "", not NA
-)
-df$Frame   <- as.integer(df$Frame)
-df$Time_ms <- as.numeric(df$Time_ms)
-
-# Zone buckets need a JSON parser, e.g. jsonlite::fromJSON(df$LH_Zones[i])
-```
-
----
-
-## 6. Legacy notes and version history
-
-### Per-limb `Look` retired (2026-07-13)
-
-Per-limb gaze (`Look`) has been fully retired from TinyTouch. Current-format exports never
-contained `{limb}_Look` columns, so this did not change the export schema.
-
-External scripts that still reference `Look` columns from legacy exports should use the
-global `Parameter_1` column only when the study uses it for gaze. Its configured label
-is recorded under `Param Labels` in the metadata sidecar; there is no automatic conversion
-of legacy gaze data.
-
-### Metadata moved out of the CSV (v8)
-
-Exports written before v8 carried a 6-line human-readable metadata preamble ahead of the
-header row. That metadata now lives in `<video>_metadata.json` and the CSV starts with its
-header. Readers that need to handle both layouts should skip 6 lines when the first line is
-not the header — this is what `src/adapters/export_reader.py` does.
-
-### Folder layout renamed, working state moved to SQLite (v9.0.0)
-
-The output root was renamed `Labeled_data/` → `data/`, the per-video working-state folder
-`<video>/data/` → `<video>/state/`, and the source-video folder `Videos/` → `videos/`. At
-the same time the working state became a single SQLite database,
-`state/<video>.db`, replacing the `<video>_unified.csv` journal and its five CSV/JSON/TXT
-sidecars.
-
-**There is no import or automatic migration.** v9.0.0 resumes only schema 2 working
-databases with a recorded template. Unsupported databases are rejected, as are project
-folders containing exports without a working database. The old `Labeled_data/` directory
-is not searched. Keep older projects as archives, retain their exports, and start new work
-in a fresh data folder.
-
-Scripts with hardcoded `Labeled_data/...` paths need updating. The export file **name**,
-its position inside `export/`, and its columns and cell encoding are unchanged. The CSV
-reader still handles the pre-v8 preamble layout above, but the app's Analysis workflow
-requires a recorded body template. CSV-reader compatibility does not provide a way to
-resume older annotation projects.
-
-### 3D pose mode removed (after v8.0.0)
-
-An experimental 3D pose-labeling mode existed in earlier versions. It kept its own project
-folder, suffixed `_3d`, alongside the touch dataset. It was removed entirely; the last
-version containing it is the `v8.0.0` tag. The touch export described above is unaffected.
-
----
-
-## See also
-
-- [ANNOTATION_GUIDE.md](ANNOTATION_GUIDE.md) — how the data is produced, for annotators.
-- [../ARCHITECTURE.md](../ARCHITECTURE.md) — architecture, on-disk layout, internal state database.
-- [`src/adapters/export_writer.py`](../src/adapters/export_writer.py) — the writer; this
-  document describes its output.
-- [`src/domain/touch_stats.py`](../src/domain/touch_stats.py) — the normative
-  implementation of the semantic conventions in section 3.
+Existing unversioned datasets use separate comma-joined LH/LL/RH/RL X and Y
+columns and nested JSON Zones. They are archival inputs, not the current writer
+contract. The original legacy byte fixture remains in the test suite alongside
+the version 2 golden fixture.

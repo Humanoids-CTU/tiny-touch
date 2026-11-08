@@ -25,12 +25,17 @@ repository enforces this itself (`SqliteRepository._check_thread`).
 import copy
 import os
 import logging
+import json
+import shutil
+import tempfile
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Dict, Optional
 
 from adapters.export_writer import export_from_unified, write_export_metadata
 from adapters.sqlite_repo import SqliteRepository
 from domain.model import FrameBundle
+from domain.coding_setup import CodingSetup
 from domain.project import ProjectPaths
 from domain.templates import validate_template
 
@@ -52,6 +57,7 @@ class MetadataInputs:
     template: Optional[str] = None
     special_zones_note: Optional[str] = None
     zone_labels: Optional[dict] = None
+    coding_setup: CodingSetup | None = None
 
 
 def load_special_zones(repo: Optional[SqliteRepository]):
@@ -93,36 +99,75 @@ def run_export(snapshot: Dict[int, FrameBundle],
                fps,
                metadata: MetadataInputs,
                total_frames: int) -> None:
-    """Full export: metadata and legacy CSV, all written
+    """Full export: metadata and versioned CSV, all written
     from the immutable snapshot. Runs on the GUI's worker thread."""
     template = validate_template(metadata.template)
     os.makedirs(paths.export_dir, exist_ok=True)
-    write_export_metadata(
-        meta_path=paths.export_metadata,
-        template=template,
-        program_version=metadata.program_version,
-        video_name=metadata.video_name,
-        labeling_mode=metadata.labeling_mode,
-        frame_rate=fps,
-        special_zones_list=metadata.special_zones_list,
-        special_zones_note=metadata.special_zones_note,
-        param_labels=metadata.param_labels,
-        limb_param_labels=metadata.limb_param_labels,
-        labeling_time_seconds=metadata.labeling_time_seconds,
-        zone_labels=metadata.zone_labels,
-    )
-    export_from_unified(
-        snapshot,
-        paths.export_csv,
-        metadata.program_version,
-        metadata.video_name,
-        metadata.labeling_mode,
-        fps,
-        metadata.special_zones_list,
-        total_frames=total_frames,
-        param_labels=metadata.param_labels,
-        limb_param_labels=metadata.limb_param_labels,
-    )
+    with tempfile.TemporaryDirectory(prefix=".export-", dir=paths.export_dir) as staging:
+        staged_csv = os.path.join(staging, "export.csv")
+        staged_meta = os.path.join(staging, "metadata.json")
+        staged_diagram = os.path.join(staging, os.path.basename(paths.export_diagram))
+        export_from_unified(
+            snapshot,
+            staged_csv,
+            metadata.program_version,
+            metadata.video_name,
+            metadata.labeling_mode,
+            fps,
+            metadata.special_zones_list,
+            total_frames=total_frames,
+            param_labels=metadata.param_labels,
+            limb_param_labels=metadata.limb_param_labels,
+        )
+        write_export_metadata(
+            meta_path=staged_meta,
+            template=template,
+            program_version=metadata.program_version,
+            video_name=metadata.video_name,
+            labeling_mode=metadata.labeling_mode,
+            frame_rate=fps,
+            special_zones_list=metadata.special_zones_list,
+            special_zones_note=metadata.special_zones_note,
+            param_labels=metadata.param_labels,
+            limb_param_labels=metadata.limb_param_labels,
+            labeling_time_seconds=metadata.labeling_time_seconds,
+            zone_labels=metadata.zone_labels,
+            coding_setup=metadata.coding_setup,
+            diagram_path=staged_diagram,
+        )
+        if os.path.exists(paths.export_csv):
+            try:
+                with open(paths.export_metadata, encoding="utf-8") as stream:
+                    previous_metadata = json.load(stream)
+                    previous_version = (previous_metadata.get("Export Format Version"),
+                                        previous_metadata.get("Metadata Format Version", 1))
+            except (OSError, ValueError, AttributeError):
+                previous_version = None
+            if previous_version != (2, 2):
+                archive = os.path.join(paths.export_dir, "legacy-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ"))
+                os.makedirs(archive)
+                for existing in (paths.export_csv, paths.export_metadata, paths.export_diagram):
+                    if os.path.exists(existing):
+                        shutil.copy2(existing, archive)
+        backups = {}
+        targets = (paths.export_csv, paths.export_metadata, paths.export_diagram)
+        for target in targets:
+            if os.path.exists(target):
+                backup = os.path.join(staging, os.path.basename(target) + ".previous")
+                shutil.copy2(target, backup)
+                backups[target] = backup
+        try:
+            os.replace(staged_csv, paths.export_csv)
+            os.replace(staged_meta, paths.export_metadata)
+            os.replace(staged_diagram, paths.export_diagram)
+        except OSError:
+            for target in targets:
+                if target in backups:
+                    os.replace(backups[target], target)
+                elif os.path.exists(target):
+                    os.remove(target)
+            raise
+
 
 
 
