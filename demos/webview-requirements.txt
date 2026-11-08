@@ -1,0 +1,2 @@
+pywebview==6.2.1
+opencv-contrib-python==4.12.0.88
