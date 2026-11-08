@@ -22,21 +22,28 @@ from adapters.timer_resolution import PreciseTimers
 from adapters.zone_masks import load_zone_masks, editable_zone_names, zone_label_positions
 from domain.playback import compute_play_step
 from domain.model import (
+    LIMBS,
     FrameRecord,
     bundle_summary_str,
     preview_lines_for_save,
 )
 from domain.project import ProjectPaths
-from domain.touch import NO_ZONE, find_last_open_onset, zones_at
+from domain.touch import NO_ZONE, find_last_open_onset, find_open_touches, zones_at
 from domain.templates import TEMPLATE_LABELS, DEFAULT_TEMPLATE, get_template
 from domain.zone_display import ZoneDisplaySettings
 from gui import theme
 from gui.video_surface import GpuVideoSurface, VideoRendererError
 from gui.special_zones_app import SpecialZonesApp, DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE
 from gui.frame_dialog import FrameDialog
+from gui.open_touches_dialog import OpenTouchesDialog, GO_TO_ONSET
 from gui.template_dialog import choose_template, template_diagram
+from gui.video_library import choose_video
+from gui.coding_setup_wizard import configure_video
+from adapters.project_catalog import list_projects, SOURCE_META
+from adapters.sqlite_repo import SqliteRepository
 from gui.zone_names_dialog import edit_zone_names
 from gui.zone_labels import draw_zone_labels
+from gui.diagram_highlight import DiagramHighlighter
 from gui.resource_utils import asset_path
 from gui.ui_components import build_ui
 from log_setup import open_logs_folder
@@ -268,7 +275,7 @@ def custom_confirm_close(root) -> bool:
     return confirmed
 
 
-def load_parameter_names_into(video_obj, par_buttons, limb_par_buttons):
+def load_parameter_names_into(video_obj, par_buttons, limb_par_buttons, setup=None):
     """
     Sets names onto the video object and updates the buttons' labels.
     par_buttons: dict {1: button, 2: button, 3: button}
@@ -278,7 +285,10 @@ def load_parameter_names_into(video_obj, par_buttons, limb_par_buttons):
     this keeps the Video-entity mutation + Tk button wiring (GUI side, to be
     absorbed by the service layer in the next refactor step).
     """
-    labels = config.load_parameter_labels()
+    labels = config.load_parameter_labels() if setup is None else {
+        **{f"parameter{i}": setup.parameter_labels[f"Par{i}"] for i in range(1, 4)},
+        **{f"limb_parameter{i}": setup.limb_parameter_labels[f"Par{i}"] for i in range(1, 4)},
+    }
     p1 = labels['parameter1']
     p2 = labels['parameter2']
     p3 = labels['parameter3']
@@ -335,6 +345,11 @@ class LabelingApp(tk.Tk):
         self.labeling_timer = LabelingTimer()
         self._zone_masks = []
         self._zone_dir = None
+        # Hover highlight + zone tag on the diagram (gui.diagram_highlight).
+        # Built in _draw_diagram_base once masks and scale are known, keyed by
+        # (zone directory, scale) so limb switches reuse it.
+        self._highlighter = None
+        self._highlighter_key = None
         self._closing = False
         self._frame_extraction_cancel = None
 
@@ -362,6 +377,8 @@ class LabelingApp(tk.Tk):
         # Arrow playback follows key-down/key-up, independently of OS repeat.
         self.realtime_arrow_hold = self.config.realtime_arrow_hold
         logger.debug("realtime arrow hold: %s", self.realtime_arrow_hold)
+        self.diagram_hover_effects = self.config.diagram_hover_effects
+        logger.debug("diagram hover effects: %s", self.diagram_hover_effects)
         self.play_dir = 1
         self._arrow_held_dir = None
         self._arrow_release_id = None
@@ -456,6 +473,10 @@ class LabelingApp(tk.Tk):
         self._zone_masks = []
         self._zone_dir = None
         self._zone_label_positions = {}
+        if self._highlighter is not None:
+            self._highlighter.destroy()
+        self._highlighter = None
+        self._highlighter_key = None
 
     def _clear_frame_children(self, frame):
         for child in frame.winfo_children():
@@ -466,7 +487,7 @@ class LabelingApp(tk.Tk):
             return
 
         definition = get_template(self.template)
-        self.limb_parameter_heading.config(text=f"{definition.channel_noun}-specific")
+        self.limb_parameter_heading.config(text="Channel parameters")
         self._clear_frame_children(self.mode_controls_frame)
         self._clear_frame_children(self.limb_parameter_frame)
         self.limb_par1_btn = None
@@ -475,7 +496,7 @@ class LabelingApp(tk.Tk):
 
         ttk.Label(
             self.mode_controls_frame,
-            text=f"{definition.channel_noun} Selector",
+            text="Channel Selector",
             font=theme.FONT_BOLD,
         ).pack(anchor="n", pady=(5, 6))
 
@@ -485,7 +506,8 @@ class LabelingApp(tk.Tk):
         for index, channel in enumerate(definition.channels):
             ttk.Radiobutton(
                 limb_selector_frame,
-                text=channel.label,
+                text=(self.coding_setup.channel_labels[channel.key]
+                      if getattr(self, "coding_setup", None) else channel.label),
                 variable=self.option_var_1,
                 value=channel.key,
                 command=self._on_limb_selected,
@@ -683,6 +705,28 @@ class LabelingApp(tk.Tk):
     def update_last_mouse_position(self, event):
         self.last_mouse_x = event.x
         self.last_mouse_y = event.y
+        if self._highlighter is not None and self.video is not None:
+            self._highlighter.on_motion(event.x, event.y)
+
+    def on_diagram_leave(self, _event=None):
+        if self._highlighter is not None:
+            self._highlighter.on_leave()
+
+    def _hover_tooltip(self, zone, x, y):
+        """Text of the tag next to the pointer at native diagram pixel (x, y).
+
+        A channel selector box (General's footer) says what a click selects;
+        otherwise the tag names the zone a click would record, renamed zones
+        as `Name (ID)` like the reports do. `NN` (no zone) shows nothing.
+        """
+        definition = get_template(self.template)
+        channel = definition.channel_at(x, y)
+        if channel is not None:
+            return f"Select {definition.channel_label(channel)}"
+        if zone == NO_ZONE:
+            return None
+        label = self.zone_display.label(zone)
+        return label if label == zone else f"{label} ({zone})"
 
     def on_resize(self, event):
         """<Configure> on the video panel: rebuild the buffer once it settles.
@@ -1035,6 +1079,8 @@ class LabelingApp(tk.Tk):
         display_scale = getattr(self, "diagram_scale", 1.0)
         x_pos = event.x * (1.0 / display_scale)
         y_pos = event.y * (1.0 / display_scale)
+        if self._select_channel_at(x_pos, y_pos):
+            return
         zone_results = list(self.find_image_with_white_pixel(x_pos, y_pos))  # list for stability
 
         current_frame = self.video.current_frame
@@ -1067,6 +1113,9 @@ class LabelingApp(tk.Tk):
         )
 
         self.mark_bundle_changed()  # also repaints the dots and timelines
+        highlighter = getattr(self, "_highlighter", None)  # absent on the unit-test stubs
+        if highlighter is not None:
+            highlighter.flash(zone_results[0], theme.DOT_ONSET if is_onset else theme.DOT_OFFSET)
 
         annotation_logger.info(
             "f=%s %s click %s zones=%s points=%s",
@@ -1119,6 +1168,18 @@ class LabelingApp(tk.Tk):
         self._ghost_cache = (key, (frame, points))
         self.video.last_green = points
 
+    def _select_channel_at(self, x_pos, y_pos):
+        """Clicking a channel box drawn on the diagram (General's footer) selects
+        that channel instead of recording a dot. Returns True when the click
+        landed on a box, whether or not the selection changed."""
+        channel = get_template(self.template).channel_at(x_pos, y_pos)
+        if channel is None:
+            return False
+        if channel != self.option_var_1.get():
+            self.option_var_1.set(channel)
+            self._on_limb_selected()
+        return True
+
     def _on_limb_selected(self):
         selected = self.option_var_1.get()
         previous = getattr(self, "_logged_limb", None)
@@ -1151,20 +1212,35 @@ class LabelingApp(tk.Tk):
 
         scale = getattr(self, "diagram_scale", 1.0)
         # Cache the decoded+resized PhotoImage per (path, scale) so switching
-        # limbs back and forth does not re-read and resize the PNG.
+        # limbs back and forth does not re-read and resize the PNG. The flat
+        # RGB copy beside it is what the hover highlight tints.
         cache = getattr(self, "_diagram_photo_cache", None)
         if cache is None:
             cache = self._diagram_photo_cache = {}
-        photo = cache.get((image_path, scale))
-        if photo is None:
+        cached = cache.get((image_path, scale))
+        if cached is None:
             with Image.open(image_path) as img:
                 resized = img.resize(
                     (int(img.width * scale), int(img.height * scale)), Image.LANCZOS
                 )
-            photo = cache[(image_path, scale)] = ImageTk.PhotoImage(resized)
-        self.photo = photo
+            white = Image.new("RGBA", resized.size, (255, 255, 255, 255))
+            flat = Image.alpha_composite(white, resized.convert("RGBA")).convert("RGB")
+            cached = cache[(image_path, scale)] = (ImageTk.PhotoImage(resized), flat)
+        self.photo, base_rgb = cached
         self.diagram_canvas.create_image(0, 0, anchor="nw", image=self.photo, tags=("diagram",))
         draw_zone_labels(self.diagram_canvas, self.zone_display, self._zone_label_positions, scale)
+
+        key = (self._zone_dir, scale)
+        if self._highlighter is None or self._highlighter_key != key:
+            if self._highlighter is not None:
+                self._highlighter.destroy()
+            self._highlighter = DiagramHighlighter(
+                self.diagram_canvas, self._zone_masks, scale, base_rgb.size, self._hover_tooltip
+            )
+            self._highlighter.set_enabled(self.diagram_hover_effects)
+            self._highlighter_key = key
+        self._highlighter.set_base(base_rgb)
+        self._highlighter.canvas_cleared()  # delete("all") above dropped its items
 
     # === Zone Masks & Lookups ==================================================
     def _load_zone_masks(self):
@@ -1197,6 +1273,9 @@ class LabelingApp(tk.Tk):
             if self.video.total_frames >= frame_number + self.video.number_frames_in_zone * self.video.current_frame_zone:
                 self.video.current_frame = frame_number + self.video.number_frames_in_zone * self.video.current_frame_zone
                 self.display_first_frame()
+                # display_first_frame refreshes the controls only; move both playheads.
+                self.draw_timeline()
+                self.draw_timeline2()
             else:
                 logger.error("invalid frame number")
 
@@ -1212,6 +1291,10 @@ class LabelingApp(tk.Tk):
             self.video.current_frame_zone = new_frame // self.video.number_frames_in_zone
             logger.debug("jumping to exact frame: %s", new_frame)
             self.display_first_frame()
+            # display_first_frame refreshes the controls only; the zone may have
+            # changed, so repaint the zone timeline and move both playheads.
+            self.draw_timeline()
+            self.draw_timeline2()
 
     def parameter_color_at_frame(self, frame):
         b = self.video.frames.get(frame, {}) if self.video else {}
@@ -1259,31 +1342,30 @@ class LabelingApp(tk.Tk):
         )
 
     @staticmethod
-    def _update_timeline_playhead(canvas, item_ids, x, top, bottom):
-        """Create or move the shared 2 px playhead stem and triangle cap."""
-        cap_height = 7
-        stem_top = min(bottom, top + cap_height)
-        line_coords = (x, stem_top, x, bottom)
-        cap_coords = (x - 4, top, x + 4, top, x, stem_top)
-        if item_ids is None:
-            line_id = canvas.create_line(
-                *line_coords,
-                fill=theme.PLAYHEAD,
-                width=2,
-            )
-            cap_id = canvas.create_polygon(
-                *cap_coords,
-                fill=theme.PLAYHEAD,
-                outline="",
-            )
-            return line_id, cap_id
+    def _update_timeline_playhead(canvas, item_id, x, top, bottom):
+        """Create or move the shared playhead: a triangle cap on a 2 px stem.
 
-        line_id, cap_id = item_ids
-        canvas.coords(line_id, *line_coords)
-        canvas.coords(cap_id, *cap_coords)
-        canvas.tag_raise(line_id)
-        canvas.tag_raise(cap_id)
-        return item_ids
+        Cap and stem are one polygon so Tk rasterizes them together; two
+        separate items (line + polygon) snapped to pixels differently and
+        the stem visibly detached from the cap at fractional x positions.
+        """
+        cap_height = 7
+        x = int(round(x))
+        stem_top = min(bottom, top + cap_height)
+        coords = (
+            x - 4, top,
+            x + 4, top,
+            x + 1, stem_top,
+            x + 1, bottom,
+            x - 1, bottom,
+            x - 1, stem_top,
+        )
+        if item_id is None:
+            return canvas.create_polygon(*coords, fill=theme.PLAYHEAD, outline="")
+
+        canvas.coords(item_id, *coords)
+        canvas.tag_raise(item_id)
+        return item_id
 
     def draw_timeline(self):
         self._assert_ui_thread()
@@ -2188,6 +2270,7 @@ class LabelingApp(tk.Tk):
             labeling_time_seconds=self._current_video_time_s(),
             template=self.state_repo.load_template().template,
             zone_labels=dict(self.zone_display.labels),
+            coding_setup=getattr(self, "coding_setup", None),
         )
 
         # 2) Snapshot BEFORE the worker-thread export so concurrent edits can
@@ -2220,9 +2303,9 @@ class LabelingApp(tk.Tk):
         the limb controls have not been built yet."""
         if self.limb_par1_btn and self.limb_par2_btn and self.limb_par3_btn:
             return {
-                "XX_Parameter_1": (self.limb_par1_btn.cget("text") or "LimbPar1"),
-                "XX_Parameter_2": (self.limb_par2_btn.cget("text") or "LimbPar2"),
-                "XX_Parameter_3": (self.limb_par3_btn.cget("text") or "LimbPar3"),
+                "XX_Parameter_1": (self.limb_par1_btn.cget("text") or "CP1"),
+                "XX_Parameter_2": (self.limb_par2_btn.cget("text") or "CP2"),
+                "XX_Parameter_3": (self.limb_par3_btn.cget("text") or "CP3"),
             }
         return None
 
@@ -2236,6 +2319,8 @@ class LabelingApp(tk.Tk):
         down for validation against the export metadata.
         """
         if not self.video:
+            return
+        if not self._resolve_open_touches_before_analysis():
             return
         self.save_data()
         paths = ProjectPaths(self.video_name)
@@ -2256,6 +2341,51 @@ class LabelingApp(tk.Tk):
             )
         logger.info("opening analysis dashboard: %s", result.master_html)
         webbrowser.open(result.master_html)
+
+    def _channel_display_label(self, key: str) -> str:
+        """Coder-facing name of a channel: the coding-setup label when the
+        project has one, else the internal key."""
+        setup = getattr(self, "coding_setup", None)
+        if setup is not None:
+            try:
+                return setup.channel_labels[key]
+            except (KeyError, TypeError):
+                pass
+        return key
+
+    def _resolve_open_touches_before_analysis(self) -> bool:
+        """Surface every onset without an offset before analysis runs.
+
+        Returns True when analysis should proceed (nothing open, or "Skip and
+        analyze") and False when the coder cancelled or chose to go and fix an
+        onset by hand. An open touch is not an error for the analysis (it is
+        censored and reported as unterminated), but the coder should see it
+        first and decide.
+        """
+        touches = find_open_touches(self.video.frames, LIMBS)
+        if not touches:
+            return True
+        self.stop_video()
+        self._cancel_arrow_hold_state()
+        self._cancel_wheel_scroll()
+        logger.info(
+            "analysis: %d open touch(es) before run: %s", len(touches),
+            ", ".join(f"{t.limb}@{t.start_frame}" for t in touches),
+        )
+        result = OpenTouchesDialog(self, touches, self._channel_display_label).result
+        self.focus_set()
+        if result is None:
+            logger.info("analysis cancelled at the open-touch prompt")
+            return False
+        action, index = result
+        if action == GO_TO_ONSET:
+            target = touches[index].start_frame
+            logger.info("analysis postponed: jumping to open onset %s@%s", touches[index].limb, target)
+            if target != self.video.current_frame:
+                self.next_frame(target - self.video.current_frame)
+            return False
+        logger.info("analysis proceeding with %d open touch(es) left open", len(touches))
+        return True
 
     def play_video(self):
         if self.video is None:
@@ -2322,6 +2452,10 @@ class LabelingApp(tk.Tk):
         self._reset_zone_cache()
         self._load_zone_masks()
         self.rebuild_annotation_controls()
+        if self.video is not None and getattr(self, "coding_setup", None):
+            load_parameter_names_into(self.video,
+                {1: self.par1_btn, 2: self.par2_btn, 3: self.par3_btn},
+                {1: self.limb_par1_btn, 2: self.limb_par2_btn, 3: self.limb_par3_btn}, self.coding_setup)
         self._redraw_diagram()
 
     def _save_zone_display(self, settings):
@@ -2345,6 +2479,9 @@ class LabelingApp(tk.Tk):
         return True
 
     def edit_project_zone_names(self):
+        if self.state_repo and self.state_repo.load_preparation_state() == "ready":
+            messagebox.showinfo("Coding setup locked", "Prepared video coding labels are read-only.", parent=self)
+            return
         if self.video is None or self.state_repo is None:
             return
 
@@ -2548,49 +2685,49 @@ class LabelingApp(tk.Tk):
             self.frame_buffer.poke()
 
     def _load_video_flow(self):
-        # 1) Gather the user's choices first. Nothing is saved or torn down
-        #    yet, so cancelling either dialog leaves the current session
-        #    completely untouched (mode chip included).
-        mode = self.ask_labeling_mode()
-        if mode is None:
-            logger.info("video load cancelled: no mode selected")
+        choice = choose_video(self, list_projects(), center=center_over_parent)
+        if choice is None:
             return
-
-        selected_template = self.ask_template()
-        if selected_template is None:
-            return
-
-        with center_native_file_dialog(self):
-            video_path = filedialog.askopenfilename(
-                parent=self,
-                title="Select Video File",
-                filetypes=(
-                    ("Video files", "*.mp4 *.MP4 *.mov *.MOV *.avi *.AVI *.mkv *.MKV *.flv *.FLV *.wmv *.WMV"),
-                    ("All files", "*.*"),
-                ),
-            )
-        if not video_path: return
-
-        raw_video_name = os.path.splitext(os.path.basename(video_path))[0]
-        candidate_paths = ProjectPaths.for_video(raw_video_name, reliability=(mode == "Reliability"))
+        if choice == "new":
+            with center_native_file_dialog(self):
+                video_path = filedialog.askopenfilename(parent=self, title="Select Video File",
+                    filetypes=(("Video files", "*.mp4 *.MP4 *.mov *.MOV *.avi *.AVI *.mkv *.MKV *.flv *.FLV *.wmv *.WMV"), ("All files", "*.*")))
+            if not video_path:
+                return
+            mode = self.ask_labeling_mode()
+            if mode is None:
+                return
+            raw_video_name = os.path.splitext(os.path.basename(video_path))[0]
+            candidate_paths = ProjectPaths.for_video(raw_video_name, reliability=mode == "Reliability")
+        else:
+            video_path = choice.source
+            candidate_paths = choice.paths
+            mode = "Reliability" if candidate_paths.is_reliability else "Normal"
         try:
-            template_plan = project_service.plan_project_template(
-                candidate_paths, selected_template,
-            )
+            setup, ready, inherited = project_service.inspect_coding_setup(candidate_paths)
+            state = SqliteRepository.inspect_template(candidate_paths.state_db)
+            if not ready and not inherited:
+                if os.path.exists(candidate_paths.state_db):
+                    messagebox.showinfo("Review coding setup", project_service.coding_setup_warning(candidate_paths), parent=self)
+                setup = configure_video(self, setup, center=center_over_parent, locked_template=bool(state and state.locked))
+                if setup is None:
+                    return
+            if setup is None:
+                raise ValueError("Review and prepare the original project's coding setup first.")
+            template_plan = project_service.plan_project_template(candidate_paths, setup.template)
+            project_service.validate_source_association(candidate_paths, video_path)
         except (ValueError, RuntimeError, OSError, sqlite3.Error) as exc:
-            messagebox.showerror("Cannot select project template", str(exc), parent=self)
+            messagebox.showerror("Cannot open video", str(exc), parent=self)
             return
-        if template_plan.template != selected_template:
-            messagebox.showinfo(
-                "Saved template restored",
-                f"This project uses {TEMPLATE_LABELS[template_plan.template]}. "
-                "Its saved or inherited template will be used.", parent=self,
-            )
 
         # 2) Read-only preparation of the NEW video (copy + probe) while the
         #    current project, if any, is still fully alive — a failure here
         #    cancels the load without disturbing it.
-        copied_path = self._prepare_video_copy(video_path)
+        try:
+            copied_path = self._prepare_video_copy(video_path)
+        except (ValueError, OSError) as exc:
+            messagebox.showerror("Cannot copy video", str(exc), parent=self)
+            return
         if not copied_path:
             logger.info("video load cancelled: copy failed")
             return
@@ -2623,7 +2760,7 @@ class LabelingApp(tk.Tk):
         #    threads idle on a None context, so frames of two videos can
         #    never mix in the buffer.
         video = Video(video_path, total_frames=raw_frame_count - 1)
-        video.frame_rate = round(fps, 1)
+        video.frame_rate = fps
         self.frame_rate = video.frame_rate
         self.framerate_label.config(text=f"Frame Rate: {self.frame_rate}")
         self.jump_frame_count = max(1, round(self.frame_rate * self.jump_seconds))
@@ -2654,6 +2791,10 @@ class LabelingApp(tk.Tk):
                 program_version=video.program_version,
             )
             project_service.apply_project_template(self.state_repo, template_plan)
+            self.state_repo.save_coding_setup(setup, preparation_state="ready" if ready else "draft")
+            self.state_repo.set_meta(SOURCE_META, os.path.abspath(video_path))
+            self.state_repo.set_meta("source_video_sha256", project_service.source_fingerprint(video_path))
+            self.coding_setup = setup
             # ORDERING (unchanged): the labeling timer starts BEFORE the frame
             # load so the session is already accumulating; an extraction abort
             # below rolls it back via _stop_video_timer_if_any().
@@ -2678,12 +2819,15 @@ class LabelingApp(tk.Tk):
             video,
             {1: self.par1_btn, 2: self.par2_btn, 3: self.par3_btn},
             {1: self.limb_par1_btn, 2: self.limb_par2_btn, 3: self.limb_par3_btn},
+            setup=getattr(self, "coding_setup", None),
         )
 
         # Frames generation/check
         logger.debug("checking frames folder: %s", paths.frames_dir)
         if not project_service.frames_ready(paths, video.total_frames):
             logger.info("frame set incomplete; extracting frames for %s", video_name)
+            if not ready:
+                self.state_repo.set_meta("preparation_state", "preparing")
             progress_update, progress_close = self._open_frame_progress_window()
             extraction_cancel = Event()
             self._frame_extraction_cancel = extraction_cancel
@@ -2720,6 +2864,13 @@ class LabelingApp(tk.Tk):
                 progress_close()
         else:
             logger.debug("frame set is complete for %s", video_name)
+
+        try:
+            self.state_repo.mark_prepared()
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            messagebox.showerror("Preparation failed", str(exc), parent=self)
+            self._abort_load_to_clean_state()
+            return
 
         # 5) COMMIT POINT: the state DB is open, the frames exist on disk.
         #    Publish the new session to the rest of the app — the worker
@@ -2996,10 +3147,11 @@ class LabelingApp(tk.Tk):
             "parameter1": tk.StringVar(value=str(_v("parameter1", "Parameter 1"))),
             "parameter2": tk.StringVar(value=str(_v("parameter2", "Parameter 2"))),
             "parameter3": tk.StringVar(value=str(_v("parameter3", "Parameter 3"))),
-            "limb_parameter1": tk.StringVar(value=str(_v("limb_parameter1", "Limb Parameter 1"))),
-            "limb_parameter2": tk.StringVar(value=str(_v("limb_parameter2", "Limb Parameter 2"))),
-            "limb_parameter3": tk.StringVar(value=str(_v("limb_parameter3", "Limb Parameter 3"))),
+            "limb_parameter1": tk.StringVar(value=str(_v("limb_parameter1", "CP1"))),
+            "limb_parameter2": tk.StringVar(value=str(_v("limb_parameter2", "CP2"))),
+            "limb_parameter3": tk.StringVar(value=str(_v("limb_parameter3", "CP3"))),
             "realtime_arrow_hold": tk.BooleanVar(value=bool(_v("realtime_arrow_hold", True))),
+            "diagram_hover_effects": tk.BooleanVar(value=bool(_v("diagram_hover_effects", True))),
         }
 
         show_zone_names = tk.BooleanVar(value=self.zone_display.show_names)
@@ -3074,6 +3226,18 @@ class LabelingApp(tk.Tk):
             row=row, column=1, sticky="w", padx=8, pady=4
         )
         row += 1
+        ttk.Label(content, text="Highlight the zone under the pointer").grid(
+            row=row, column=0, sticky="w", padx=8, pady=4
+        )
+        ttk.Checkbutton(
+            content,
+            variable=vars_map["diagram_hover_effects"],
+            bootstyle="round-toggle",
+            takefocus=0,
+        ).grid(
+            row=row, column=1, sticky="w", padx=8, pady=4
+        )
+        row += 1
 
         def parse_float(value, key):
             if value is None:
@@ -3104,46 +3268,51 @@ class LabelingApp(tk.Tk):
             pady=(0, 6),
         )
         row += 1
-        channel_noun = get_template(self.template).channel_noun
+        channel_noun = "Channel"
+        coding_readonly = self.video is not None and self.state_repo.load_preparation_state() == "ready"
+        if self.video is not None and getattr(self, "coding_setup", None):
+            for i in range(1, 4):
+                vars_map[f"parameter{i}"].set(self.coding_setup.parameter_labels[f"Par{i}"])
+                vars_map[f"limb_parameter{i}"].set(self.coding_setup.limb_parameter_labels[f"Par{i}"])
         ttk.Label(content, text=f"{channel_noun} Parameter 1").grid(
             row=row, column=0, sticky="w", padx=8, pady=4
         )
-        ttk.Entry(content, textvariable=vars_map["limb_parameter1"], width=18).grid(
+        ttk.Entry(content, textvariable=vars_map["limb_parameter1"], width=18, state="readonly" if coding_readonly else "normal").grid(
             row=row, column=1, sticky="w", padx=8, pady=4
         )
         row += 1
         ttk.Label(content, text=f"{channel_noun} Parameter 2").grid(
             row=row, column=0, sticky="w", padx=8, pady=4
         )
-        ttk.Entry(content, textvariable=vars_map["limb_parameter2"], width=18).grid(
+        ttk.Entry(content, textvariable=vars_map["limb_parameter2"], width=18, state="readonly" if coding_readonly else "normal").grid(
             row=row, column=1, sticky="w", padx=8, pady=4
         )
         row += 1
         ttk.Label(content, text=f"{channel_noun} Parameter 3").grid(
             row=row, column=0, sticky="w", padx=8, pady=4
         )
-        ttk.Entry(content, textvariable=vars_map["limb_parameter3"], width=18).grid(
+        ttk.Entry(content, textvariable=vars_map["limb_parameter3"], width=18, state="readonly" if coding_readonly else "normal").grid(
             row=row, column=1, sticky="w", padx=8, pady=4
         )
         row += 1
         ttk.Label(content, text="Parameter 1").grid(
             row=row, column=0, sticky="w", padx=8, pady=4
         )
-        ttk.Entry(content, textvariable=vars_map["parameter1"], width=18).grid(
+        ttk.Entry(content, textvariable=vars_map["parameter1"], width=18, state="readonly" if coding_readonly else "normal").grid(
             row=row, column=1, sticky="w", padx=8, pady=4
         )
         row += 1
         ttk.Label(content, text="Parameter 2").grid(
             row=row, column=0, sticky="w", padx=8, pady=4
         )
-        ttk.Entry(content, textvariable=vars_map["parameter2"], width=18).grid(
+        ttk.Entry(content, textvariable=vars_map["parameter2"], width=18, state="readonly" if coding_readonly else "normal").grid(
             row=row, column=1, sticky="w", padx=8, pady=4
         )
         row += 1
         ttk.Label(content, text="Parameter 3").grid(
             row=row, column=0, sticky="w", padx=8, pady=4
         )
-        ttk.Entry(content, textvariable=vars_map["parameter3"], width=18).grid(
+        ttk.Entry(content, textvariable=vars_map["parameter3"], width=18, state="readonly" if coding_readonly else "normal").grid(
             row=row, column=1, sticky="w", padx=8, pady=4
         )
         row += 1
@@ -3157,7 +3326,7 @@ class LabelingApp(tk.Tk):
                 row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 6))
             row += 1
             template_state = self.state_repo.load_template()
-            status = "locked" if template_state.locked else "changeable until annotation begins"
+            status = "locked after preparation" if template_state.locked else "changeable before preparation"
             ttk.Label(content, text=f"Template: {TEMPLATE_LABELS[template_state.template]}\n({status})").grid(
                 row=row, column=0, sticky="w", padx=8, pady=4)
             ttk.Button(
@@ -3170,6 +3339,7 @@ class LabelingApp(tk.Tk):
                 row=row, column=0, sticky="w", padx=8, pady=4)
             ttk.Button(
                 content, text="Edit zone names", command=self.edit_project_zone_names,
+                state=tk.DISABLED if self.state_repo.load_preparation_state() == "ready" else tk.NORMAL,
                 style="Tool.TButton", takefocus=0,
             ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
             row += 1
@@ -3205,10 +3375,11 @@ class LabelingApp(tk.Tk):
                 new_cfg["parameter1"] = _label_from("parameter1", new_cfg.get("parameter1", "Parameter 1"))
                 new_cfg["parameter2"] = _label_from("parameter2", new_cfg.get("parameter2", "Parameter 2"))
                 new_cfg["parameter3"] = _label_from("parameter3", new_cfg.get("parameter3", "Parameter 3"))
-                new_cfg["limb_parameter1"] = _label_from("limb_parameter1", new_cfg.get("limb_parameter1", "Limb Parameter 1"))
-                new_cfg["limb_parameter2"] = _label_from("limb_parameter2", new_cfg.get("limb_parameter2", "Limb Parameter 2"))
-                new_cfg["limb_parameter3"] = _label_from("limb_parameter3", new_cfg.get("limb_parameter3", "Limb Parameter 3"))
+                new_cfg["limb_parameter1"] = _label_from("limb_parameter1", new_cfg.get("limb_parameter1", "CP1"))
+                new_cfg["limb_parameter2"] = _label_from("limb_parameter2", new_cfg.get("limb_parameter2", "CP2"))
+                new_cfg["limb_parameter3"] = _label_from("limb_parameter3", new_cfg.get("limb_parameter3", "CP3"))
                 new_cfg["realtime_arrow_hold"] = bool(vars_map["realtime_arrow_hold"].get())
+                new_cfg["diagram_hover_effects"] = bool(vars_map["diagram_hover_effects"].get())
             except ValueError as e:
                 messagebox.showerror("Invalid settings", str(e), parent=win)
                 return
@@ -3350,6 +3521,11 @@ class LabelingApp(tk.Tk):
         self.realtime_arrow_hold = new_realtime
         logger.debug("realtime arrow hold: %s", self.realtime_arrow_hold)
 
+        self.diagram_hover_effects = bool(cfg.get("diagram_hover_effects", True))
+        if self._highlighter is not None:
+            self._highlighter.set_enabled(self.diagram_hover_effects)
+        logger.debug("diagram hover effects: %s", self.diagram_hover_effects)
+
         new_scale = float(cfg.get("diagram_scale", 1.0))
         new_dot = float(cfg.get("dot_size", 10))
         self.diagram_scale = new_scale
@@ -3362,6 +3538,7 @@ class LabelingApp(tk.Tk):
                 target,
                 {1: self.par1_btn, 2: self.par2_btn, 3: self.par3_btn},
                 {1: self.limb_par1_btn, 2: self.limb_par2_btn, 3: self.limb_par3_btn},
+                setup=getattr(self, "coding_setup", None) if self.video else None,
             )
             if self.video is not None:
                 self.update_button_colors()

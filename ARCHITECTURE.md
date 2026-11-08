@@ -49,7 +49,7 @@ tiny-touch/
 │   │   └── playback.py           # Pure play-step rule (boundary stop + clamped advance)
 │   ├── adapters/                 # I/O edges: files, cv2/ffmpeg, plotly, config.json
 │   │   ├── sqlite_repo.py        # Working-state DB per video (SOURCE OF TRUTH)
-│   │   ├── export_writer.py      # Legacy export schema + metadata sidecar (write)
+│   │   ├── export_writer.py      # Versioned channel CSV + metadata snapshot (write)
 │   │   ├── export_reader.py      # Export CSV read, incl. legacy 6-line preamble
 │   │   ├── plotting.py           # Every plotly figure / CSV table (ReportFigure factory)
 │   │   ├── report_page.py        # master_<name>.html layout/CSS (inlines the figures)
@@ -67,6 +67,7 @@ tiny-touch/
 │   │   └── analysis_service.py   # Analysis: read -> validate -> compute -> write
 │   ├── gui/                      # Tkinter only
 │   │   ├── ui_components.py      # Layout, widgets, key/mouse bindings
+│   │   ├── diagram_highlight.py  # Hover highlight, zone tag and click flash on the diagram
 │   │   ├── theme.py              # Colors / fonts / widget styling
 │   │   ├── native_title_bar.py   # Windows title-bar colors; no-op on Linux
 │   │   ├── special_zones_app.py  # Special-zone selector + note dialog (Toplevel)
@@ -123,7 +124,7 @@ User input (clicks / keys)
          └─► repaints diagram canvas + timelines
                                               ┌─► persist_state  (dirty frames -> state DB,
                                               │                   ONE transaction, Tk thread)
-On Save / Close ─► LabelingApp.save_data ─────┼─► export_from_unified  (full legacy schema)
+On Save / Close ─► LabelingApp.save_data ─────┼─► export_from_unified  (version 2 channel schema)
                                               ├─► write_export_metadata (JSON sidecar)
 ```
 
@@ -254,74 +255,74 @@ diagram-coordinate contracts are unchanged. See [manual acceptance](docs/VIDEO_R
 
 ## Labeling Modes
 
-Mode is chosen on every "Load Video" via a dialog (`ask_labeling_mode`):
+### Video library and frozen coding setups
 
-- **Labeling mode** -- `Normal` or `Reliability` (the latter appends `_reliability` to the video name, reuses original frames, and keeps a separate dataset for inter-rater agreement).
+`Load Video` opens a themed project library. New videos go through a setup wizard
+before copying/extraction: choose a mode and diagram or shared configuration,
+review zone aliases, four channel labels and six parameter labels, then prepare.
+Existing prepared projects resume directly. The library inspects project metadata
+without creating databases. Filenames alone are not proof of video identity:
+ambiguous same-name sources must be rejected rather than silently reusing frames.
 
-The choice is persisted in `config.json` (`last_labeling_mode`).
+`domain.coding_setup.CodingSetup` is the immutable coding definition. Its portable
+JSON representation uses `Channel1` through `Channel4`; working-state adapters
+retain the established `RH`, `LH`, `RL`, `LL` keys in that order. This avoids
+reinterpreting existing annotation rows. Diagram geometry and zone IDs remain
+unchanged. New selectors use Channel 1–4 with user-supplied labels.
 
-The next dialog selects a template for new projects, before the video picker. Read-only
-`plan_project_template` then inspects both Normal/Reliability databases before the current
-project is unloaded. Only current-schema projects with recorded template IDs are accepted.
-Cancellation or rejection leaves the databases and active template unchanged. Saved choices
-override the picker selection; conflicting existing pairs are rejected.
+`adapters.coding_configs.CodingConfigStore` reads and writes named JSON files in
+`config/` beside the application's `config.json`. The GUI supplies this directory,
+so source, frozen builds and isolated tests resolve the same writable location.
+These files are reusable starting points, not live references. Each project keeps
+its own complete snapshot in SQLite metadata. Application appearance/playback
+preferences remain in `config.json` and cannot redefine a prepared project.
 
-`domain.templates.TEMPLATES` is the single registry for template labels, relative diagram
-and mask paths, native canvas dimensions, and channel labels/images in display order.
-Its immutable definitions contain no file I/O; GUI and adapters resolve their paths with
-`asset_path`. Zone and plotting adapters accept template IDs rather than a two-template
-boolean. The stored channel keys and CSV column order are independent of display order.
+Preparation state (`draft`, `preparing`, `ready`, `needs_review`) distinguishes a
+usable video from an interrupted preparation. After frames have been verified,
+the repository marks the setup ready and locks its definition. Repository methods
+enforce the lock, including legacy template/zone-name setters. Annotation values,
+notes, Special Zones marks and visibility preferences remain editable.
 
-General uses eight numbered square zones and four channels in selector order:
-Channel 1 (`RH`), Channel 2 (`LH`), Channel 3 (`RL`), Channel 4 (`LL`). Every channel
-uses the same eight-square geometry and masks under `icons/zones_general`, with a
-footer highlighting the selected channel. Its annotation and Settings
-headings use channel terminology; configured parameter labels remain user-owned.
-Activating a template refreshes both the masks and annotation controls.
+Supported older databases without a snapshot can adopt their recorded template,
+zone aliases and export parameter labels. Missing historical label provenance
+requires review; mutable global preferences are not historical evidence. A new
+Reliability pass inherits the full prepared setup, with separate annotations.
+This adoption does not restore retired pre-SQLite project formats.
 
-`domain.templates.TemplateState` owns template names (`default`, `alternate`, `general`) and the
-permanent lock rule. The SQLite `meta` keys `template` and `template_locked` own the
-project choice. This release creates schema 3 databases; other schema versions and
-existing projects missing a template ID are rejected. There is no migration, historical
-template confirmation, or import of previously coded data. Reopening projects created
-by this release restores their saved template normally.
+### Diagram registry and compatibility
 
-The controller durably locks before the first annotation mutation; Special Zones locks
-before adding its first dot, and saving a non-blank Special Zones note also locks. Repository saves also retain locks for non-GUI consumers. Deletion
-never unlocks. A linked Reliability pair locks both projects. Settings permits changing
-only an unlocked project with no open Special Zones dialog. All diagram and mask consumers use
-the active project choice, and project changes clear the mask cache. Special Zones and previews
-use each template's neutral `LINE.png` outline, which matches its mask coordinates.
+`domain.templates.TEMPLATES` remains the registry for diagram labels, image/mask
+paths, native dimensions and historical anatomical display names. The GUI and
+adapters resolve assets through `asset_path`; all diagram and mask consumers use
+the active project's template. Switching a draft template clears its mask cache.
 
-The CSV format is unchanged. Export metadata includes `"template": "default"`,
-`"alternate"`, or `"general"`. General metadata also includes `Channel Labels`, derived
-from its template definition: `RH` → Channel 1, `LH` → Channel 2, `RL` → Channel 3,
-`LL` → Channel 4. All templates can add optional `Zone Labels` metadata when customized.
-Template identity uses the existing SQLite metadata and locking rules; no schema change
-is needed. Analysis requires the template field and rejects missing, invalid, or conflicting choices. See
-[docs/DATA_FORMAT.md#2-the-metadata-sidecar](docs/DATA_FORMAT.md#2-the-metadata-sidecar).
+General uses eight square zones (`1`-`8`). Portable channel order is Channel1 (`RH`),
+Channel2 (`LH`), Channel3 (`RL`), Channel4 (`LL`), independently of historical CSV
+column order. New exports use these generic channel identifiers for every diagram.
+The squares carry no printed IDs; enabling "Show zone names" in Settings draws the
+zone IDs or project zone names on them. The footer boxes 1-4 are clickable:
+`ChannelDefinition.hit_box` holds each box in native pixels (shared with
+`generate_general_template.py`), and `on_diagram_click` selects that channel instead
+of recording a dot when a click lands on one.
 
-Settings → Zone names edits project display aliases and the per-template “Show zone names
-on diagrams” preference (off by default). `domain.zone_display.ZoneDisplaySettings` validates
-the immutable name mapping. SQLite `meta.zone_display:<template>` stores its JSON, so an
-unlocked template switch can restore that template's own names without mixing vocabularies.
-New linked projects inherit a snapshot of the original's active-template settings; subsequent
-edits remain local to each pass. Initial template selection and inherited names commit in one
-transaction. Missing settings mean original IDs and hidden names; no database migration is needed.
-
-`adapters.zone_masks.zone_label_positions` finds an interior point in each winning mask region.
-The shared `gui.zone_labels` overlay renders the effective names above the image and below dots
-on both annotation and Special Zones canvases. Masks, coordinates, stored zone IDs, and CSV
-encoding never change. `LINE` and `NN` have no editable display name.
+The existing template-only lock is retained for historical projects and becomes
+locked when a full setup is prepared. Deleting annotations never unlocks it.
+`ZoneDisplaySettings` still owns aliases and the show-names preference; prepared
+aliases must match the setup snapshot, but visibility can change independently.
+`adapters.zone_masks.zone_label_positions` finds an interior point for each label;
+`gui.zone_labels` draws the same aliases in annotation and Special Zones views.
+`LINE` and `NN` cannot be renamed. Zone IDs, mask geometry and native coordinates
+remain stable; names belong in metadata and presentation only.
 
 ### Touch Annotation
 
 - Navigate frame-by-frame: `←` / `→`, mouse wheel, `<<` / `<` / `>` / `>>` buttons, `Space` or Play / Stop, click on either timeline. `Shift`+arrow and `<<` / `>>` jump by `jump_seconds` worth of frames. All key bindings live in `gui.ui_components._bind_navigation` and are suppressed while the note entry has focus (`_guard_key`). Wheel notches are queued and consumed one frame per video frame interval (`LabelingApp._wheel_tick`), so a fast flick moves at playback speed rather than racing the redraw; the queue is capped at `WHEEL_BACKLOG_S` so motion stops shortly after the wheel does.
 - **Select Frame**, between `<` and `>`, pauses playback and cancels queued wheel/arrow movement before opening a modal integer dialog. OK/Enter validates the range and jumps through `next_frame`; Cancel/Escape leaves the frame unchanged. Wheel navigation and queued playback advances are suppressed while the dialog is open. The frame counter is read-only; Notes is only for annotations.
-- Pick a limb (RH / LH / RL / LL) via radio buttons; the diagram re-renders with that limb's overlays.
+- Pick Channel 1–4 via radio buttons; each selector includes its configured name and the diagram re-renders with that channel's overlays.
 - **Left-click** on the diagram = touch-onset (green dot), **right-click** = touch-offset (red dot), **middle-click** or `d` = remove the dot nearest the pointer (within ~20 display px).
+- **Hover feedback** (`gui.diagram_highlight.DiagramHighlighter`, toggled by `diagram_hover_effects`): the zone under the pointer fades in with an amber tint, glow and outline, a tag next to the pointer names it (renamed zones as `Name (ID)`; General's footer boxes read `Select Channel n`), and a click flashes the zone in the dot's colour. The zone comes from `domain.touch.zone_label_map`, the per-pixel form of `zones_at`, so it is always the zone the click would record. The overlay is a canvas item of its own (`hover`, below the zone labels and dots), repainted on one `after` loop that exists only while a fade is in progress, so an idle or steadily hovered diagram costs nothing during playback. The dots-only repaint leaves it alone; a full repaint deletes it and the next motion recreates it.
 - Zones under each click are auto-detected from per-zone PNG masks under [src/resources/icons/zones3/](src/resources/icons/zones3/) (or [src/resources/icons/zones3_new_template/](src/resources/icons/zones3_new_template/) when the project uses `alternate`). Both directories are loaded by directory scan (`adapters.zone_masks.load_zone_masks`), so *every* PNG in them is live -- adding a file adds a zone. Masks are black-on-white; a hit is pixel `== 0` and a miss yields the `NN` sentinel (`domain.touch.zones_at`). The masks OVERLAP on 1.4% / 2.2% of the diagram (almost all of it the `LINE` mask lying over the zones it separates), so overlaps resolve by **precedence, not filename order**: real anatomical zone > `BOX1..BOX6` > `OUTSIDE` > `LINE` > `NN`. `LINE` means "the click is exactly between two zones", so it is only recorded when nothing else claims the pixel; sorted filename order is just the tie-break inside one tier (in practice only box-vs-box borders). The real/catch-all split is one predicate, `domain.touch.is_catch_all_zone`, shared with `touch_stats.zone_sort_key`. A click that resolves to `NN` is logged with a `WARN` naming the frame, limb and coordinates.
-- Track infant gaze and up to 3 global + 3 per-limb parameters. Each button is a three-state toggle (`unset → ON → OFF → unset`, `domain.touch.cycle_param_state`); gaze is global `Par1`. Button labels are user-editable in Settings → persisted to `config.json` and written into the export metadata, but the export COLUMN names never change.
+- Track infant gaze and up to 3 global + 3 per-channel parameters. Each button is a three-state toggle (`unset → ON → OFF → unset`, `domain.touch.cycle_param_state`); gaze can use global `Par1` by study convention. Button labels come from the frozen project coding setup and are included in export metadata.
 - Six "boxes" on the diagram act as catch-all zones (ground, prop, etc).
 - Two timelines visualize all touch events; the upper, slimmer one is the global scrub bar and the taller one is the 100-frame detail view for the selected limb.
 
@@ -349,13 +350,15 @@ them.
 
 ### Supported data layout (no migration path)
 
-This release is for new projects and resumes only its own schema 3 databases with
-recorded template IDs. Other working-state formats are not imported or converted.
+The app resumes supported schema 3 databases with recorded template IDs and
+adopts their coding labels as described above. Other working-state formats are
+not imported or converted.
 Project loading rejects existing exports with no working database, preventing them
 from being opened as an empty project and overwritten on Save. Use a fresh data
 folder for new work and keep older project folders as archives.
 
-The CSV and metadata export contracts remain unchanged for downstream consumers.
+New saves use the versioned channel export contract in `docs/DATA_FORMAT.md`.
+Historical export pairs are archived before the first format replacement.
 The app's Analysis workflow requires the template recorded in the accompanying metadata.
 
 ### Working state: `state/<video>.db`
@@ -418,19 +421,24 @@ sidecar, and the semantic conventions downstream analysis must follow — is
 
 ```
 Frame, Time_ms,
-LH_X, LH_Y, LH_Onset, LH_Zones,
-LL_X, LL_Y, LL_Onset, LL_Zones,
-RH_X, RH_Y, RH_Onset, RH_Zones,
-RL_X, RL_Y, RL_Onset, RL_Zones,
+Channel1_XY, Channel1_Onset, Channel1_Zones,
+Channel2_XY, Channel2_Onset, Channel2_Zones,
+Channel3_XY, Channel3_Onset, Channel3_Zones,
+Channel4_XY, Channel4_Onset, Channel4_Zones,
 Parameter_1, Parameter_2, Parameter_3,
-LH_Parameter_1..3, LL_Parameter_1..3, RH_Parameter_1..3, RL_Parameter_1..3,
+Channel1_Parameter_1..3, Channel2_Parameter_1..3, Channel3_Parameter_1..3, Channel4_Parameter_1..3,
 Note
 ```
 
-Note the limb block order is **LH, LL, RH, RL** — not the `domain.model.LIMBS` order
-(`LH, RH, LL, RL`) the rest of the app uses. `{limb}_X`/`Y` are comma-separated coordinate lists (multiple clicks per frame allowed); `{limb}_Zones` is a JSON list-of-lists aligned with the click list.
+Each `ChannelN_XY` cell contains JSON coordinate pairs; `ChannelN_Zones` contains
+the matching zone groups. Both multiple points and multiple zones per point are
+preserved. Misaligned data is rejected before publication. `Time_ms` uses source
+FPS precision and three decimal places; unusable FPS gives an empty time cell.
+Metadata records `Export Format Version: 2`, the full coding setup and coordinate
+conventions. The reader normalizes both versions into the existing internal
+calculation vocabulary. Older export pairs are archived before replacement.
 
-**This schema and its byte-level encoding are FROZEN.** Three test files pin it:
+**Version 2 is the current export contract.** Three test files pin it:
 `tests/unit/test_export_schema.py` (column set + order),
 `tests/unit/test_export_golden_master.py` (a checked-in fixture compared byte for byte) and
 `tests/unit/test_export_metadata.py` (sidecar keys, order and formatting). Changing any of
@@ -450,10 +458,11 @@ survive a Settings round-trip (`AppConfig.raw` keeps the full parsed dict). Keys
 | `appearance` | yes | `light` (default) or `dark`. Applied immediately and remembered across restarts; body diagrams stay white. |
 | `dot_size` | yes | Click-marker radius on the diagram. |
 | `minimal_touch_length` | no | Visualization threshold (ms) shown as the "Minimal Touch Length" readout, converted to frames. **Filters nothing**, in the app or in Analysis. |
-| `parameter1..3` | yes | Display labels for the three global parameter buttons. |
-| `limb_parameter1..3` | yes | Display labels for the three per-limb parameter buttons. |
+| `parameter1..3` | only without prepared video | Legacy machine defaults; a prepared video's global labels come from its coding snapshot. |
+| `limb_parameter1..3` | only without prepared video | Legacy machine defaults; a prepared video's channel labels come from its coding snapshot. |
 | `video_downscale` | yes | Display-only video downscale factor (1 = full, 2 = half). Affects rendering speed only. |
 | `jump_seconds` | yes | Fast-jump distance in seconds for `<<` / `>>` and Shift+Arrow; multiplied by the frame rate at load time into `jump_frame_count`. |
+| `diagram_hover_effects` | yes | Default `true`. Hovering the diagram tints the zone under the pointer and shows its name next to the pointer; a click flashes the zone in the dot's colour. Visual only (`gui.diagram_highlight`); the highlighted zone is the one `zones_at` would record. |
 | `realtime_arrow_hold` | yes | Arrow key-down steps once; holding for 150 ms starts playback. Key-up or focus loss cancels the hold timer and stops arrow playback. Targets source FPS without skipping frames. Disabled: step per keyboard repeat. Toolbar `<` / `>` always step one frame. |
 | `perf_enabled` / `perf_log_every_s` / `perf_log_top_n` | no | Optional `PerfLogger` (see [src/perf_utils.py](src/perf_utils.py)). When on, prints rolling averages of timed code blocks (buffer loop, click handlers, etc.). |
 | `log_level_console` | no | Console threshold (`INFO` by default); `TINYTOUCH_LOG_LEVEL` overrides it for development. The session file always records `DEBUG`. |
@@ -493,7 +502,13 @@ exception to otherwise pure computation.
 
 ## Application Workflow
 
-1. **Load Video** -- pick `Normal` / `Reliability`, choose a template for new projects, then select a video file (mp4/mov/avi/mkv/flv/wmv). The video is copied into `videos/` and the project tree is created under `data/<video>/` so the working set is self-contained, frames are extracted (or copied for Reliability), prior state is loaded, and the buffering thread starts. Loading **another video mid-session** is supported: `LabelingApp._unload_current_video` first persists the open project exactly like Close does (save, last position, labeling time), then detaches it in the one order that cannot mix two projects' data — video dropped (idling the worker threads) → frame buffer emptied (generation bump) → state DB closed — before the new project is opened. The new session is built against a local `Video` and published only after its frames exist; a failure mid-load falls back to the clean "no video loaded" state, and cancelling the mode, template or file dialog leaves the open project untouched.
+1. **Load Video** -- browse the library and resume a prepared project or select a
+   new file and finish the coding setup wizard. Choices are gathered before the
+   current project is detached. Save failure prevents switching. The new session
+   is published only after its state is loaded and frames exist; successful
+   preparation locks its setup. Frame extraction failure leaves a retryable project
+   and a clean unloaded controller. Unloading retains the order: save current
+   data/position/time, drop the active video, reset the frame buffer, close SQLite.
 2. **Special Zones** -- mark a project-wide set of body zones (e.g. covered with clothes) and describe them in a note; stored in the state DB's `special_zone_dots` and `meta.special_zones_note` and surfaced in the export metadata as `Special Zones` / `Special Zones Note`.
 3. **Annotate** -- pick a limb, click onsets/offsets, set gaze and parameters, type notes. Edits stay in memory until Save.
 4. **Save** -- `Save` button (or auto on Close / before Load) writes the dirty frames to the state DB (one transaction), then the export CSV (full) and the metadata sidecar. The `Changed` flags are cleared.
@@ -529,7 +544,7 @@ Rules that downstream research depends on -- documented at length in
 | Rule | Meaning |
 | --- | --- |
 | **Half-open `[ON, OFF)`** | A touch's duration is `OFF - ON`: active on the onset frame, offset frame excluded. Shortest closed touch = 1 frame. Matches what the labeler's timeline shades. |
-| **Open touches are censored** | An `ON` with no `OFF` is `Episode.closed=False`: no duration, excluded from totals / percentages / means / stdev / transitions / histograms, but counted and reported as "open (unterminated)" in the tables, the master page and a `WARN` log. |
+| **Open touches are censored** | An `ON` with no `OFF` is `Episode.closed=False`: no duration, excluded from totals / percentages / means / stdev / transitions / histograms, but counted and reported as "open (unterminated)" in the tables, the master page and a `WARN` log. The GUI runs `domain.touch.find_open_touches` on the in-memory frames before analysis and shows `gui/open_touches_dialog.py`: jump to the onset, or analyze with the touches left open. |
 | **Transitions are pairwise** | A touch with 2 start zones and 2 end zones contributes 4 heatmap counts, so heatmap totals exceed the touch count. Stated in the heatmap subtitle. |
 | **`minimal_touch_length` is not a filter** | It is a GUI display threshold only; analysis counts every closed touch, 1-frame ones included. |
 | **Frame rate may be unusable** | `None` / `0` / negative fps (some containers report 0) never crashes: frame-based results are produced in full, every seconds-based value is empty, and the duration histogram switches to frame buckets. |
@@ -540,7 +555,8 @@ These rules are also stated for external readers in
 [docs/DATA_FORMAT.md](docs/DATA_FORMAT.md#3-semantic-conventions); keep the two in step.
 
 The written artifacts and their file names are a contract too (the master page links
-them and users bookmark them): `heatmap_<LIMB>.html`, `touch_trajectory.html`,
+them and users bookmark them): `heatmap_ChannelN.html` for version 2 (legacy
+exports retain `heatmap_<LIMB>.html`), `touch_trajectory.html`,
 `analysis_table_frames.csv`, `analysis_table_seconds.csv`, `table.html`, `histogram.html`,
 `histogram_2.html`, `master_<name>.html`. The additional `zone_table.html` shows zone
 touch counts with readable names and separate stable IDs.
@@ -555,7 +571,8 @@ Calculations, matrix axes, existing file names, and both analysis CSVs keep thei
 
 General channel images include a footer highlighting the owning channel in annotation
 and report trajectory panels. `generate_general_template.py` rebuilds the neutral and
-four highlighted images without moving the eight squares or changing any masks.
+four highlighted images and the masks; the footer geometry comes from
+`domain.templates` so the drawn boxes and the clickable boxes stay aligned.
 
 The master page inlines every figure `<div>` into ONE scrolling document and loads a
 single shared `plots/plotly.min.js` (written by plotly via `include_plotlyjs="directory"`).
@@ -564,6 +581,13 @@ as a whole when shared. Wheel-zoom is disabled on every figure (`scrollZoom: fal
 the mouse wheel scrolls the page; zooming is an explicit drag-select.
 
 ## Testing
+
+Coding setup tests cover portable-file validation, full project snapshots,
+preparation locking, legacy label adoption and Reliability inheritance. Export
+tests cover the versioned Channel1–4 schema, aligned paired coordinates and zone
+groups, multiple points/multiple zones, timestamp rounding, and reading historical
+exports for analysis. GUI tests must isolate both the project roots and the
+`config/` directory; they must never modify real research projects.
 
 ```bash
 uv run pytest                 # complete non-GUI suite
@@ -584,11 +608,10 @@ save, reopen, and Analysis, then checks inherited names and reports in Reliabili
 without changing the original export. The startup smoke test also exercises delete
 input with no video loaded; the shared handler treats this as a no-op.
 
-The guarantee worth knowing: the three export-lock test files described above pin the
-published format. Note what is NOT pinned any more — with
-`import_unified_from_export` gone there is no test that reads an export CSV back
-into an equivalent store, so a change that silently drops a field from the
-export will be caught by the golden-master bytes but not by a round-trip.
+The export schema and golden-master tests pin the published format. Version 2
+round-trip tests also reconstruct paired coordinates, zone memberships and touch
+episodes through the reader. The shared-configuration integration test proves that
+editing a preset after preparation cannot change an older video's exported labels.
 
 ## Local Build
 

@@ -44,9 +44,11 @@ from domain.touch import (
     NO_ZONE,
     ZONE_TIER_REAL,
     is_catch_all_zone,
+    zone_label_map,
     zone_precedence,
     zones_at,
 )
+from domain.templates import TEMPLATES
 from domain.touch_stats import zone_sort_key
 from labeling_app import LabelingApp
 
@@ -391,7 +393,7 @@ def _click_app(masks):
     app.diagram_scale = 1.0
     app.option_var_1 = SimpleNamespace(get=lambda: "RH")
     app.mark_bundle_changed = lambda: None
-    app._render_diagram_dots = lambda: None
+    app._select_channel_at = lambda *_args: False
     # Unbound method on a stub: bind the real hit-test wrapper explicitly.
     app.find_image_with_white_pixel = (
         lambda x, y: LabelingApp.find_image_with_white_pixel(app, x, y)
@@ -506,3 +508,47 @@ def test_load_zone_masks_missing_directory_is_a_warned_noop(tmp_path, monkeypatc
         record.levelname == "WARNING" and "Zones directory not found" in record.getMessage()
         for record in caplog.records
     )
+
+
+# --- zone_label_map: the hover highlight's per-pixel copy of zones_at --------
+@pytest.mark.parametrize("template", sorted(TEMPLATES))
+def test_zone_label_map_agrees_with_zones_at_on_the_real_masks(template):
+    """The hover highlight looks up `zone_label_map` instead of calling
+    `zones_at` per pixel, so the two must give the same answer everywhere:
+    the highlighted zone is the zone a click would record. Every 4th pixel
+    of each shipped mask set is enough to cross every zone and every border."""
+    masks = load_zone_masks(zones_dir(template))
+    labels, names = zone_label_map(masks)
+    h, w = masks[0][1].shape[:2]
+    assert labels.shape == (h, w)
+    mismatches = []
+    for y in range(0, h, 4):
+        for x in range(0, w, 4):
+            index = int(labels[y, x])
+            mapped = names[index] if index >= 0 else NO_ZONE
+            expected = zones_at(masks, x, y)[0]
+            if mapped != expected:
+                mismatches.append((x, y, mapped, expected))
+    assert not mismatches, mismatches[:10]
+
+
+def test_zone_label_map_ties_inside_a_tier_follow_mask_order_like_zones_at():
+    """`zones_at` breaks a same-tier overlap by masks order (first wins), so
+    the map must use a STABLE precedence sort, not a (tier, name) sort."""
+    masks = [("BOX2", _mask((0, 10, 0, 10))), ("BOX1", _mask((0, 10, 0, 10)))]
+    labels, names = zone_label_map(masks)
+    assert names[int(labels[5, 5])] == "BOX2" == zones_at(masks, 5, 5)[0]
+
+
+def test_zone_label_map_smaller_mask_claims_only_its_own_bounds():
+    big = _mask((0, 20, 0, 20), size=20)                 # OUTSIDE everywhere
+    small = _mask((0, 10, 0, 10), size=10)               # real zone, top-left
+    labels, names = zone_label_map([("OUTSIDE", big), ("A", small)])
+    assert labels.shape == (20, 20)
+    assert names[int(labels[5, 5])] == "A"
+    assert names[int(labels[15, 15])] == "OUTSIDE" == zones_at([("OUTSIDE", big), ("A", small)], 15, 15)[0]
+
+
+def test_zone_label_map_without_masks_is_empty():
+    labels, names = zone_label_map([])
+    assert labels.size == 0 and names == []

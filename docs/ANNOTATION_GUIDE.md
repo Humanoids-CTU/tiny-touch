@@ -211,6 +211,12 @@ onset count; it does not start a separate episode. The "touch length distributio
 histogram counts these onsets. Right-click only when the contact ends, because it closes
 the touch.
 
+**Before you click.** As you move the pointer over the diagram, the zone under it lights
+up in amber and a small tag next to the pointer shows its name, so you can see which zone
+a click will record before you commit. A renamed zone shows as `Name (ID)`. The boundary
+lines and the off-body area are named but not lit. After a click the zone flashes briefly
+in the dot's colour. Settings > "Highlight the zone under the pointer" turns this off.
+
 **Deleting.** Middle-click near a dot, or hover over it and press `d`, to remove it. The
 dot must be within roughly 20 pixels of the pointer. Removing the last dot on a frame also
 clears that frame's onset/offset state for the limb, so the frame goes back to being blank.
@@ -405,21 +411,12 @@ is not silently dropped — the analysis reports it separately with its start fr
 summary table, in the banner on the dashboard page and in the log — but it contributes
 nothing to your statistics.
 
-When you press **Analysis** with such a touch in the data, the app stops first and shows an
-**Open touches found** dialog listing every open onset (channel, onset frame, and how many
-frames remain until the end of the video). Choose one of:
-
-- **Go to onset** — jumps to the selected onset frame without running the analysis, so you
-  can step forward and place the missing offset (right-click) yourself. This is the right
-  choice when you simply forgot the offset.
-- **Close at video end** — writes the offset on the last frame of the video for every touch
-  listed, reusing the touch's last clicked position and zone, then runs the analysis. Use
-  it when the touch genuinely lasts until the recording ends. The touch then gets a normal
-  duration from its onset to the last frame. A touch whose onset *is* the last frame cannot
-  be closed this way and stays open.
-- **Analyze anyway** — runs the analysis with the touches left open. They are reported as
-  "open (unterminated)" and excluded from the durations, exactly as before.
-- **Cancel** — does nothing.
+When you press **Analysis** with such a touch in the data, the app first shows an
+**Open touches** dialog listing each open onset (channel and frame). **Go to onset** jumps
+there without running the analysis so you can place the missing offset (right-click).
+**Skip and analyze** runs the analysis with the touch left open: it is reported as "open
+(unterminated)" and excluded from the durations. If a touch genuinely lasts until the end of
+the recording, place its offset on the last frame yourself.
 
 **Run Analysis before you consider a video finished and check that the "Open
 (Unterminated) Touches" column is zero for all four limbs.**

@@ -356,7 +356,7 @@ def log_session_header(*, version: str, config, app_dir: str) -> None:
     )
     names = (
         "diagram_scale", "dot_size", "video_downscale",
-        "jump_seconds", "realtime_arrow_hold", "perf_enabled",
+        "jump_seconds", "realtime_arrow_hold", "diagram_hover_effects", "perf_enabled",
         "perf_log_every_s", "perf_log_top_n", "log_level_console", "log_keep_files",
     )
     logger.debug(

@@ -51,10 +51,11 @@ CONFIG_DEFAULTS = {
     'video_downscale': 1.0,
     'jump_seconds': 1.0,
     'realtime_arrow_hold': True,
+    'diagram_hover_effects': True,
     'log_level_console': 'INFO', 'log_keep_files': 20,
     'parameter1': 'Parameter 1', 'parameter2': 'Parameter 2', 'parameter3': 'Parameter 3',
-    'limb_parameter1': 'Limb Parameter 1', 'limb_parameter2': 'Limb Parameter 2',
-    'limb_parameter3': 'Limb Parameter 3',
+    'limb_parameter1': 'CP1', 'limb_parameter2': 'CP2',
+    'limb_parameter3': 'CP3',
 }
 
 
@@ -167,6 +168,7 @@ class AppConfig:
     video_downscale: float = 1.0
     jump_seconds: float = 1.0
     realtime_arrow_hold: bool = CONFIG_DEFAULTS['realtime_arrow_hold']
+    diagram_hover_effects: bool = CONFIG_DEFAULTS['diagram_hover_effects']
     perf_enabled: bool = CONFIG_DEFAULTS['perf_enabled']
     perf_log_every_s: float = CONFIG_DEFAULTS['perf_log_every_s']
     perf_log_top_n: int = CONFIG_DEFAULTS['perf_log_top_n']
@@ -230,6 +232,9 @@ def load_app_config() -> AppConfig:
             config.get('jump_seconds', CONFIG_DEFAULTS['jump_seconds']), 1.0, positive_only=True
         ),
         realtime_arrow_hold=bool(config.get('realtime_arrow_hold', CONFIG_DEFAULTS['realtime_arrow_hold'])),
+        diagram_hover_effects=bool(
+            config.get('diagram_hover_effects', CONFIG_DEFAULTS['diagram_hover_effects'])
+        ),
         perf_enabled=bool(config.get('perf_enabled', CONFIG_DEFAULTS['perf_enabled'])),
         perf_log_every_s=float(config.get('perf_log_every_s', CONFIG_DEFAULTS['perf_log_every_s'])),
         perf_log_top_n=int(config.get('perf_log_top_n', CONFIG_DEFAULTS['perf_log_top_n'])),

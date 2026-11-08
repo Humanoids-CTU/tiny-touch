@@ -10,6 +10,11 @@ hit test here (`zones_at`) and the analysis axis ordering
 `touch_stats` rather than duplicated (they used to drift).
 """
 
+from dataclasses import dataclass
+
+import numpy as np
+
+
 # --- zone vocabulary --------------------------------------------------------
 # Zone names come from the mask FILENAMES (adapters.zone_masks), so these are
 # the only names with a meaning fixed by the app itself.
@@ -85,7 +90,7 @@ def cycle_param_state(current):
     return None  # current == "ON" or anything else
 
 
-def find_last_open_onset(frames, limb, current_frame):
+def find_last_open_onset(frames, limb, current_frame, known=None):
     """Return the click points of the last still-open 'ON' for `limb` at or
     before `current_frame`, or [(None, None)] when the touch is closed / absent
     (was the pure scan inside LabelingApp.find_last_green).
@@ -93,8 +98,16 @@ def find_last_open_onset(frames, limb, current_frame):
     Walks integer frame indices backward from current_frame instead of
     sorting all dict keys — O(distance to last ON/OFF) instead of
     O(N log N) per call. Matters at 300k+ frames.
+
+    `known=(frame, points)` is an earlier answer for the SAME, unchanged data
+    at `frame <= current_frame`. The scan then stops at that frame and reuses
+    its answer, so stepping or playing forward costs only the frames in
+    between, even when no ON/OFF exists for millions of frames back.
     """
-    for f in range(current_frame, -1, -1):
+    stop, fallback = -1, [(None, None)]
+    if known is not None and known[0] <= current_frame:
+        stop, fallback = known
+    for f in range(current_frame, stop, -1):
         b = frames.get(f)
         if not isinstance(b, dict):
             continue
@@ -107,7 +120,60 @@ def find_last_open_onset(frames, limb, current_frame):
             ys = rec.get("Y", []) or []
             return list(zip(xs, ys)) if xs and ys else [(None, None)]
 
-    return [(None, None)]
+    return list(fallback)
+
+
+@dataclass(frozen=True)
+class OpenTouch:
+    """An `ON` for `limb` at `start_frame` that no later `OFF` closes.
+
+    `last_click_frame` is the last frame at or after the onset where the limb
+    has a click (the onset itself when nothing followed), so the UI can report
+    where the touch was last seen and so a synthetic offset can reuse that
+    position. `extra_onsets` counts further `ON` marks inside the open touch.
+    """
+
+    limb: str
+    start_frame: int
+    last_click_frame: int
+    extra_onsets: int = 0
+
+
+def find_open_touches(frames, limbs) -> list:
+    """Return every still-open touch in the in-memory `frames`, in frame order.
+
+    Same state machine as the analysis episode builder (`ON` opens, a further
+    `ON` is an extra onset, `OFF` closes, a stray `OFF` is ignored), applied to
+    the labeler's FrameBundle dict rather than to an export row stream. The GUI
+    runs this BEFORE analysis so the annotator sees the open onset and can fix
+    it, instead of learning about it from the report's censored-touch warning.
+    """
+    found = []
+    order = sorted(f for f in frames.keys() if isinstance(f, int))
+    for limb in limbs:
+        start = last_click = None
+        extra = 0
+        for f in order:
+            b = frames.get(f)
+            rec = b.get(limb) if isinstance(b, dict) else None
+            if not isinstance(rec, dict):
+                continue
+            onset = rec.get("Onset")
+            has_click = bool(rec.get("X")) and bool(rec.get("Y"))
+            if onset == "ON":
+                if start is None:
+                    start, last_click, extra = f, f, 0
+                else:
+                    extra += 1
+                    last_click = f if has_click else last_click
+            elif onset == "OFF":
+                start = None
+            elif start is not None and has_click:
+                last_click = f
+        if start is not None:
+            found.append(OpenTouch(limb, start, last_click, extra))
+    found.sort(key=lambda t: (t.start_frame, list(limbs).index(t.limb)))
+    return found
 
 
 def zones_at(masks, x, y):
@@ -159,3 +225,32 @@ def zones_at(masks, x, y):
         return [NO_ZONE]
     # min() keeps the FIRST minimum, so equal tiers fall back to mask order.
     return [min(matches, key=zone_precedence)]
+
+
+def zone_label_map(masks):
+    """`zones_at` for every pixel at once, as (labels, names).
+
+    `labels[y, x]` is the index into `names` of the zone `zones_at(masks, x, y)`
+    returns, or -1 where it returns `NO_ZONE`. Same rule, applied once: masks
+    are visited in precedence order (a STABLE sort, so ties inside a tier keep
+    the masks order, exactly like `min` above) and each mask claims only the
+    still-unclaimed black pixels. The map is as large as the largest mask; a
+    pixel outside a smaller mask's bounds is not claimed by it, as in `zones_at`.
+
+    Used by the hover highlight, which needs the answer for any pixel the
+    pointer may cross without re-running the hit test per mask each time.
+    """
+    if not masks:
+        return np.zeros((0, 0), dtype=np.int16), []
+    ordered = sorted(masks, key=lambda item: zone_precedence(item[0]))
+    h = max(image.shape[0] for _, image in ordered)
+    w = max(image.shape[1] for _, image in ordered)
+    labels = np.full((h, w), -1, dtype=np.int16)
+    names = []
+    for index, (zone_name, image) in enumerate(ordered):
+        names.append(zone_name)
+        mh, mw = image.shape[:2]
+        view = labels[:mh, :mw]
+        claimed = (image[:h, :w] == 0) & (view < 0)
+        view[claimed] = index
+    return labels, names

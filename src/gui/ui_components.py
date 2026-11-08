@@ -323,6 +323,7 @@ def _build_diagram_panel(app, scale):
 
     # Bind clicks on the diagram (these call back into the controller)
     app.diagram_canvas.bind("<Motion>", app.update_last_mouse_position)
+    app.diagram_canvas.bind("<Leave>", app.on_diagram_leave)
     app.diagram_canvas.bind("<Button-3>", lambda event: app.on_diagram_click(event, is_onset=False))
     app.diagram_canvas.bind("<Button-1>", lambda event: app.on_diagram_click(event, is_onset=True))
     app.diagram_canvas.bind("<Button-2>", app.on_middle_click)
