@@ -91,6 +91,11 @@ def click(root, text):
 def select_radio(root, text):
     """Select the radiobutton labeled `text` (sets its var + runs its command)."""
     radio = find_widget(root, cls=(ttk.Radiobutton, tk.Radiobutton), text=text)
+    if radio is None:
+        historical = {"Right Hand": "RH", "Left Hand": "LH", "Right Leg": "RL", "Left Leg": "LL"}
+        key = historical.get(text)
+        if key:
+            radio = next((widget for widget in walk(root) if isinstance(widget, (ttk.Radiobutton, tk.Radiobutton)) and str(widget.cget("value")) == key), None)
     assert radio is not None, f"no radiobutton labeled {text!r}"
     radio.invoke()
 
@@ -160,7 +165,8 @@ def dismiss_dialog(app, title, button_text, attempts=400, interval_ms=15, *, rad
 
 
 # === composed workflows =======================================================
-def load_video(app, workspace, video_path, mode="Normal", template="Default"):
+def load_video(app, workspace, video_path, mode="Normal", template="Default", setup=None,
+               duplicate="Resume existing"):
     """Choose mode and template in real dialogs, then select the video.
 
     The mode picker is the app's own Toplevel (driven for real); the OS file
@@ -169,13 +175,45 @@ def load_video(app, workspace, video_path, mode="Normal", template="Default"):
     """
     workspace.chosen_video = str(video_path)
     workspace.mode = mode
+    dismiss_dialog(app, "Video library", "Load new video")
     mode_dialog = dismiss_dialog(app, "Select Mode", "Continue", radio_text=mode)
-    template_dialog = dismiss_dialog(
-        app, "Template for new projects", "Continue", radio_text=template,
-    )
-    app.load_video_btn.invoke()
+    setup_poll = {"id": None, "active": True}
+    def advance_setup():
+        if not setup_poll["active"]:
+            return
+        existing = find_toplevel(app, "Video already added")
+        if existing is not None:
+            click(existing, duplicate)
+        window = find_toplevel(app, "Prepare video")
+        if window is not None:
+            radio = find_widget(window, cls=(ttk.Radiobutton, tk.Radiobutton), text=template)
+            if radio is not None:
+                radio.invoke()
+            if setup is not None:
+                values = {**dict(setup.zone_labels), **dict(setup.channel_labels),
+                    **{f"P{i}": setup.parameter_labels[f"Par{i}"] for i in range(1,4)},
+                    **{f"LP{i}": setup.limb_parameter_labels[f"Par{i}"] for i in range(1,4)}}
+                for widget in walk(window):
+                    key = getattr(widget, "setup_key", None)
+                    if key in values:
+                        widget.delete(0, "end")
+                        widget.insert(0, values[key])
+            next_button = find_widget(window, cls=(ttk.Button, tk.Button), text="Next")
+            prepare = find_widget(window, cls=(ttk.Button, tk.Button), text="Prepare video")
+            if next_button is not None:
+                next_button.invoke()
+            elif prepare is not None:
+                prepare.invoke()
+                return
+        setup_poll["id"] = app.after(20, advance_setup)
+    setup_poll["id"] = app.after(20, advance_setup)
+    try:
+        app.load_video_btn.invoke()
+    finally:
+        setup_poll["active"] = False
+        if setup_poll["id"] is not None:
+            app.after_cancel(setup_poll["id"])
     assert mode_dialog["clicked"], "the mode dialog never appeared"
-    assert template_dialog["clicked"], "the template dialog never appeared"
     assert app.video is not None, "Load Video did not produce a video"
     # The buffering thread decodes frame 0 asynchronously; wait for the first
     # real paint so later steps see a consistent display.

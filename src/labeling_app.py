@@ -37,7 +37,8 @@ from gui.special_zones_app import SpecialZonesApp, DEFAULT_SPECIAL_ZONES_DIAGRAM
 from gui.frame_dialog import FrameDialog
 from gui.open_touches_dialog import OpenTouchesDialog, GO_TO_ONSET
 from gui.template_dialog import choose_template, template_diagram
-from gui.video_library import choose_video
+from gui.video_library import choose_video, choose_existing_video
+from service_layer.project_copy import next_copy_project
 from gui.coding_setup_wizard import configure_video
 from adapters.project_catalog import list_projects, SOURCE_META
 from adapters.sqlite_repo import SqliteRepository
@@ -715,14 +716,9 @@ class LabelingApp(tk.Tk):
     def _hover_tooltip(self, zone, x, y):
         """Text of the tag next to the pointer at native diagram pixel (x, y).
 
-        A channel selector box (General's footer) says what a click selects;
-        otherwise the tag names the zone a click would record, renamed zones
-        as `Name (ID)` like the reports do. `NN` (no zone) shows nothing.
+        The tag names the zone a click would record, renamed zones as
+        `Name (ID)` like the reports do. `NN` (no zone) shows nothing.
         """
-        definition = get_template(self.template)
-        channel = definition.channel_at(x, y)
-        if channel is not None:
-            return f"Select {definition.channel_label(channel)}"
         if zone == NO_ZONE:
             return None
         label = self.zone_display.label(zone)
@@ -1079,8 +1075,6 @@ class LabelingApp(tk.Tk):
         display_scale = getattr(self, "diagram_scale", 1.0)
         x_pos = event.x * (1.0 / display_scale)
         y_pos = event.y * (1.0 / display_scale)
-        if self._select_channel_at(x_pos, y_pos):
-            return
         zone_results = list(self.find_image_with_white_pixel(x_pos, y_pos))  # list for stability
 
         current_frame = self.video.current_frame
@@ -1167,18 +1161,6 @@ class LabelingApp(tk.Tk):
         points = find_last_open_onset(self.video.frames, limb, frame, known=known)
         self._ghost_cache = (key, (frame, points))
         self.video.last_green = points
-
-    def _select_channel_at(self, x_pos, y_pos):
-        """Clicking a channel box drawn on the diagram (General's footer) selects
-        that channel instead of recording a dot. Returns True when the click
-        landed on a box, whether or not the selection changed."""
-        channel = get_template(self.template).channel_at(x_pos, y_pos)
-        if channel is None:
-            return False
-        if channel != self.option_var_1.get():
-            self.option_var_1.set(channel)
-            self._on_limb_selected()
-        return True
 
     def _on_limb_selected(self):
         selected = self.option_var_1.get()
@@ -2699,6 +2681,17 @@ class LabelingApp(tk.Tk):
                 return
             raw_video_name = os.path.splitext(os.path.basename(video_path))[0]
             candidate_paths = ProjectPaths.for_video(raw_video_name, reliability=mode == "Reliability")
+            if os.path.exists(candidate_paths.video_dir):
+                copy_paths = next_copy_project(candidate_paths)
+                duplicate_choice = choose_existing_video(
+                    self, candidate_paths.video_name, copy_paths.video_name,
+                    center=center_over_parent,
+                )
+                if duplicate_choice is None:
+                    return
+                if duplicate_choice == "copy":
+                    candidate_paths = copy_paths
+                    mode = "Normal"
         else:
             video_path = choice.source
             candidate_paths = choice.paths
@@ -2772,7 +2765,7 @@ class LabelingApp(tk.Tk):
         )
         min_length_in_frames = self.minimal_touch_length * self.frame_rate / 1000
         self.min_touch_length_label.config(text=f"Minimal Touch Length: {min_length_in_frames}")
-        raw_video_name = os.path.splitext(os.path.basename(video_path))[0]
+        raw_video_name = candidate_paths.original.video_name
         # The "_reliability" suffix rule and directory creation live in the
         # service (ProjectPaths.for_video underneath).
         paths = project_service.prepare_project(raw_video_name, self.labeling_mode)

@@ -39,7 +39,7 @@ def test_special_zones_displays_selected_template_and_permanently_locks_it(
     load_video(app, workspace, workspace.video, template=choice)
     paths = workspace.project()
     assert _metadata(paths)["template"] == template
-    assert _metadata(paths)["template_locked"] == "0"
+    assert _metadata(paths)["template_locked"] == "1"
 
     click(app, "Special Zones")
     pump(app)
@@ -55,7 +55,7 @@ def test_special_zones_displays_selected_template_and_permanently_locks_it(
     point = tuple(int(value * scale) for value in native_point)
     click_canvas(canvas, "<Button-1>", *point)
     pump(app)
-    # Lock is durable before the user presses Save in Special Zones.
+    # The preparation lock remains durable before Special Zones is saved.
     assert _metadata(paths)["template_locked"] == "1"
     app._special_zones_app.on_close()  # same handler as the window's close button
     connection = sqlite3.connect(paths.state_db)
@@ -76,7 +76,7 @@ def test_special_zones_displays_selected_template_and_permanently_locks_it(
     opposite = "Alternate" if choice == "Default" else "Default"
     load_video(app, workspace, workspace.video, template=opposite)
     assert _metadata(paths)["template"] == template
-    assert any(title == "Saved template restored" for _, title, _ in workspace.messages)
+    assert app.template == template  # a prepared project resumes its saved setup
     assert not workspace.errors()
 
 
@@ -89,7 +89,7 @@ def test_special_zones_note_locks_template_exports_and_reopens(app, workspace):
     app._special_zones_app.note_var.set("  diaper and socks ")
     app._special_zones_app.on_close()
 
-    # A note alone locks the template but does not light the button.
+    # The preparation lock remains; a note alone does not light the button.
     assert _metadata(paths)["template_locked"] == "1"
     assert _metadata(paths)["special_zones_note"] == "diaper and socks"
     assert str(app.special_zones_btn.cget("style")) == "StateNeutral.TButton"
@@ -109,7 +109,7 @@ def test_special_zones_note_locks_template_exports_and_reopens(app, workspace):
 @pytest.mark.parametrize("choice,template", [("Alternate", "alternate"), ("General", "general")])
 def test_reliability_inherits_template_and_locks_both_empty_projects(app, workspace, choice, template):
     load_video(app, workspace, workspace.video, template=choice)
-    assert _metadata(workspace.project())["template_locked"] == "0"
+    assert _metadata(workspace.project())["template_locked"] == "1"
     load_video(app, workspace, workspace.video, mode="Reliability", template="Default")
     assert app.video_name == "tiny_reliability"
     assert app.video.frames == {}
@@ -123,40 +123,36 @@ def test_reliability_inherits_template_and_locks_both_empty_projects(app, worksp
     assert exported["template"] == template
     if template == "general":
         assert exported["Channel Labels"] == {
-            "RH": "Channel 1", "LH": "Channel 2", "RL": "Channel 3", "LL": "Channel 4",
+            "Channel1": "Channel 1", "Channel2": "Channel 2", "Channel3": "Channel 3", "Channel4": "Channel 4",
         }
         assert find_widget(app.mode_controls_frame, text="Channel 1") is not None
     assert not workspace.errors()
 
 
-def test_close_template_does_not_open_file_picker_or_change_active_project(
-    loaded_app, workspace, monkeypatch,
+@pytest.mark.parametrize("cancel_at", ["Video library", "Prepare video"])
+def test_cancelled_library_or_setup_preserves_active_project(
+    loaded_app, workspace, monkeypatch, tmp_path, cancel_at,
 ):
     app = loaded_app
     video_before = app.video
     meta_before = _metadata(workspace.project())
-
-    def unexpected_file_picker(**kwargs):
-        pytest.fail("File picker opened after template selection was cancelled")
-
-    monkeypatch.setattr("tkinter.filedialog.askopenfilename", unexpected_file_picker)
-    dismiss_dialog(app, "Select Mode", "Continue", radio_text="Reliability")
-    closed = []
-
-    def close_template():
-        window = find_toplevel(app, "Template for new projects")
-        if window is None:
-            app.after(15, close_template)
-            return
-        closed.append(True)
-        window.destroy()
-
-    app.after(15, close_template)
+    if cancel_at == "Video library":
+        def unexpected_file_picker(**kwargs):
+            pytest.fail("File picker opened after library cancellation")
+        monkeypatch.setattr("tkinter.filedialog.askopenfilename", unexpected_file_picker)
+    else:
+        candidate = tmp_path / "cancelled.mp4"
+        shutil.copy(workspace.video, candidate)
+        workspace.chosen_video = str(candidate)
+        dismiss_dialog(app, "Video library", "Load new video")
+        dismiss_dialog(app, "Select Mode", "Continue", radio_text="Normal")
+    cancelled = dismiss_dialog(app, cancel_at, "Cancel")
     app.load_video_btn.invoke()
-    assert closed
+    assert cancelled["clicked"]
     assert app.video is video_before
     assert app.labeling_mode == "Normal"
     assert _metadata(workspace.project()) == meta_before
+    assert not Path(workspace.project("cancelled").state_db).exists()
     assert not workspace.errors()
 
 
@@ -174,39 +170,23 @@ def test_switching_templates_updates_annotation_masks(app, workspace, tmp_path):
     assert not workspace.errors()
 
 
-@pytest.mark.parametrize("choice,template,zone,native_point", [
-    ("Alternate", "alternate", "G", (192, 336)),
-    ("General", "general", "1", (137, 102)),
-])
-def test_empty_project_can_change_template_through_settings(
-    loaded_app, workspace, choice, template, zone, native_point,
-):
+def test_empty_prepared_project_cannot_change_template_through_settings(loaded_app, workspace):
     app = loaded_app
+    assert not app.video.frames
+    before = _metadata(workspace.project())
     click(app, "Settings")
     settings = find_toplevel(app, "Settings")
-    selected = dismiss_dialog(
-        app, "Template for new projects", "Continue", radio_text=choice,
-    )
-    click(settings, "Change project template")
-    assert selected["clicked"]
-    assert _metadata(workspace.project())["template"] == template
-    assert _metadata(workspace.project())["template_locked"] == "0"
-    assert json.loads(Path(workspace.project().export_metadata).read_text())["template"] == template
-    selector = "Channel 1" if template == "general" else "Right Hand"
-    assert find_widget(app.mode_controls_frame, text=selector) is not None
-    find_toplevel(app, "Settings").destroy()
-    point = tuple(int(value * app.diagram_scale) for value in native_point)
-    click_canvas(app.diagram_canvas, "<Button-1>", *point)
-    assert app.video.frames[0]["RH"]["Zones"] == [[zone]]
-    click(app, "Settings")
-    assert find_button(find_toplevel(app, "Settings"), "Change project template").instate(["disabled"])
+    assert find_button(settings, "Change project template").instate(["disabled"])
+    assert before["template_locked"] == "1"
+    settings.destroy()
+    assert _metadata(workspace.project()) == before
     assert not workspace.errors()
 
 
-def test_general_channels_annotate_all_squares_and_restore_limb_controls(app, workspace, tmp_path):
+def test_general_channels_annotate_all_squares_and_restore_across_diagrams(app, workspace, tmp_path):
     load_video(app, workspace, workspace.video, template="General")
     assert find_widget(app.mode_controls_frame, text="Channel Selector") is not None
-    assert app.limb_parameter_heading.cget("text") == "Channel-specific"
+    assert app.limb_parameter_heading.cget("text") == "Channel parameters"
     assert find_widget(app.mode_controls_frame, text="Right Hand") is None
     scale = app.diagram_scale
     for index, key in enumerate(("RH", "LH", "RL", "LL"), start=1):
@@ -233,10 +213,10 @@ def test_general_channels_annotate_all_squares_and_restore_limb_controls(app, wo
     default_video = tmp_path / "default.mp4"
     shutil.copy(workspace.video, default_video)
     load_video(app, workspace, default_video, template="Default")
-    assert find_widget(app.mode_controls_frame, text="Limb Selector") is not None
-    assert find_widget(app.mode_controls_frame, text="Right Hand") is not None
+    assert find_widget(app.mode_controls_frame, text="Channel Selector") is not None
     assert find_widget(app.mode_controls_frame, text="Channel 1") is None
-    assert app.limb_parameter_heading.cget("text") == "Limb-specific"
+    assert find_widget(app.mode_controls_frame, text="Right Hand") is not None
+    assert app.limb_parameter_heading.cget("text") == "Channel parameters"
     # Loading another video closes the original DB; reopening restores the
     # saved General choice even when the picker asks for an anatomical one.
     load_video(app, workspace, workspace.video, template="Alternate")
@@ -248,7 +228,7 @@ def test_general_channels_annotate_all_squares_and_restore_limb_controls(app, wo
     save(app)
     exported = json.loads(Path(workspace.project().export_metadata).read_text())
     assert exported["Channel Labels"] == {
-        "RH": "Channel 1", "LH": "Channel 2", "RL": "Channel 3", "LL": "Channel 4",
+        "Channel1": "Channel 1", "Channel2": "Channel 2", "Channel3": "Channel 3", "Channel4": "Channel 4",
     }
     assert not workspace.errors()
 
@@ -270,11 +250,12 @@ def test_unsupported_project_is_rejected_without_changing_active_session(
     original_bytes = Path(paths.state_db).read_bytes()
     workspace.chosen_video = str(source)
 
+    dismiss_dialog(app, "Video already added", "Resume existing")
     dismiss_dialog(app, "Select Mode", "Continue")
-    dismiss_dialog(app, "Template for new projects", "Continue")
+    dismiss_dialog(app, "Video library", "Load new video")
     app.load_video_btn.invoke()
     assert app.video is previous_video
     assert Path(paths.state_db).read_bytes() == original_bytes
     assert not list(Path(paths.state_dir).glob("*.bak"))
     assert len(workspace.errors()) == 1
-    assert workspace.errors()[0][1] == "Cannot select project template"
+    assert workspace.errors()[0][1] == "Cannot open video"

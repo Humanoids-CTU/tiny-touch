@@ -71,6 +71,10 @@ amber in Reliability mode. Your choice is remembered as the default for next tim
    Open a prepared project to resume at its saved position.
 2. For a new project, choose **Load new video** and select a file (`.mp4`, `.mov`,
    `.avi`, `.mkv`, `.flv`, `.wmv`).
+   If a project with that video name already exists in the selected mode, choose
+   **Resume existing** or **Create new copy**. A copy starts a fresh Normal
+   project named `<video>_copy` (then `_copy2`, `_copy3`, etc.), with its own
+   setup and annotations. It shares the source video without duplicating it.
 3. Choose the mode and a diagram: **Default**, **Alternate**, or **General**.
    Alternatively, load a shared coding configuration from `config/` to prefill
    all the settings. This folder sits beside the application's `config.json`.
@@ -270,7 +274,9 @@ to sort first.
 
 Set zone names in the new-video setup wizard. This works for **Default**,
 **Alternate**, and **General**. Enter names beside the zone IDs: for example,
-General's `1` could become `Light on`. The General preview also shows Channel 1 through 4 as reserved selectors. These boxes keep fixed positions and indices; set their display names in the following channel setup step. Names can contain up to 40 characters on one
+General's `1` could become `Light on`. General's four footer boxes are zones too,
+`Channel1` through `Channel4`, so a touch *of* a channel can be recorded; name them
+here like any other zone (the channels themselves are named in the next step). Names can contain up to 40 characters on one
 line. Leave a name blank to use the original ID again. `LINE` and `NN` remain fixed.
 
 Enable **Show zone names on diagrams** in Settings to show names on the annotation
@@ -383,7 +389,9 @@ interactive dashboard to `data/<video>/plots/`, opening the index page
 Reports use names from the exported metadata. Renamed zones appear as **Name (ID)**
 in heatmaps and trajectory hovers, keeping zones distinct even if they share a name.
 General uses channel names in titles, legends, and tables. Its diagram footer highlights
-the corresponding channel in both the app and each report trajectory panel.
+the corresponding channel in both the app and each report trajectory panel. Clicking a
+footer box records a touch of that channel (zone `Channel1`–`Channel4`) for the channel
+selected in the radio buttons; it does not switch channels.
 Older exports without custom names use the original IDs and template defaults.
 The two analysis CSV files retain their original headers and channel IDs.
 
