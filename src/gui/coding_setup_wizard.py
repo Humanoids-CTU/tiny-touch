@@ -15,7 +15,7 @@ from gui import theme
 from gui.resource_utils import asset_path
 from gui.zone_labels import draw_zone_labels
 from domain.templates import get_template
-from gui.template_dialog import template_diagram
+from gui.template_dialog import add_custom_template_placeholder, template_diagram
 
 WINDOW_GEOMETRY = "780x680"
 STEP_TITLES = ("1 · Diagram and saved configuration", "2 · Zone labels", "3 · Channels and parameters", "4 · Review coding setup")
@@ -101,15 +101,16 @@ class CodingSetupWizard:
             options.pack(fill="x")
             self.photos = []
             self.template_cards = {}
+            for column in range(len(TEMPLATE_LABELS) + 1):
+                options.columnconfigure(column, weight=1, uniform="templates")
             for column, (template, label) in enumerate(TEMPLATE_LABELS.items()):
-                options.columnconfigure(column, weight=1)
                 frame = tk.Frame(options, padx=8, pady=8, highlightthickness=1)
                 theme.bind_colors(frame, bg="SURFACE", highlightbackground="BORDER")
                 frame.grid(row=0, column=column, sticky="nsew", padx=4)
                 self.template_cards[template] = frame
                 with Image.open(template_diagram(template)) as source:
                     image = source.copy()
-                image.thumbnail((190, 240))
+                image.thumbnail((145, 240))
                 photo = ImageTk.PhotoImage(image, master=self.win)
                 self.photos.append(photo)
                 preview = ttk.Label(frame, image=photo, cursor="" if self.locked_template else "hand2")
@@ -119,6 +120,7 @@ class CodingSetupWizard:
                     preview.bind("<Button-1>", lambda event, value=template: self.select_template(value))
                     frame.bind("<Button-1>", lambda event, value=template: self.select_template(value))
                 ttk.Radiobutton(frame, text=label, value=template, variable=self.template, command=self.highlight_template_selection, state="disabled" if self.locked_template else "normal").pack(pady=(12, 4))
+            add_custom_template_placeholder(options, self.template, len(TEMPLATE_LABELS))
             self.highlight_template_selection()
             saved_section = ttk.LabelFrame(self.content, text="Reuse a coding configuration", padding=12)
             saved_section.pack(fill="x", pady=(20, 0))
