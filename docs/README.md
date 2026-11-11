@@ -11,6 +11,9 @@ reliability. You do not need the documents below to get started.
 
 ## Run from source (developers)
 
+For planned distribution changes, see the [launcher and version manager plan](VERSION_MANAGER_PLAN.md).
+It records the proposed update flow, isolated workspaces, and transition from standalone releases; it is not implemented yet.
+
 Requires Python 3.12 with Tk support and [uv](https://docs.astral.sh/uv/).
 On Debian/Ubuntu, a distribution-provided Python needs its matching Tk package
 (for example, `python3.12-tk` where available).
