@@ -4,7 +4,7 @@ from pathlib import Path
 from adapters import config
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from PIL import Image, ImageTk
+from PIL import Image, ImageChops, ImageFilter, ImageTk
 
 from domain.coding_setup import CodingSetup, default_coding_setup
 from domain.templates import TEMPLATE_LABELS
@@ -23,6 +23,9 @@ STEP_TITLES = ("1 · Diagram and saved configuration", "2 · Zone labels", "3 ·
 ZONE_ROWS_PER_COLUMN = 13
 ZONE_ENTRY_WIDTH = 12
 ZONE_PREVIEW_SIZE = (245, 380)
+CHANNEL_PREVIEW_SIZE = (220, 280)
+CHANNEL_OUTLINE_COLOR = "#2563eb"
+CHANNEL_OUTLINE_WIDTH = 3
 REVIEW_DIAGRAM_SIZE = (300, 360)
 
 
@@ -70,6 +73,7 @@ class CodingSetupWizard:
             self.config_choice = None
             self.photos = []
             self.zone_photo = None
+            self.channel_photo = None
             self.review_photo = None
         return self.result
 
@@ -82,6 +86,8 @@ class CodingSetupWizard:
         self.variables[key] = variable
         if self.step == 1:
             entry.bind("<FocusIn>", lambda event, zone=key: self.highlight_zone(zone))
+        elif self.step == 2 and key in self.setup.channel_labels:
+            entry.bind("<FocusIn>", lambda event, channel=key: self.highlight_channel(channel))
 
     def _description(self, text):
         ttk.Label(self.content, text=text, wraplength=690).pack(anchor="w", pady=(0, 12))
@@ -146,14 +152,21 @@ class CodingSetupWizard:
                 table.columnconfigure(column * 2 + 1, weight=1, uniform="zone-entries")
                 self._entry(table, index % ZONE_ROWS_PER_COLUMN, zone, self.setup.zone_labels.get(zone, ""), zone, width=ZONE_ENTRY_WIDTH, column=column)
         elif self.step == 2:
-            self._description("Name channels and parameters. Each channel has fixed diagram zones, shown below.")
-            channels = ttk.LabelFrame(self.content, text="Channel names", padding=10)
-            channels.pack(fill="x")
+            self._description("Name channels and parameters. Select a channel name to outline its assigned zone in blue.")
+            overview = ttk.Frame(self.content)
+            overview.pack(fill="x")
+            preview = ttk.LabelFrame(overview, text=f"{TEMPLATE_LABELS[self.setup.template]} diagram", padding=10)
+            preview.pack(side="left", anchor="n", padx=(0, 12))
+            self.channel_preview = ttk.Label(preview)
+            self.channel_preview.pack()
+            channels = ttk.LabelFrame(overview, text="Channel names", padding=10)
+            channels.pack(side="left", fill="x", expand=True, anchor="n")
             channels.columnconfigure(1, weight=1)
             for row, (key, label) in enumerate(self.setup.channel_labels.items()):
-                self._entry(channels, row, f"Channel {row + 1}", label, key)
+                self._entry(channels, row * 2, f"Channel {row + 1}", label, key, width=20)
                 ttk.Label(channels, text=f"Zone: {self.channel_zone_labels(key)}",
-                          style="Muted.TLabel", wraplength=180).grid(row=row, column=2, padx=8)
+                          style="Muted.TLabel", wraplength=280).grid(row=row * 2 + 1, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 6))
+            self.highlight_channel(next(iter(self.setup.channel_labels)))
             parameters = ttk.Frame(self.content)
             parameters.pack(fill="x", pady=(16, 0))
             for column in range(2):
@@ -233,6 +246,23 @@ class CodingSetupWizard:
         positions = zone_label_positions(load_zone_masks(zones_dir(self.setup.template), coding_setup=self.setup))
         draw_zone_labels(canvas, ZoneDisplaySettings(self.setup.zone_labels, show_names=True), positions, scale)
         return canvas
+
+    def highlight_channel(self, channel):
+        """Outline assigned zones at preview scale, leaving their interiors intact."""
+        image = self._preview_image()
+        image.thumbnail(CHANNEL_PREVIEW_SIZE)
+        selected = set(self.setup.channel_zones.get(channel, ()))
+        combined = Image.new("L", image.size, 0)
+        for zone, pixels in load_zone_masks(zones_dir(self.setup.template), coding_setup=self.setup):
+            if zone in selected:
+                mask = Image.fromarray((pixels == 0).astype("uint8") * 255)
+                mask = mask.resize(image.size, Image.Resampling.NEAREST)
+                combined = ImageChops.lighter(combined, mask)
+        expanded = combined.filter(ImageFilter.MaxFilter(2 * CHANNEL_OUTLINE_WIDTH + 1))
+        outline = ImageChops.subtract(expanded, combined)
+        image.paste(CHANNEL_OUTLINE_COLOR, mask=outline)
+        self.channel_photo = ImageTk.PhotoImage(image, master=self.win)
+        self.channel_preview.configure(image=self.channel_photo)
 
     def capture(self):
         if self.step == 0 and self.template.get() != self.setup.template:

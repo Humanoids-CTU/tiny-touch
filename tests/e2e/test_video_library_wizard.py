@@ -12,6 +12,41 @@ from pathlib import Path
 pytestmark = pytest.mark.gui
 
 
+@pytest.mark.parametrize("template", ("default", "alternate", "general"))
+def test_channel_name_focus_outlines_only_assigned_zone(app, template):
+    from PIL import Image, ImageChops, ImageFilter, ImageTk
+    from adapters.zone_masks import load_zone_masks, zones_dir
+    from gui.coding_setup_wizard import CHANNEL_OUTLINE_WIDTH
+
+    wizard = CodingSetupWizard(app, default_coding_setup(template))
+    click(wizard.win, "Next")
+    click(wizard.win, "Next")
+    pump(app)
+    wizard.highlight_channel(None)
+    neutral = ImageTk.getimage(wizard.channel_photo).convert("RGB")
+    masks = dict(load_zone_masks(zones_dir(template), coding_setup=wizard.setup))
+    for channel in wizard.setup.channel_labels:
+        entry = next(widget for widget in walk(wizard.win)
+                     if getattr(widget, "setup_key", None) == channel)
+        entry.event_generate("<FocusIn>")
+        selected = ImageTk.getimage(wizard.channel_photo).convert("RGB")
+        difference = ImageChops.difference(neutral, selected).convert("L")
+        assert difference.getbbox() is not None
+        region = Image.new("L", neutral.size)
+        for zone in wizard.setup.channel_zones[channel]:
+            mask = Image.fromarray((masks[zone] == 0).astype("uint8") * 255)
+            region = ImageChops.lighter(region, mask.resize(neutral.size, Image.Resampling.NEAREST))
+        # Interior pixels remain untouched; all feedback is just outside the zone.
+        assert ImageChops.multiply(difference, region).getbbox() is None
+        outside = ImageChops.invert(region.filter(ImageFilter.MaxFilter(2 * CHANNEL_OUTLINE_WIDTH + 1)))
+        assert ImageChops.multiply(difference, outside).getbbox() is None
+    # All fields and the preview fit within the fixed-size wizard.
+    for widget in walk(wizard.content):
+        assert widget.winfo_rootx() + widget.winfo_width() <= wizard.win.winfo_rootx() + wizard.win.winfo_width()
+        assert widget.winfo_rooty() + widget.winfo_height() <= wizard.next_button.winfo_rooty()
+    click(wizard.win, "Cancel")
+
+
 def test_wizard_back_and_configuration_save(app, workspace):
     original = default_coding_setup("general")
     wizard = CodingSetupWizard(app, original)
