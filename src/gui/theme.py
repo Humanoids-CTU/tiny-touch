@@ -130,6 +130,7 @@ FONT_BASE = ("Segoe UI", 10)
 FONT_SMALL = ("Segoe UI", 9)
 FONT_TITLE = ("Segoe UI", 11)
 FONT_BOLD = ("Segoe UI", 10, "bold")
+FONT_LINK = ("Segoe UI", 9, "underline")
 FONT_SUBTITLE = FONT_SMALL
 FONT_DIALOG_TITLE = FONT_TITLE
 
@@ -244,6 +245,8 @@ def apply_appearance(root, style, appearance):
     _flat_button(style, "StateOff.TButton", OFF_RED, OFF_HOVER)
     _flat_button(style, "StateNeutral.TButton", NEUTRAL, TL_EMPTY)
     style.configure("Muted.TLabel", foreground=TEXT_MUTED)
+    # Secondary actions that should not compete with dialog buttons.
+    style.configure("Link.TLabel", foreground=ACCENT, font=FONT_LINK)
     _plain_readonly_combobox(style)
     _refresh_colors(root)
 

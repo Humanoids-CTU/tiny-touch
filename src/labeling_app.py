@@ -3507,22 +3507,23 @@ class LabelingApp(tk.Tk):
                 win.destroy()
 
         # Save applies and closes; closing the window (title-bar X) discards.
+        # The logs link is a quiet secondary action, kept apart from Save.
+        ttk.Separator(content, orient="horizontal").grid(
+            row=row, column=0, columnspan=2, sticky="ew", padx=8, pady=(10, 4))
+        row += 1
         btn_frame = ttk.Frame(content)
-        btn_frame.grid(row=row, column=0, columnspan=2, pady=(10, 8))
-        ttk.Button(
-            btn_frame,
-            text="Logs",
-            command=self._open_logs_folder,
-            style="Tool.TButton",
-            takefocus=0,
-        ).pack(side="left", padx=5)
+        btn_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=8, pady=(4, 8))
+        logs_link = ttk.Label(
+            btn_frame, text="Open logs folder", style="Link.TLabel", cursor="hand2")
+        logs_link.pack(side="left")
+        logs_link.bind("<Button-1>", lambda _event: self._open_logs_folder())
         ttk.Button(
             btn_frame,
             text="Save",
             command=lambda: apply_settings(close=True),
             style="Tool.TButton",
             takefocus=0,
-        ).pack(side="left", padx=5)
+        ).pack(side="right")
 
     def _open_logs_folder(self):
         try:
