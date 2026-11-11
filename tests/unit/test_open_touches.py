@@ -66,12 +66,13 @@ def _app(frames, events, *, current_frame=0):
     app.focus_set = lambda: None
     app.next_frame = lambda delta: events.append(("next_frame", delta))
     app._channel_display_label = lambda key: LabelingApp._channel_display_label(app, key)
+    app._resolve_open_touches = lambda touches, **kwargs: LabelingApp._resolve_open_touches(app, touches, **kwargs)
     return app
 
 
 def _stub_dialog(monkeypatch, result, seen):
     class Dialog:
-        def __init__(self, parent, touches, channel_label):
+        def __init__(self, parent, touches, channel_label, *, closing=False):
             seen.append(list(touches))
             self.result = result
     monkeypatch.setattr(labeling_app, "OpenTouchesDialog", Dialog)

@@ -1,4 +1,4 @@
-"""Pre-analysis prompt for touches whose onset has no offset.
+"""Analysis and app-close prompt for touches whose onset has no offset.
 
 Shown by the Analysis button when `domain.touch.find_open_touches` finds an
 `ON` with no later `OFF`. The analysis never fails on such a touch (it is
@@ -14,6 +14,7 @@ from gui import theme
 
 GO_TO_ONSET = "goto"
 ANALYZE_ANYWAY = "analyze"
+SAVE_AND_CLOSE = "close"
 
 LIST_ROWS = 6
 LIST_WIDTH_CHARS = 44
@@ -28,7 +29,7 @@ class OpenTouchesDialog:
     """Modal prompt. `result` is `(action, index)` after the window closes, or
     None when cancelled. `index` is the selected list row for GO_TO_ONSET."""
 
-    def __init__(self, parent, touches, channel_label):
+    def __init__(self, parent, touches, channel_label, *, closing=False):
         self.result = None
         self.touches = list(touches)
         win = self.win = tk.Toplevel(parent)
@@ -46,6 +47,12 @@ class OpenTouchesDialog:
             text=f"{count} touch{'es' if count != 1 else ''} without an offset.",
             font=theme.FONT_TITLE,
         ).pack(anchor="w")
+        if closing:
+            ttk.Label(
+                content,
+                text="You can save with open touches and continue labeling later.",
+                wraplength=380,
+            ).pack(anchor="w", pady=(6, 0))
 
         list_frame = ttk.Frame(content)
         list_frame.pack(fill="both", expand=True, pady=(10, 0))
@@ -65,7 +72,7 @@ class OpenTouchesDialog:
         buttons.pack(pady=(14, 0))
         for text, action in (
             ("Go to onset", GO_TO_ONSET),
-            ("Skip and analyze", ANALYZE_ANYWAY),
+            ("Save and close", SAVE_AND_CLOSE) if closing else ("Skip and analyze", ANALYZE_ANYWAY),
             ("Cancel", None),
         ):
             ttk.Button(

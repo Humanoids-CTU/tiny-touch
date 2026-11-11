@@ -36,7 +36,7 @@ from gui import theme
 from gui.video_surface import GpuVideoSurface, VideoRendererError
 from gui.special_zones_app import SpecialZonesApp, DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE
 from gui.frame_dialog import FrameDialog
-from gui.open_touches_dialog import OpenTouchesDialog, GO_TO_ONSET
+from gui.open_touches_dialog import OpenTouchesDialog, GO_TO_ONSET, ANALYZE_ANYWAY, SAVE_AND_CLOSE
 from gui.template_dialog import choose_template, template_diagram
 from gui.video_library import choose_video, choose_existing_video
 from service_layer.project_copy import next_copy_project
@@ -2439,29 +2439,38 @@ class LabelingApp(tk.Tk):
         first and decide.
         """
         touches = find_open_touches(self.video.frames, LIMBS)
+        return self._resolve_open_touches(touches)
+
+    def _resolve_open_touches(self, touches, *, closing=False) -> bool:
+        """Let the coder navigate, cancel, or continue with touches left open."""
         if not touches:
             return True
+        operation = "close" if closing else "analysis"
         self.stop_video()
         self._cancel_arrow_hold_state()
         self._cancel_wheel_scroll()
         logger.info(
-            "analysis: %d open touch(es) before run: %s", len(touches),
+            "%s: %d open touch(es): %s", operation, len(touches),
             ", ".join(f"{t.limb}@{t.start_frame}" for t in touches),
         )
-        result = OpenTouchesDialog(self, touches, self._channel_display_label).result
+        result = OpenTouchesDialog(
+            self, touches, self._channel_display_label, closing=closing,
+        ).result
         self.focus_set()
         if result is None:
-            logger.info("analysis cancelled at the open-touch prompt")
+            logger.info("%s cancelled at the open-touch prompt", operation)
             return False
         action, index = result
         if action == GO_TO_ONSET:
             target = touches[index].start_frame
-            logger.info("analysis postponed: jumping to open onset %s@%s", touches[index].limb, target)
+            logger.info("%s postponed: jumping to open onset %s@%s", operation, touches[index].limb, target)
             if target != self.video.current_frame:
                 self.next_frame(target - self.video.current_frame)
             return False
-        logger.info("analysis proceeding with %d open touch(es) left open", len(touches))
-        return True
+        proceed = action == (SAVE_AND_CLOSE if closing else ANALYZE_ANYWAY)
+        if proceed:
+            logger.info("%s proceeding with %d open touch(es) left open", operation, len(touches))
+        return proceed
 
     def play_video(self):
         if self.video is None:
@@ -3115,7 +3124,11 @@ class LabelingApp(tk.Tk):
     def on_close(self):
         if getattr(self, "_closing", False):
             return
-        if not custom_confirm_close(self):
+        touches = find_open_touches(self.video.frames, LIMBS) if self.video is not None else []
+        if touches:
+            if not self._resolve_open_touches(touches, closing=True):
+                return
+        elif not custom_confirm_close(self):
             return
         self._closing = True
         if self.video is not None:

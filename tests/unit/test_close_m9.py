@@ -1,9 +1,13 @@
 """M9 regression tests for close ordering and save-failure decisions."""
 
 from types import SimpleNamespace
+from copy import deepcopy
+
+import pytest
 
 import labeling_app
 from labeling_app import LabelingApp
+from gui.open_touches_dialog import GO_TO_ONSET, SAVE_AND_CLOSE
 
 
 class _Buffer:
@@ -74,7 +78,7 @@ def test_video_picker_is_owned_by_main_window(monkeypatch):
 
 def _app(events, save_result=True):
     return SimpleNamespace(
-        video=object(),
+        video=SimpleNamespace(frames={}),
         save_data=lambda: events.append("save") or save_result,
         save_last_position=lambda: events.append("last_position"),
         _finalize_video_time=lambda: events.append("finalize_time"),
@@ -144,3 +148,51 @@ def test_M9_rejected_close_anyway_keeps_session_alive(monkeypatch):
 
     assert events == ["save", "close_anyway"]
     assert app._closing is False
+
+
+@pytest.mark.parametrize("result", [None, (GO_TO_ONSET, 1), (SAVE_AND_CLOSE, 0)])
+def test_close_with_open_touches_offers_navigation_or_save(monkeypatch, result):
+    events = []
+    app = _app(events)
+    app.video = SimpleNamespace(
+        frames={2: {"RH": {"Onset": "ON"}}, 9: {"LL": {"Onset": "ON"}}},
+        current_frame=4,
+    )
+    original = deepcopy(app.video.frames)
+    app.stop_video = lambda: events.append("stop")
+    app._cancel_arrow_hold_state = lambda: None
+    app._cancel_wheel_scroll = lambda: None
+    app.focus_set = lambda: None
+    app.next_frame = lambda delta: events.append(("jump", delta))
+    app._channel_display_label = lambda key: key
+    app._resolve_open_touches = lambda touches, **kwargs: LabelingApp._resolve_open_touches(app, touches, **kwargs)
+
+    def dialog(parent, touches, channel_label, *, closing=False):
+        assert closing is True
+        assert [touch.start_frame for touch in touches] == [2, 9]
+        return SimpleNamespace(result=result)
+
+    monkeypatch.setattr(labeling_app, "OpenTouchesDialog", dialog)
+    monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda root: pytest.fail("Duplicate close prompt"))
+
+    LabelingApp.on_close(app)
+
+    assert app.video.frames == original
+    if result is None:
+        assert events == ["stop"]
+    elif result[0] == GO_TO_ONSET:
+        assert events == ["stop", ("jump", 5)]
+    else:
+        assert events == [
+            "stop", "save", "last_position", "finalize_time", "close_state_repo",
+            ("shutdown", False, True), "cancel_timers", "destroy",
+        ]
+
+
+def test_close_without_video_uses_normal_confirmation(monkeypatch):
+    events = []
+    app = _app(events)
+    app.video = None
+    monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda root: False)
+    LabelingApp.on_close(app)
+    assert events == []

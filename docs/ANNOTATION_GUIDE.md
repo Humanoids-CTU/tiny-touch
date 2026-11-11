@@ -452,6 +452,12 @@ the recording, place its offset on the last frame yourself.
 **Run Analysis before you consider a video finished and check that the "Open
 (Unterminated) Touches" column is zero for all four limbs.**
 
+When you close the app with an open touch, the same **Open touches** dialog appears.
+**Go to onset** keeps the app open and jumps to the selected onset. **Save and close**
+saves your progress with the touches left open, so you can continue labeling later.
+**Cancel** keeps the app open without saving or closing. This reminder does not require
+you to finish a touch before stopping work.
+
 **A stray `OFF` is silently ignored.** An offset with no preceding onset belongs to no
 touch. It appears nowhere in the statistics and produces no warning, so it is harder to
 notice than a missing offset. Work forward through the video in order rather than jumping
