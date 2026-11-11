@@ -105,7 +105,7 @@ class CodingSetupWizard:
                 options.columnconfigure(column, weight=1, uniform="templates")
             for column, (template, label) in enumerate(TEMPLATE_LABELS.items()):
                 frame = tk.Frame(options, padx=8, pady=8, highlightthickness=1)
-                theme.bind_colors(frame, bg="SURFACE", highlightbackground="BORDER")
+                theme.bind_colors(frame, bg="TOOLBAR_BG", highlightbackground="BORDER")
                 frame.grid(row=0, column=column, sticky="nsew", padx=4)
                 self.template_cards[template] = frame
                 with Image.open(template_diagram(template)) as source:

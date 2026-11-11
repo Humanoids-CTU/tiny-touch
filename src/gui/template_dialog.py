@@ -15,7 +15,7 @@ def template_diagram(template):
 def add_custom_template_placeholder(parent, selection, column):
     """Show the planned template without making it a supported project type."""
     frame = tk.Frame(parent, padx=8, pady=8, highlightthickness=1)
-    theme.bind_colors(frame, bg="SURFACE", highlightbackground="BORDER")
+    theme.bind_colors(frame, bg="TOOLBAR_BG", highlightbackground="BORDER")
     frame.grid(row=0, column=column, sticky="nsew", padx=4)
     ttk.Label(frame, text="Coming soon", style="Muted.TLabel").pack(
         expand=True, padx=8, pady=16,
