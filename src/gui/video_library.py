@@ -1,7 +1,7 @@
 """A single themed library window for resuming or preparing local videos."""
 import tkinter as tk
 from tkinter import ttk
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 from gui import theme
 from gui.widgets import RoundedCard
 from gui.template_dialog import template_diagram
@@ -14,6 +14,24 @@ ROW_TEXT_WRAP = 330
 THUMBNAIL_SIZE = (160, 90)
 ROW_DIAGRAM_SIZE = (50, 80)
 ROW_CARD_PAD = 12
+THUMBNAIL_RADIUS = 8    # rounded like the video in the main window
+DIAGRAM_RADIUS = 6
+DIAGRAM_RIM = 3         # white margin inside the diagram's rounded corners
+
+
+def _rounded(image, radius, rim=0):
+    """`image` with rounded corners on the card colour (plus a white `rim`)."""
+    image = image.convert("RGB")
+    if rim:
+        framed = Image.new("RGB", (image.width + 2 * rim, image.height + 2 * rim), "#ffffff")
+        framed.paste(image, (rim, rim))
+        image = framed
+    s = theme.SUPERSAMPLE
+    mask = Image.new("L", (image.width * s, image.height * s), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        [0, 0, image.width * s - 1, image.height * s - 1], radius=radius * s, fill=255)
+    mask = mask.resize(image.size, Image.Resampling.LANCZOS)
+    return Image.composite(image, Image.new("RGB", image.size, theme.color("CARD")), mask)
 
 
 def choose_existing_video(parent, name, copy_name, *, center=None):
@@ -87,13 +105,15 @@ def choose_video(parent, entries, *, center=None):
     rows.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
     canvas.bind("<Configure>", lambda e: canvas.itemconfigure(item, width=e.width))
     photos = []
-    def photo(path, size):
+    def photo(path, size, radius=0, rim=0):
         if not path:
             return None
         try:
             with Image.open(path) as source:
                 image = source.copy()
-            image.thumbnail(size)
+            image.thumbnail((size[0] - 2 * rim, size[1] - 2 * rim))
+            if radius:
+                image = _rounded(image, radius, rim)
             value = ImageTk.PhotoImage(image, master=win)
             photos.append(value)
             return value
@@ -110,7 +130,8 @@ def choose_video(parent, entries, *, center=None):
             card = RoundedCard(rows, pad=px(ROW_CARD_PAD))
             card.pack(fill="x")
             row = card.inner
-            preview = photo(entry.thumbnail, (px(THUMBNAIL_SIZE[0]), px(THUMBNAIL_SIZE[1])))
+            preview = photo(entry.thumbnail, (px(THUMBNAIL_SIZE[0]), px(THUMBNAIL_SIZE[1])),
+                            radius=px(THUMBNAIL_RADIUS))
             ttk.Label(row, image=preview, text="No thumbnail" if preview is None else "", width=22,
                       style="Card.TLabel" if preview is not None else "CardMuted.TLabel").pack(side="left", padx=(0, px(16)))
             info = ttk.Frame(row, style="Card.TFrame")
@@ -120,7 +141,8 @@ def choose_video(parent, entries, *, center=None):
             ttk.Label(info, text=f"{TEMPLATE_LABELS.get(entry.template, entry.template)} / {state}" + (f" / {entry.setup_name}" if entry.setup_name else ""), style="CardMuted.TLabel", wraplength=px(ROW_TEXT_WRAP)).pack(anchor="w", pady=px(5))
             if not entry.source:
                 ttk.Label(info, text="Source unavailable — select the source again with Load new video.", style="Card.TLabel", wraplength=px(ROW_TEXT_WRAP)).pack(anchor="w")
-            diagram = photo(template_diagram(entry.template), (px(ROW_DIAGRAM_SIZE[0]), px(ROW_DIAGRAM_SIZE[1])))
+            diagram = photo(template_diagram(entry.template), (px(ROW_DIAGRAM_SIZE[0]), px(ROW_DIAGRAM_SIZE[1])),
+                            radius=px(DIAGRAM_RADIUS), rim=px(DIAGRAM_RIM))
             ttk.Label(row, image=diagram, style="Card.TLabel").pack(side="left", padx=px(14))
             ttk.Button(row, text="Resume", style="Card.Tool.TButton", command=lambda value=entry: finish(value), state="normal" if entry.source else "disabled").pack(side="right")
         def bind_scroll(widget):
