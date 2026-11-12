@@ -188,6 +188,7 @@ PROGRESS_WINDOW_W = 520
 PROGRESS_WINDOW_H = 180
 EXPORT_WINDOW_H = 160
 PROGRESS_BAR_LENGTH = 460
+PROGRESS_COUNT_WIDTH = 9
 
 
 # =============================================================================
@@ -1789,9 +1790,14 @@ class LabelingApp(tk.Tk):
         # sentence shifts all its text whenever a count or duration gains a digit.
         progress_fields = ttk.Frame(content)
         progress_fields.pack(fill="x")
-        count_label = ttk.Label(progress_fields, text="0 / --", font=theme.FONT_BASE,
-                                width=28, anchor="w")
+        count_label = ttk.Label(progress_fields, text="0", font=theme.FONT_BASE,
+                                width=PROGRESS_COUNT_WIDTH, anchor="e")
         count_label.pack(side="left")
+        ttk.Label(progress_fields, text=" / ", font=theme.FONT_BASE,
+                  width=3, anchor="center").pack(side="left")
+        total_label = ttk.Label(progress_fields, text="--", font=theme.FONT_BASE,
+                                width=PROGRESS_COUNT_WIDTH, anchor="w")
+        total_label.pack(side="left")
         percent_label = ttk.Label(progress_fields, text="0.0%", font=theme.FONT_BASE,
                                   width=8, anchor="e")
         percent_label.pack(side="right")
@@ -1826,7 +1832,8 @@ class LabelingApp(tk.Tk):
                 bar["value"] = count
                 pct = (count / total) * 100 if total else 0
                 status.config(text=stage)
-                count_label.config(text=f"{count} / {total}")
+                count_label.config(text=str(count))
+                total_label.config(text=str(total))
                 percent_label.config(text=f"{pct:.1f}%")
                 eta_s = None
                 if count > 0:
