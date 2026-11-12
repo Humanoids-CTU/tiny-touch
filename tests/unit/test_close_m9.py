@@ -150,6 +150,27 @@ def test_M9_rejected_close_anyway_keeps_session_alive(monkeypatch):
     assert app._closing is False
 
 
+def test_close_waits_for_extraction_cleanup_without_blocking_tk(monkeypatch):
+    events = []
+    app = _app(events)
+    pending = []
+    worker = {"alive": True}
+    app._frame_extraction_cancel = SimpleNamespace(set=lambda: events.append("cancel_extraction"))
+    app._frame_extraction_job = SimpleNamespace(thread=SimpleNamespace(is_alive=lambda: worker["alive"]))
+    app.after = lambda delay, callback: pending.append(callback)
+    monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda root: True)
+
+    LabelingApp.on_close(app)
+
+    assert "cancel_extraction" in events
+    assert "destroy" not in events
+    assert "close_state_repo" not in events
+    assert len(pending) == 1
+    worker["alive"] = False
+    pending.pop()()
+    assert events[-4:] == ["close_state_repo", ("shutdown", False, True), "cancel_timers", "destroy"]
+
+
 @pytest.mark.parametrize("result", [None, (GO_TO_ONSET, 1), (SAVE_AND_CLOSE, 0)])
 def test_close_with_open_touches_offers_navigation_or_save(monkeypatch, result):
     events = []

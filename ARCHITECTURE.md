@@ -219,13 +219,31 @@ costs one rebuild instead of one per event. The old frame stays on screen meanwh
   resolution (`timeBeginPeriod`), without which Tk's `after()` is rounded to the 15.6 ms
   system tick. Both are no-ops for correctness elsewhere.
 
-Frame extraction (`adapters.frame_extractor.create_frames`) runs synchronously inside a small Tk progress window the first time a video is opened:
+Frame extraction (`adapters.frame_extractor.create_frames`) runs in one
+`service_layer.frame_preparation.FramePreparationJob` worker. The Tk thread polls
+its latest progress every 50 ms while waiting in a modal progress window. Workers
+never call Tk or SQLite. Closing the progress window cancels preparation; closing
+the app requests cancellation and waits asynchronously for the writer to stop
+before destroying Tk. Both paths keep the accepted coding setup and completed
+JPEGs for Resume in the video library.
 
 1. **Reliability mode** -- if frames already exist for the *non-reliability* original of the same video, copy them over instead of re-extracting.
-2. **ffmpeg path** -- bundled via `imageio-ffmpeg`, called as `ffmpeg -i video -q:v 2 -start_number 0 frames/frame%d.jpg` (fast).
+2. **ffmpeg path** -- bundled via `imageio-ffmpeg`; decode from the source start,
+   trim by exact frame index after the validated saved prefix, and use passthrough
+   frame timing. JPEGs publish atomically into a staging folder and move into the
+   cache as completed; valid saved JPEGs, including those after a gap, stay intact.
 3. **OpenCV fallback** -- sequential `cv2.VideoCapture` decode + `cv2.imwrite`, used if ffmpeg is unavailable or fails.
 
-Frame counts are sanity-checked against `cv2.CAP_PROP_FRAME_COUNT` with a 0.1% tolerance (`FRAME_COUNT_TOLERANCE_PCT`).
+Resume decodes saved JPEGs before reusing them and repairs missing or truncated
+images. OpenCV decodes sequentially and skips writes for valid saved frames;
+neither backend uses approximate timestamp seeking. Saved setups in `draft` or
+`preparing` resume without reopening the wizard, while Reliability still requires
+the original's actual `ready` state. Incomplete preparation always visits the
+worker, even if its file count matches. Before marking the project ready, the
+cache must contain every index from zero through the probed final frame.
+`FRAME_COUNT_TOLERANCE_PCT` controls discrepancy warnings only; it cannot approve
+missing frames. A source whose reported count disagrees with its decoded sequence
+remains incomplete and reports an error.
 
 Both extraction backends fit newly generated JPEGs into a 1920x1080 box without
 upscaling or cropping. FFmpeg evaluates the scale after autorotation; OpenCV uses

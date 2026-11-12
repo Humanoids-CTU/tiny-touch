@@ -137,7 +137,9 @@ def choose_video(parent, entries, *, center=None):
             info = ttk.Frame(row, style="Card.TFrame")
             info.pack(side="left", fill="x", expand=True)
             ttk.Label(info, text=entry.title, style="Card.TLabel", font=theme.FONT_MEDIUM).pack(anchor="w")
-            state = "Ready" if entry.preparation_state == "ready" else "Setup / preparation required"
+            state = {"ready": "Ready", "preparing": "Resume frame generation",
+                     "draft": "Setup saved / resume preparation"}.get(
+                         entry.preparation_state, "Setup / preparation required")
             ttk.Label(info, text=f"{TEMPLATE_LABELS.get(entry.template, entry.template)} / {state}" + (f" / {entry.setup_name}" if entry.setup_name else ""), style="CardMuted.TLabel", wraplength=px(ROW_TEXT_WRAP)).pack(anchor="w", pady=px(5))
             if not entry.source:
                 ttk.Label(info, text="Source unavailable — select the source again with Load new video.", style="Card.TLabel", wraplength=px(ROW_TEXT_WRAP)).pack(anchor="w")

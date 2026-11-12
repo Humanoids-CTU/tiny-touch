@@ -1,6 +1,7 @@
 """Regression test for closing the Tk root from frame-extraction progress."""
 
 import pytest
+from threading import Event
 
 from adapters.frame_extractor import FrameExtractionCancelled
 from gui_driver import dismiss_dialog, find_toplevel, find_widget
@@ -17,6 +18,7 @@ def test_close_during_frame_extraction_is_clean(
     monkeypatch,
 ):
     observed = {}
+    extraction_started = Event()
 
     def fake_extract_frames(
         _video_path,
@@ -26,8 +28,9 @@ def test_close_during_frame_extraction_is_clean(
         cancel_event=None,
     ):
         observed["cancel_event"] = cancel_event
-        app.after(0, app.on_close)
         progress_cb(1, 10, "Generating frames", 0.1)
+        extraction_started.set()
+        assert cancel_event.wait(5), "Tk did not cancel the extraction worker"
         observed["cancelled"] = cancel_event.is_set()
         raise FrameExtractionCancelled("Frame extraction cancelled.")
 
@@ -52,6 +55,12 @@ def test_close_during_frame_extraction_is_clean(
         app.after(20, advance_setup)
     app.after(20, advance_setup)
     close_dialog = dismiss_dialog(app, "Close Application", "OK")
+    def close_when_extracting():
+        if extraction_started.is_set():
+            app.on_close()
+        else:
+            app.after(20, close_when_extracting)
+    app.after(20, close_when_extracting)
     app.load_video_btn.invoke()
 
     assert mode_dialog["clicked"] is True

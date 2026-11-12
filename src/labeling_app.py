@@ -58,6 +58,7 @@ from log_setup import open_logs_folder
 from perf_utils import PerfLogger
 from service_layer import analysis_service, annotation_service, project_service, save_service
 from service_layer.project_service import LabelingTimer
+from service_layer.frame_preparation import FramePreparationJob
 from video_model import Video
 
 
@@ -84,6 +85,7 @@ WHEEL_BUFFER_POLL_MS = 50
 # frame (LabelingApp._display_pump). Workers never call Tk, so this poll is
 # how background decodes reach the screen; 10 ms is below one video frame.
 DISPLAY_PUMP_MS = 10
+FRAME_PREPARATION_POLL_MS = 50
 # Playback runs on the Tk thread (LabelingApp._play_tick), paced against a
 # running deadline like the wheel. When the next PLAYBACK_BUFFER_AHEAD frames
 # are not decoded yet it re-checks every PLAYBACK_STALL_POLL_MS: a cheap
@@ -1769,8 +1771,9 @@ class LabelingApp(tk.Tk):
     def _open_data_progress_window(self):
         return self._open_progress_window("Loading Data", "Loading labeled data...")
 
-    def _open_progress_window(self, title, heading):
+    def _open_progress_window(self, title, heading, *, frame_job=None):
         win = tk.Toplevel(self)
+        win.withdraw()  # stay hidden until centered, or Windows maps it at +0+0
         win.title(title)
         win.geometry(f"{theme.px(PROGRESS_WINDOW_W)}x{theme.px(PROGRESS_WINDOW_H)}")
         win.resizable(False, False)
@@ -1795,6 +1798,7 @@ class LabelingApp(tk.Tk):
         )
         time_label.pack()
         center_over_parent(win, self)
+        win.deiconify()
 
         def update(count, total, stage, elapsed_s):
             try:
@@ -1813,8 +1817,9 @@ class LabelingApp(tk.Tk):
                 time_label.config(
                     text=f"Elapsed: {self._format_duration(elapsed_s)} | ETA: {self._format_duration(eta_s)}"
                 )
-                win.update_idletasks()
-                win.update()
+                if frame_job is None:
+                    win.update_idletasks()
+                    win.update()
             except tk.TclError:
                 pass
 
@@ -1827,18 +1832,52 @@ class LabelingApp(tk.Tk):
                 # events for a long-running operation.
                 pass
 
+        if frame_job is not None:
+            def cancel():
+                frame_job.cancel()
+                status.config(text="Cancelling... Keeping completed frames.")
+
+            def poll():
+                if not frame_job.thread.is_alive():
+                    close()
+                    return
+                if not frame_job.cancel_event.is_set() and frame_job.progress is not None:
+                    update(*frame_job.progress)
+                win.after(FRAME_PREPARATION_POLL_MS, poll)
+
+            win.protocol("WM_DELETE_WINDOW", cancel)
+            win.grab_set()
+            frame_job.start()
+            win.after(FRAME_PREPARATION_POLL_MS, poll)
+            # Tk continues handling input while the Python load flow waits.
+            # Only this thread reads SQLite or accesses any Tk widgets.
+            win.wait_window()
         return update, close
+
+    def _run_frame_extraction(self, video_path, paths, mode, expected_last_frame):
+        job = FramePreparationJob(lambda **kwargs: project_service.extract_frames(
+            video_path, paths, mode, **kwargs))
+        self._frame_extraction_job = job
+        self._frame_extraction_cancel = job.cancel_event
+        try:
+            self._open_progress_window("Preparing Frames", "Preparing frames...", frame_job=job)
+            job.result()
+            if not project_service.frames_ready(paths, expected_last_frame):
+                raise FrameExtractionError("The extracted frame sequence is incomplete. Resume preparation to retry.")
+        finally:
+            self._frame_extraction_cancel = None
+            self._frame_extraction_job = None
 
     def _run_export_with_progress(self, export_fn):
         """Run a full export off the Tk thread while a modal stays responsive."""
         self._assert_ui_thread()
         win = tk.Toplevel(self)
+        win.withdraw()  # stay hidden until centered, or Windows maps it at +0+0
         win.title("Saving Data")
         win.geometry(f"{theme.px(PROGRESS_WINDOW_W)}x{theme.px(EXPORT_WINDOW_H)}")
         win.resizable(False, False)
         win.transient(self)
         theme.bind_colors(win, bg="WIN")
-        win.grab_set()
         win.protocol("WM_DELETE_WINDOW", lambda: None)
 
         content = ttk.Frame(win, padding=theme.px(16))
@@ -1856,6 +1895,8 @@ class LabelingApp(tk.Tk):
         bar.pack(pady=10)
         bar.start(12)
         center_over_parent(win, self)
+        win.deiconify()
+        win.grab_set()  # after deiconify so the grab never hits an unmapped window (Linux)
 
         started = time.perf_counter()
         result = {}
@@ -2840,7 +2881,7 @@ class LabelingApp(tk.Tk):
         try:
             setup, ready, inherited = project_service.inspect_coding_setup(candidate_paths)
             state = SqliteRepository.inspect_template(candidate_paths.state_db)
-            if not ready and not inherited:
+            if not ready and not inherited and not project_service.can_resume_preparation(candidate_paths):
                 if os.path.exists(candidate_paths.state_db):
                     messagebox.showinfo("Review coding setup", project_service.coding_setup_warning(candidate_paths), parent=self)
                 setup = configure_video(self, setup, center=center_over_parent, locked_template=bool(state and state.locked))
@@ -2958,27 +2999,18 @@ class LabelingApp(tk.Tk):
 
         # Frames generation/check
         logger.debug("checking frames folder: %s", paths.frames_dir)
-        if not project_service.frames_ready(paths, video.total_frames):
+        if not ready or not project_service.frames_ready(paths, video.total_frames):
             logger.info("frame set incomplete; extracting frames for %s", video_name)
             if not ready:
                 self.state_repo.set_meta("preparation_state", "preparing")
-            progress_update, progress_close = self._open_frame_progress_window()
-            extraction_cancel = Event()
-            self._frame_extraction_cancel = extraction_cancel
             try:
-                project_service.extract_frames(
-                    video_path,
-                    paths,
-                    self.labeling_mode,
-                    progress_cb=progress_update,
-                    cancel_event=extraction_cancel,
-                )
+                self._run_frame_extraction(video_path, paths, self.labeling_mode, video.total_frames)
             except FrameExtractionCancelled:
-                # The app is closing: on_close set the cancel event and has
-                # already saved/closed everything itself, so only the timer
-                # needs rolling back — no widget may be touched from here.
-                logger.info("frame extraction cancelled during shutdown")
-                self._stop_video_timer_if_any()
+                logger.info("frame extraction cancelled; saved preparation retained")
+                if self._closing:
+                    self._stop_video_timer_if_any()
+                else:
+                    self._abort_load_to_clean_state()
                 return
             except FrameExtractionError as exc:
                 logger.error("frame extraction failed for %s: %s", video_name, exc)
@@ -2992,10 +3024,6 @@ class LabelingApp(tk.Tk):
                 # ending in the clean "no video loaded" state.
                 self._abort_load_to_clean_state()
                 return
-            finally:
-                if self._frame_extraction_cancel is extraction_cancel:
-                    self._frame_extraction_cancel = None
-                progress_close()
         else:
             logger.debug("frame set is complete for %s", video_name)
 
@@ -3187,15 +3215,23 @@ class LabelingApp(tk.Tk):
         extraction_cancel = getattr(self, "_frame_extraction_cancel", None)
         if extraction_cancel is not None:
             extraction_cancel.set()
-        # ORDERING: the state DB closes only AFTER the final save, the last
-        # position and the labeling-time checkpoint — all three write to it.
-        self._close_state_repo()
-        try:
-            self.frame_buffer.shutdown(wait=False, cancel_futures=True)
-        except Exception:
-            logger.warning("loader pool shutdown failed", exc_info=True)
-        self._cancel_pending_timers()
-        self.destroy()
+        extraction_job = getattr(self, "_frame_extraction_job", None)
+
+        def finish_close():
+            if extraction_job is not None and extraction_job.thread.is_alive():
+                # Keep Tk responsive until ffmpeg/OpenCV releases its files.
+                self.after(FRAME_PREPARATION_POLL_MS, finish_close)
+                return
+            # Every DB writer and the extraction worker have now finished.
+            self._close_state_repo()
+            try:
+                self.frame_buffer.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                logger.warning("loader pool shutdown failed", exc_info=True)
+            self._cancel_pending_timers()
+            self.destroy()
+
+        finish_close()
 
     def _cancel_pending_timers(self):
         """Cancel our own repeating `after()` timers before the root goes away.

@@ -342,6 +342,19 @@ def inspect_coding_setup(paths):
     return default_coding_setup(), False, False
 
 
+def can_resume_preparation(paths):
+    """A saved, accepted setup can resume without declaring its frames ready.
+
+    Legacy projects and snapshots explicitly awaiting review still use the
+    wizard. Reliability eligibility continues to depend on actual readiness.
+    """
+    if not os.path.isfile(paths.state_db):
+        return False
+    snapshot = _ProjectSnapshot(paths.state_db)
+    return (snapshot.load_coding_setup() is not None
+            and snapshot.load_preparation_state() in ("draft", "preparing", "ready"))
+
+
 def validate_source_association(paths, source):
     """Reject project-stem collisions even when source extensions differ."""
     from pathlib import Path

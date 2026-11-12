@@ -11,8 +11,10 @@ import time
 import shutil
 import subprocess
 import threading
+import tempfile
 
 import cv2
+from PIL import Image, UnidentifiedImageError
 
 from domain.project import ProjectPaths
 
@@ -21,7 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 _FRAME_RE = re.compile(r"^frame(\d+)\.(jpg|jpeg|png)$", re.IGNORECASE)
-FRAME_COUNT_TOLERANCE_PCT = 0.001  # allow up to 0.1% missing frames
+FRAME_COUNT_TOLERANCE_PCT = 0.001  # probe discrepancy warning threshold only
+FFMPEG_POLL_INTERVAL_S = 0.1
 # Coding images fit this landscape box; source videos remain untouched.
 MAX_FRAME_WIDTH = 1920
 MAX_FRAME_HEIGHT = 1080
@@ -85,12 +88,6 @@ def check_items_count(folder_path, expected_count):
     if expected_files is not None:
         logger.debug("Expected frame files: %d", expected_files)
         logger.debug("Expected last frame index: %s", expected_count)
-        allowed_missing = max(1, int(expected_files * FRAME_COUNT_TOLERANCE_PCT)) if expected_files > 0 else 0
-        logger.debug(
-            "Frame count tolerance: %.3f%% (allow %d missing frames)",
-            FRAME_COUNT_TOLERANCE_PCT * 100,
-            allowed_missing,
-        )
     else:
         logger.warning("Expected frame count is undefined.")
 
@@ -109,20 +106,54 @@ def check_items_count(folder_path, expected_count):
 
     if expected_files is None:
         return False
-    allowed_missing = max(1, int(expected_files * FRAME_COUNT_TOLERANCE_PCT)) if expected_files > 0 else 0
-    min_ok = expected_files - allowed_missing
-    if frame_count < min_ok or frame_count > expected_files:
+    if (frame_count != expected_files
+            or set(frame_indices) != set(range(expected_files))):
         logger.warning(
             "Frame file count mismatch: expected %d, found %d", expected_files, frame_count
         )
         return False
-    if frame_count != expected_files:
-        logger.warning(
-            "Frame file count within tolerance: expected %d, found %d",
-            expected_files,
-            frame_count,
-        )
     return True
+
+
+def _valid_existing_frames(frames_dir, cancel_event=None, progress_cb=None):
+    """Decode cached JPEGs before reuse; interrupted writes are not completed work."""
+    os.makedirs(frames_dir, exist_ok=True)
+    valid = set()
+    names = [name for name in os.listdir(frames_dir)
+             if re.fullmatch(r"frame\d+\.jpg", name)]
+    started = time.time()
+    last_report = 0.0
+    for count, name in enumerate(names, 1):
+        _raise_if_cancelled(cancel_event)
+        path = os.path.join(frames_dir, name)
+        complete = False
+        try:
+            with Image.open(path) as image:
+                image.load()
+            with open(path, "rb") as stream:
+                stream.seek(-2, os.SEEK_END)
+                complete = stream.read() == b"\xff\xd9"
+        except (OSError, ValueError, UnidentifiedImageError):
+            pass
+        if complete:
+            valid.add(int(name[5:-4]))
+        else:
+            logger.info("Regenerating incomplete frame: %s", path)
+            # A failed decoder must not leave a corrupt, count-shaped cache
+            # that can subsequently be mistaken for completed preparation.
+            os.unlink(path)
+        now = time.time()
+        if progress_cb and now - last_report >= 0.1:
+            progress_cb(count, len(names), "Checking saved frames", now - started)
+            last_report = now
+    return valid
+
+
+def _first_missing(valid):
+    count = 0
+    while count in valid:
+        count += 1
+    return count
 
 
 def _get_ffmpeg_exe():
@@ -167,8 +198,10 @@ def _extract_frames_ffmpeg(
     logger.info("Using ffmpeg for frame extraction: %s", ffmpeg_exe)
 
     os.makedirs(frames_dir, exist_ok=True)
-    output_pattern = os.path.join(frames_dir, "frame%d.jpg")
-
+    valid = _valid_existing_frames(frames_dir, cancel_event, progress_cb)
+    resume_from = _first_missing(valid)
+    # Staging keeps valid JPEGs after a gap unchanged too. image2 publishes each
+    # completed JPEG atomically; the polling loop moves only missing frames.
     cap = cv2.VideoCapture(video_path)
     try:
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -184,17 +217,22 @@ def _extract_frames_ffmpeg(
         width,
         height,
     )
+    staging = tempfile.TemporaryDirectory(prefix=".generation-", dir=frames_dir)
+    output_pattern = os.path.join(staging.name, "frame%d.jpg")
 
     # -nostats -loglevel error: keeps stderr almost silent, so the OS pipe
     # buffer can't fill up and deadlock ffmpeg while we poll for progress.
     cmd = [
         ffmpeg_exe,
+        "-nostdin", "-y",
         "-nostats",
         "-loglevel", "error",
         "-i", video_path,
-        "-vf", _frame_scale_filter(),
+        "-vf", f"trim=start_frame={resume_from},setpts=PTS-STARTPTS," + _frame_scale_filter(),
+        "-fps_mode", "passthrough",
         "-q:v", "2",
-        "-start_number", "0",
+        "-start_number", str(resume_from),
+        "-atomic_writing", "1",
         output_pattern,
     ]
 
@@ -202,11 +240,12 @@ def _extract_frames_ffmpeg(
     last_progress_ts = 0.0
 
     logger.debug("Spawning ffmpeg: %s", " ".join(cmd))
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    try:
+        _raise_if_cancelled(cancel_event)
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except BaseException:
+        staging.cleanup()
+        raise
     logger.debug("ffmpeg started (pid=%d)", process.pid)
 
     # Defense-in-depth: drain stdout/stderr concurrently so the pipes can
@@ -226,7 +265,19 @@ def _extract_frames_ffmpeg(
     stdout_thread = None
     stderr_thread = None
     started_threads = []
-    count = 0
+    count = resume_from
+
+    def publish_frames():
+        nonlocal count
+        while True:
+            source = os.path.join(staging.name, f"frame{count}.jpg")
+            if not os.path.isfile(source):
+                break
+            if count in valid:
+                os.unlink(source)
+            else:
+                os.replace(source, os.path.join(frames_dir, f"frame{count}.jpg"))
+            count += 1
 
     def _join_drainers(timeout):
         for thread in started_threads:
@@ -249,20 +300,19 @@ def _extract_frames_ffmpeg(
 
         while process.poll() is None:
             _raise_if_cancelled(cancel_event)
-            time.sleep(progress_interval_s)
+            time.sleep(min(progress_interval_s, FFMPEG_POLL_INTERVAL_S))
             _raise_if_cancelled(cancel_event)
+            publish_frames()
             if progress_cb and total_frames:
                 now = time.time()
                 if (now - last_progress_ts) >= progress_interval_s:
                     last_progress_ts = now
-                    count = _advance_sequential_count(frames_dir, count)
                     progress_cb(count, total_frames, "Generating frames", now - start_time)
-                    # The callback pumps Tk events. Closing the application can
-                    # therefore set cancellation before the callback returns.
                     _raise_if_cancelled(cancel_event)
 
         _raise_if_cancelled(cancel_event)
         _join_drainers(timeout=5.0)
+        publish_frames()
 
         rc = process.returncode
         duration = time.time() - start_time
@@ -330,6 +380,12 @@ def _extract_frames_ffmpeg(
                     thread.join(timeout=1.0)
                 except Exception as exc:
                     logger.warning("failed joining ffmpeg pipe drainer after close: %r", exc)
+        # After the writer exits, retain all fully published frames, including
+        # those produced between the last poll and cancellation.
+        try:
+            publish_frames()
+        finally:
+            staging.cleanup()
 
 
 def _extract_frames_opencv(
@@ -341,6 +397,7 @@ def _extract_frames_opencv(
 ):
     """Extract frames using OpenCV sequential decode+write (fallback path)."""
     logger.debug("Using OpenCV for frame extraction (fallback)")
+    valid = _valid_existing_frames(frames_dir, cancel_event, progress_cb)
 
     vidcap = cv2.VideoCapture(video_path)
     try:
@@ -367,6 +424,15 @@ def _extract_frames_opencv(
 
         while success:
             _raise_if_cancelled(cancel_event)
+            if count in valid:
+                success, image = vidcap.read()
+                count += 1
+                now = time.time()
+                if progress_cb and now - last_progress_ts >= progress_interval_s:
+                    last_progress_ts = now
+                    progress_cb(count, total_frames or count, "Resuming video", now - start_time)
+                    _raise_if_cancelled(cancel_event)
+                continue
             # Use decoded pixels rather than possibly missing or rotated
             # container metadata. Resizing changes no frame indices or timing.
             image_height, image_width = image.shape[:2]
@@ -374,13 +440,15 @@ def _extract_frames_opencv(
             if output_size != (image_width, image_height):
                 image = cv2.resize(image, output_size, interpolation=cv2.INTER_LINEAR)
             frame_path = os.path.join(frames_dir, f"frame{count}.jpg")
-            if not cv2.imwrite(frame_path, image):
+            temporary_path = os.path.join(frames_dir, f".frame{count}.tmp.jpg")
+            if not cv2.imwrite(temporary_path, image):
                 msg = (
                     f"cv2.imwrite failed at frame {count} -> {frame_path} "
                     "(disk full / unwritable?)"
                 )
                 logger.error("%s", msg)
                 raise FrameExtractionError(msg)
+            os.replace(temporary_path, frame_path)
             success, image = vidcap.read()
             count += 1
             if progress_cb:
@@ -423,6 +491,7 @@ def create_frames(
                 original_frames_dir,
             )
             os.makedirs(frames_dir, exist_ok=True)
+            valid = _valid_existing_frames(frames_dir, cancel_event, progress_cb)
             source_items = os.listdir(original_frames_dir)
             frame_files = [filename for filename in source_items if _FRAME_RE.match(filename)]
             skipped_files = [filename for filename in source_items if not _FRAME_RE.match(filename)]
@@ -441,7 +510,11 @@ def create_frames(
                 src = os.path.join(original_frames_dir, filename)
                 dst = os.path.join(frames_dir, filename)
                 try:
-                    shutil.copy2(src, dst)
+                    match = re.fullmatch(r"frame(\d+)\.jpg", filename)
+                    if match is None or int(match.group(1)) not in valid:
+                        temporary_path = os.path.join(frames_dir, ".copy-" + filename)
+                        shutil.copy2(src, temporary_path)
+                        os.replace(temporary_path, dst)
                 except OSError as exc:
                     msg = f"reliability frame copy failed: {src} -> {dst}: {exc!r}"
                     logger.error("%s", msg)
