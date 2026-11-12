@@ -1783,20 +1783,36 @@ class LabelingApp(tk.Tk):
         content = ttk.Frame(win, padding=theme.px(16))
         content.pack(fill="both", expand=True)
         ttk.Label(content, text=heading, font=theme.FONT_TITLE).pack(pady=(0, 6))
-        status = ttk.Label(content, text="Starting...", font=theme.FONT_BASE)
-        status.pack()
+        status = ttk.Label(content, text="Starting...", font=theme.FONT_BASE, anchor="w")
+        status.pack(fill="x")
+        # Keep each changing value in its own reserved field. A single centered
+        # sentence shifts all its text whenever a count or duration gains a digit.
+        progress_fields = ttk.Frame(content)
+        progress_fields.pack(fill="x")
+        count_label = ttk.Label(progress_fields, text="0 / --", font=theme.FONT_BASE,
+                                width=28, anchor="w")
+        count_label.pack(side="left")
+        percent_label = ttk.Label(progress_fields, text="0.0%", font=theme.FONT_BASE,
+                                  width=8, anchor="e")
+        percent_label.pack(side="right")
         bar = ttk.Progressbar(
             content,
             mode="determinate",
             length=theme.px(PROGRESS_BAR_LENGTH),
         )
         bar.pack(pady=8)
-        time_label = ttk.Label(
-            content,
-            text="Elapsed: 0:00 | ETA: --:--",
-            font=theme.FONT_SMALL,
-        )
-        time_label.pack()
+        time_fields = ttk.Frame(content)
+        time_fields.pack(fill="x")
+        ttk.Label(time_fields, text="Elapsed:", font=theme.FONT_SMALL,
+                  width=9, anchor="w").pack(side="left")
+        elapsed_label = ttk.Label(time_fields, text="0:00", font=theme.FONT_SMALL,
+                                  width=12, anchor="w")
+        elapsed_label.pack(side="left")
+        ttk.Label(time_fields, text="ETA:", font=theme.FONT_SMALL,
+                  width=6, anchor="w").pack(side="left")
+        eta_label = ttk.Label(time_fields, text="--:--", font=theme.FONT_SMALL,
+                              width=12, anchor="w")
+        eta_label.pack(side="left")
         center_over_parent(win, self)
         win.deiconify()
 
@@ -1809,14 +1825,15 @@ class LabelingApp(tk.Tk):
                 bar["maximum"] = total
                 bar["value"] = count
                 pct = (count / total) * 100 if total else 0
-                status.config(text=f"{stage}: {count} / {total} ({pct:.1f}%)")
+                status.config(text=stage)
+                count_label.config(text=f"{count} / {total}")
+                percent_label.config(text=f"{pct:.1f}%")
                 eta_s = None
                 if count > 0:
                     rate = elapsed_s / count
                     eta_s = max(0.0, (total - count) * rate)
-                time_label.config(
-                    text=f"Elapsed: {self._format_duration(elapsed_s)} | ETA: {self._format_duration(eta_s)}"
-                )
+                elapsed_label.config(text=self._format_duration(elapsed_s))
+                eta_label.config(text=self._format_duration(eta_s))
                 if frame_job is None:
                     win.update_idletasks()
                     win.update()
