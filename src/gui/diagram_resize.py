@@ -1,25 +1,31 @@
 """Corner grip that rescales the diagram by dragging, aspect ratio kept.
 
-The grip is a tiny canvas sitting in the gutter just outside the diagram's
-bottom-left corner, so it never covers the diagram. It owns only the pointer
-handling: it turns a drag into a scale factor and hands that to the
-controller, which draws the diagram (`on_preview` during the drag, `on_commit`
-on release). Every stored coordinate stays in native diagram pixels, so the
-scale is purely a display choice.
+The grip is a small rounded corner bracket drawn *on* the diagram canvas, in
+its bottom-left corner, as a transparent image: only the bracket shows, the
+diagram stays visible around it. It owns only the pointer handling: it turns
+a drag into a scale factor and hands that to the controller, which draws the
+diagram (`on_preview` during the drag, `on_commit` on release). Every stored
+coordinate stays in native diagram pixels, so the scale is purely a display
+choice.
 """
 
 import sys
 import tkinter as tk
 from tkinter import TclError
 
+from PIL import Image, ImageDraw, ImageTk
+
 from gui import theme
 
-GRIP_WIDTH_PX = 10          # fits the gutter left of the diagram frame
-GRIP_HEIGHT_PX = 24
-GRIP_LINE_SPACING_PX = 5    # distance between the diagonal grip lines
-GRIP_LINE_COUNT = 3
-GRIP_REST_COLOR_ROLE = "BORDER"   # faint at rest, so the panel stays clean
+GRIP_SIZE_PX = 16           # square bracket in the diagram's bottom-left corner
+GRIP_INSET_PX = 3           # gap between the bracket and the diagram's corner
+GRIP_HIT_SLOP_PX = 4        # extra grab area around the bracket
+GRIP_STROKE_PX = 1.5
+GRIP_CORNER_RADIUS_PX = 9   # bend of the bracket (follows the card corner)
+GRIP_SUPERSAMPLE = 8
+GRIP_REST_COLOR_ROLE = "DIAGRAM_LINE"  # faint on the white diagram in both themes
 GRIP_HOVER_COLOR_ROLE = "ACCENT"  # lit while the pointer is over it or dragging
+GRIP_TAG = "resize_grip"
 PREVIEW_INTERVAL_MS = 30    # drag motion is coalesced into one preview per interval
 MIN_DIAGRAM_SCALE = 0.25
 MAX_DIAGRAM_SCALE = 3.0
@@ -33,56 +39,67 @@ def clamp_scale(scale, upper=MAX_DIAGRAM_SCALE):
     return max(MIN_DIAGRAM_SCALE, min(float(scale), float(upper)))
 
 
-class _GripCanvas(tk.Canvas):
-    """Canvas that repaints its lines whenever the theme reconfigures its colors."""
+class DiagramCanvas(tk.Canvas):
+    """The diagram canvas: puts overlays (the grip) back after a full clear.
 
-    def configure(self, cnf=None, **kw):
-        result = super().configure(cnf, **kw)
-        owner = getattr(self, "_grip", None)
-        if owner is not None and (cnf or kw):
-            owner._paint()
-        return result
+    The controller repaints with ``delete("all")`` in several places; this
+    keeps the grip without each of them knowing about it.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._after_clear = []
+        self._restore_id = None
+
+    def on_clear(self, callback):
+        self._after_clear.append(callback)
+
+    def delete(self, *args):
+        super().delete(*args)
+        if "all" in args and self._after_clear and self._restore_id is None:
+            # After the caller has drawn its new content, so overlays end on top.
+            self._restore_id = self.after_idle(self._restore)
+
+    def _restore(self):
+        self._restore_id = None
+        for callback in self._after_clear:
+            callback()
 
 
 class DiagramResizeGrip:
-    """Drag handle beside the diagram's bottom-left corner; keeps the aspect ratio.
+    """Drag handle in the diagram's bottom-left corner; keeps the aspect ratio.
 
-    `native_size()` returns the template's native (width, height); `get_scale()`
-    the current display scale; `max_scale()` the largest scale that still fits
-    the screen. `on_preview(scale)` runs during the drag and should be cheap;
-    `on_commit(scale)` runs once on release and may do the full redraw.
+    `canvas` is the diagram's DiagramCanvas. `native_size()` returns the
+    template's native (width, height); `get_scale()` the current display
+    scale; `max_scale()` / `min_scale()` the allowed range. `on_preview(scale)`
+    runs during the drag and should be cheap; `on_commit(scale)` runs once on
+    release and may do the full redraw. The owner routes button-1 presses
+    through `handle_press(event)` and skips its own click handling when it
+    returns True.
     """
 
-    def __init__(self, parent, beside, *, native_size, get_scale, max_scale,
-                 on_preview, on_commit):
+    def __init__(self, canvas, *, native_size, get_scale, max_scale, on_preview, on_commit,
+                 min_scale=None):
+        self.canvas = canvas
         self._native_size = native_size
         self._get_scale = get_scale
         self._max_scale = max_scale
+        self._min_scale = min_scale
         self._on_preview = on_preview
         self._on_commit = on_commit
         self._drag = None           # (x_root, y_root, scale) at button press
         self._pending = None        # latest scale not previewed yet
         self._preview_id = None
         self._hover = False
-        self.widget = _GripCanvas(
-            parent,
-            width=GRIP_WIDTH_PX,
-            height=GRIP_HEIGHT_PX,
-            bd=0,
-            highlightthickness=0,
-            takefocus=0,
-        )
-        self.widget._grip = self
-        theme.bind_colors(self.widget, bg="SURFACE")
-        # Bottom-right corner of the grip meets the bottom-left corner of the
-        # diagram frame: it hangs in the gutter and follows the diagram's size.
-        self.widget.place(in_=beside, relx=0.0, rely=1.0, anchor="se")
-        self.widget.bind("<Enter>", self._on_enter)
-        self.widget.bind("<Leave>", self._on_leave)
-        self.widget.bind("<ButtonPress-1>", self._on_press)
-        self.widget.bind("<B1-Motion>", self._on_motion)
-        self.widget.bind("<ButtonRelease-1>", self._on_release)
-        self._paint()
+        self._photos = {}
+        self._size = theme.px(GRIP_SIZE_PX)
+        canvas.on_clear(self._place)
+        canvas.bind("<Configure>", lambda _e: self._place(), add="+")
+        canvas.bind("<Motion>", self._on_motion_hover, add="+")
+        canvas.bind("<Leave>", self._on_leave, add="+")
+        canvas.bind("<B1-Motion>", self._on_motion, add="+")
+        canvas.bind("<ButtonRelease-1>", self._on_release, add="+")
+        self._place()
 
     # --- appearance ------------------------------------------------------------
     @property
@@ -90,32 +107,67 @@ class DiagramResizeGrip:
         """True while the pointer is over the grip or a drag is in progress."""
         return self._hover or self._drag is not None
 
-    def _paint(self):
+    def _photo(self):
         role = GRIP_HOVER_COLOR_ROLE if self.active else GRIP_REST_COLOR_ROLE
-        color = getattr(theme, role)
-        self.widget.delete("all")
-        right, bottom = GRIP_WIDTH_PX - 1, GRIP_HEIGHT_PX - 1
-        # Short "/" strokes stacked up the gutter, pointing at the corner.
-        for index in range(GRIP_LINE_COUNT):
-            y = bottom - index * GRIP_LINE_SPACING_PX
-            self.widget.create_line(0, y, right, y - right, fill=color, width=1)
+        color = theme.color(role)
+        key = (color, self._size)
+        if key not in self._photos:
+            s, n = GRIP_SUPERSAMPLE, self._size
+            stroke = max(1.0, GRIP_STROKE_PX * theme.SCALE) * s
+            radius = theme.px(GRIP_CORNER_RADIUS_PX) * s
+            # An "L" with a rounded bend: the bottom-left corner of one rounded
+            # rectangle outline (twice the grip's size), so lines and arc share
+            # one stroke and join without a step. Transparent elsewhere.
+            big = Image.new("RGBA", (2 * n * s, 2 * n * s), (0, 0, 0, 0))
+            ImageDraw.Draw(big).rounded_rectangle(
+                [0, 0, 2 * n * s - 1, 2 * n * s - 1], radius=radius, outline=color, width=round(stroke))
+            img = big.crop((0, n * s, n * s, 2 * n * s)).resize((n, n), Image.Resampling.LANCZOS)
+            self._photos[key] = ImageTk.PhotoImage(img, master=self.canvas)
+        return self._photos[key]
+
+    def _origin(self):
+        """Top-left of the grip image in canvas coordinates."""
+        inset = theme.px(GRIP_INSET_PX)
+        height = int(self.canvas.cget("height"))
+        return inset, height - inset - self._size
+
+    def _place(self):
+        try:
+            self.canvas.delete(GRIP_TAG)
+            x, y = self._origin()
+            self.canvas.create_image(x, y, image=self._photo(), anchor="nw", tags=GRIP_TAG)
+            self.canvas.tag_raise(GRIP_TAG)
+        except TclError:
+            pass   # canvas destroyed
+
+    def _repaint(self):
+        self.canvas.itemconfigure(GRIP_TAG, image=self._photo())
+
+    def hit(self, event):
+        x, y = self._origin()
+        slop = theme.px(GRIP_HIT_SLOP_PX)
+        return x - slop <= event.x <= x + self._size + slop and y - slop <= event.y <= y + self._size + slop
 
     def _set_cursor(self, name):
         try:
-            self.widget.configure(cursor=name)
+            self.canvas.configure(cursor=name)
         except TclError:
-            self.widget.configure(cursor="")
+            self.canvas.configure(cursor="")
 
-    def _on_enter(self, _event):
-        self._hover = True
-        self._set_cursor(RESIZE_CURSOR)
-        self._paint()
+    def _on_motion_hover(self, event):
+        if self._drag is not None:
+            return
+        hover = self.hit(event)
+        if hover != self._hover:
+            self._hover = hover
+            self._set_cursor(RESIZE_CURSOR if hover else "")
+            self._repaint()
 
     def _on_leave(self, _event):
-        self._hover = False
-        if self._drag is None:
+        if self._hover and self._drag is None:
+            self._hover = False
             self._set_cursor("")
-            self._paint()
+            self._repaint()
 
     # --- dragging --------------------------------------------------------------
     def _scale_for(self, event):
@@ -127,20 +179,26 @@ class DiagramResizeGrip:
         delta = ((x0 - event.x_root) * base_w + (event.y_root - y0) * base_h) / float(
             base_w * base_w + base_h * base_h
         )
-        return clamp_scale(scale0 + delta, self._max_scale())
+        upper = self._max_scale()
+        scale = clamp_scale(scale0 + delta, upper)
+        if self._min_scale is not None:
+            scale = max(scale, min(self._min_scale(), upper))
+        return scale
 
-    def _on_press(self, event):
+    def handle_press(self, event):
+        """Start a drag when button 1 goes down on the grip (True: event consumed)."""
+        if not self.hit(event):
+            return False
         self._drag = (event.x_root, event.y_root, float(self._get_scale()))
-        self._paint()
-        return "break"
+        self._repaint()
+        return True
 
     def _on_motion(self, event):
         if self._drag is None:
-            return "break"
+            return
         self._pending = self._scale_for(event)
         if self._preview_id is None:
-            self._preview_id = self.widget.after(PREVIEW_INTERVAL_MS, self._flush_preview)
-        return "break"
+            self._preview_id = self.canvas.after(PREVIEW_INTERVAL_MS, self._flush_preview)
 
     def _flush_preview(self):
         self._preview_id = None
@@ -150,15 +208,15 @@ class DiagramResizeGrip:
 
     def _on_release(self, event):
         if self._drag is None:
-            return "break"
+            return
         if self._preview_id is not None:
-            self.widget.after_cancel(self._preview_id)
+            self.canvas.after_cancel(self._preview_id)
             self._preview_id = None
         self._pending = None
         scale = self._scale_for(event)
         self._drag = None
+        self._hover = self.hit(event)
         if not self._hover:
             self._set_cursor("")
-        self._paint()
         self._on_commit(scale)
-        return "break"
+        self._place()

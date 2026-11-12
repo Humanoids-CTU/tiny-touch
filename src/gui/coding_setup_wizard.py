@@ -15,18 +15,27 @@ from gui import theme
 from gui.resource_utils import asset_path
 from gui.zone_labels import draw_zone_labels
 from domain.templates import get_template
-from gui.template_dialog import add_custom_template_placeholder, template_diagram
+from gui.template_dialog import add_custom_template_placeholder, set_tile_selected, template_diagram, template_tile
+from gui.widgets import RoundedCard
 
-WINDOW_GEOMETRY = "780x680"
+WINDOW_SIZE = (780, 680)        # design px, scaled with theme.px
 STEP_TITLES = ("1 · Diagram and saved configuration", "2 · Zone labels", "3 · Channels and parameters", "4 · Review coding setup")
 # Every step fits the window without scrolling; long zone lists wrap into columns.
 ZONE_ROWS_PER_COLUMN = 13
 ZONE_ENTRY_WIDTH = 12
 ZONE_PREVIEW_SIZE = (245, 380)
 CHANNEL_PREVIEW_SIZE = (220, 280)
-CHANNEL_OUTLINE_COLOR = "#2563eb"
+CHANNEL_OUTLINE_ROLE = "ACCENT"  # palette role of the selected channel's zone outline
 CHANNEL_OUTLINE_WIDTH = 3
-REVIEW_DIAGRAM_SIZE = (300, 360)
+REVIEW_DIAGRAM_SIZE = (300, 330)
+TEMPLATE_THUMBNAIL_SIZE = (145, 240)
+CARD_PAD = 10                  # inner padding of the content cards (design px)
+DESCRIPTION_WRAP = 690
+ERROR_WRAP = 700
+
+
+def _scaled(size):
+    return tuple(theme.px(value) for value in size)
 
 
 class CodingSetupWizard:
@@ -40,23 +49,24 @@ class CodingSetupWizard:
         self.win = tk.Toplevel(parent)
         self.win.title("Prepare video")
         self.win.transient(parent)
-        theme.bind_colors(self.win, bg="SURFACE")
-        self.win.geometry(WINDOW_GEOMETRY)
+        theme.bind_colors(self.win, bg="WIN")
+        px = theme.px
+        self.win.geometry(f"{px(WINDOW_SIZE[0])}x{px(WINDOW_SIZE[1])}")
         self.win.resizable(False, False)
-        self.body = ttk.Frame(self.win, padding=20)
+        self.body = ttk.Frame(self.win, padding=px(20))
         self.body.pack(fill="both", expand=True)
-        self.heading = ttk.Label(self.body, font=theme.FONT_TITLE)
-        self.heading.pack(anchor="w", pady=(0, 12))
+        self.heading = ttk.Label(self.body, style="Title.TLabel")
+        self.heading.pack(anchor="w", pady=(0, px(12)))
         self.content = ttk.Frame(self.body)
         self.content.pack(fill="both", expand=True)
-        self.error = ttk.Label(self.body, foreground=theme.STATUS_BAD, wraplength=700)
-        self.error.pack(anchor="w", pady=8)
+        self.error = theme.bind_colors(ttk.Label(self.body, wraplength=px(ERROR_WRAP)), foreground="STATUS_BAD")
+        self.error.pack(anchor="w", pady=px(8))
         buttons = ttk.Frame(self.body)
         buttons.pack(fill="x")
         ttk.Button(buttons, text="Cancel", command=self.win.destroy, style="Tool.TButton").pack(side="left")
         self.back = ttk.Button(buttons, text="Back", command=self.previous, style="Tool.TButton")
-        self.back.pack(side="left", padx=8)
-        self.next_button = ttk.Button(buttons, text="Next", command=self.next, style="Tool.TButton")
+        self.back.pack(side="left", padx=theme.toolbar_padx())
+        self.next_button = ttk.Button(buttons, text="Next", command=self.next, style="Primary.TButton")
         self.next_button.pack(side="right")
         self.win.bind("<Escape>", lambda e: self.win.destroy())
         self.render()
@@ -77,11 +87,22 @@ class CodingSetupWizard:
             self.review_photo = None
         return self.result
 
+    def _card(self, parent, heading=None):
+        """Content group: a white card with an optional CardHead heading; returns (card, body)."""
+        card = RoundedCard(parent, pad=theme.px(CARD_PAD))
+        if heading:
+            ttk.Label(card.inner, text=heading, style="CardHead.TLabel").pack(anchor="w", pady=(0, theme.px(6)))
+        body = ttk.Frame(card.inner, style="Card.TFrame")
+        body.pack(fill="both", expand=True)
+        return card, body
+
     def _entry(self, parent, row, label, value, key, *, width=38, column=0):
-        ttk.Label(parent, text=label).grid(row=row, column=column * 2, sticky="w", padx=8, pady=4)
+        px = theme.px
+        ttk.Label(parent, text=label, style="Card.TLabel").grid(
+            row=row, column=column * 2, sticky="w", padx=(0 if column == 0 else px(12), px(8)), pady=px(2))
         variable = tk.StringVar(value=value)
-        entry = ttk.Entry(parent, textvariable=variable, width=width)
-        entry.grid(row=row, column=column * 2 + 1, sticky="ew", padx=8, pady=4)
+        entry = ttk.Entry(parent, textvariable=variable, width=width, style="Card.TEntry")
+        entry.grid(row=row, column=column * 2 + 1, sticky="ew", pady=px(2))
         entry.setup_key = key
         self.variables[key] = variable
         if self.step == 1:
@@ -90,7 +111,7 @@ class CodingSetupWizard:
             entry.bind("<FocusIn>", lambda event, channel=key: self.highlight_channel(channel))
 
     def _description(self, text):
-        ttk.Label(self.content, text=text, wraplength=690).pack(anchor="w", pady=(0, 12))
+        ttk.Label(self.content, text=text, wraplength=theme.px(DESCRIPTION_WRAP)).pack(anchor="w", pady=(0, theme.px(12)))
 
     def render(self):
         for child in self.content.winfo_children():
@@ -110,43 +131,43 @@ class CodingSetupWizard:
             for column in range(len(TEMPLATE_LABELS) + 1):
                 options.columnconfigure(column, weight=1, uniform="templates")
             for column, (template, label) in enumerate(TEMPLATE_LABELS.items()):
-                frame = tk.Frame(options, padx=8, pady=8, highlightthickness=1)
-                theme.bind_colors(frame, bg="TOOLBAR_BG", highlightbackground="BORDER")
-                frame.grid(row=0, column=column, sticky="nsew", padx=4)
-                self.template_cards[template] = frame
+                tile = template_tile(options)
+                tile.grid(row=0, column=column, sticky="nsew", padx=theme.px(4))
+                self.template_cards[template] = tile
                 with Image.open(template_diagram(template)) as source:
                     image = source.copy()
-                image.thumbnail((145, 240))
+                image.thumbnail(_scaled(TEMPLATE_THUMBNAIL_SIZE))
                 photo = ImageTk.PhotoImage(image, master=self.win)
                 self.photos.append(photo)
-                preview = ttk.Label(frame, image=photo, cursor="" if self.locked_template else "hand2")
+                preview = ttk.Label(tile.inner, image=photo, style="Card.TLabel", cursor="" if self.locked_template else "hand2")
                 preview.template_id = template
                 preview.pack()
                 if not self.locked_template:
-                    preview.bind("<Button-1>", lambda event, value=template: self.select_template(value))
-                    frame.bind("<Button-1>", lambda event, value=template: self.select_template(value))
-                ttk.Radiobutton(frame, text=label, value=template, variable=self.template, command=self.highlight_template_selection, state="disabled" if self.locked_template else "normal").pack(pady=(12, 4))
+                    # The whole tile stays clickable: the card canvas, its inner frame and the preview.
+                    for widget in (preview, tile, tile.inner):
+                        widget.bind("<Button-1>", lambda event, value=template: self.select_template(value))
+                ttk.Radiobutton(tile.inner, text=label, value=template, variable=self.template, command=self.highlight_template_selection, state="disabled" if self.locked_template else "normal", style="Card.TRadiobutton").pack(pady=(theme.px(12), theme.px(4)))
             add_custom_template_placeholder(options, self.template, len(TEMPLATE_LABELS))
             self.highlight_template_selection()
-            saved_section = ttk.LabelFrame(self.content, text="Reuse a coding configuration", padding=12)
-            saved_section.pack(fill="x", pady=(20, 0))
-            saved = ttk.Frame(saved_section)
+            saved_card, saved_section = self._card(self.content, "Reuse a coding configuration")
+            saved_card.pack(fill="x", pady=(theme.px(16), 0))
+            saved = ttk.Frame(saved_section, style="Card.TFrame")
             saved.pack(fill="x")
             configs = self.store.list_configs()
             self.config_paths = {path.stem: path for path in configs}
             self.config_choice = tk.StringVar()
-            ttk.Combobox(saved, values=list(self.config_paths), textvariable=self.config_choice, state="readonly", width=38).pack(side="left")
-            ttk.Button(saved, text="Use configuration", command=self.use_config, style="Tool.TButton").pack(side="left", padx=8)
-            ttk.Button(saved_section, text="Import configuration…", command=self.import_config, style="Tool.TButton", state="normal").pack(anchor="w", pady=(10, 0))
+            ttk.Combobox(saved, values=list(self.config_paths), textvariable=self.config_choice, state="readonly", width=38, style="Card.TCombobox").pack(side="left", padx=(theme.px(theme.SHADOW_MARGIN), 0))
+            ttk.Button(saved, text="Use configuration", command=self.use_config, style="Card.Tool.TButton").pack(side="left", padx=theme.px(8))
+            ttk.Button(saved_section, text="Import configuration…", command=self.import_config, style="Card.Tool.TButton", state="normal").pack(anchor="w", pady=(theme.px(6), 0))
         elif self.step == 1:
             self._description("Add labels to the fixed zone IDs. Select a field to highlight its zone. Labels appear on hover; exports retain the IDs.")
-            preview = ttk.Frame(self.content)
-            preview.pack(side="left", padx=(0, 12), anchor="n")
-            self.zone_preview = ttk.Label(preview)
+            preview_card, preview = self._card(self.content)
+            preview_card.pack(side="left", padx=(0, theme.px(12)), anchor="n")
+            self.zone_preview = ttk.Label(preview, style="Card.TLabel")
             self.zone_preview.pack(anchor="n")
             self.highlight_zone(None)
-            table = ttk.Frame(self.content)
-            table.pack(side="left", fill="both", expand=True, anchor="n")
+            table_card, table = self._card(self.content)
+            table_card.pack(side="left", fill="x", expand=True, anchor="n")
             for index, zone in enumerate(editable_zone_names(self.setup.template, coding_setup=self.setup)):
                 column = index // ZONE_ROWS_PER_COLUMN
                 table.columnconfigure(column * 2 + 1, weight=1, uniform="zone-entries")
@@ -155,28 +176,28 @@ class CodingSetupWizard:
             self._description("Name channels and parameters. Select a channel name to outline its assigned zone in blue.")
             overview = ttk.Frame(self.content)
             overview.pack(fill="x")
-            preview = ttk.LabelFrame(overview, text=f"{TEMPLATE_LABELS[self.setup.template]} diagram", padding=10)
-            preview.pack(side="left", anchor="n", padx=(0, 12))
-            self.channel_preview = ttk.Label(preview)
+            preview_card, preview = self._card(overview, f"{TEMPLATE_LABELS[self.setup.template]} diagram")
+            preview_card.pack(side="left", anchor="n", padx=(0, theme.px(12)))
+            self.channel_preview = ttk.Label(preview, style="Card.TLabel")
             self.channel_preview.pack()
-            channels = ttk.LabelFrame(overview, text="Channel names", padding=10)
-            channels.pack(side="left", fill="x", expand=True, anchor="n")
+            channels_card, channels = self._card(overview, "Channel names")
+            channels_card.pack(side="left", fill="x", expand=True, anchor="n")
             channels.columnconfigure(1, weight=1)
             for row, (key, label) in enumerate(self.setup.channel_labels.items()):
                 self._entry(channels, row * 2, f"Channel {row + 1}", label, key, width=20)
                 ttk.Label(channels, text=f"Zone: {self.channel_zone_labels(key)}",
-                          style="Muted.TLabel", wraplength=280).grid(row=row * 2 + 1, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 6))
+                          style="CardMuted.TLabel", wraplength=theme.px(280)).grid(row=row * 2 + 1, column=0, columnspan=2, sticky="w", pady=(0, theme.px(6)))
             self.highlight_channel(next(iter(self.setup.channel_labels)))
             parameters = ttk.Frame(self.content)
-            parameters.pack(fill="x", pady=(16, 0))
+            parameters.pack(fill="x", pady=(theme.px(12), 0))
             for column in range(2):
                 parameters.columnconfigure(column, weight=1, uniform="parameter-groups")
             for column, (heading, labels, prefix) in enumerate((
                 ("Global parameters", self.setup.parameter_labels, "P"),
                 ("Channel parameters", self.setup.limb_parameter_labels, "LP"),
             )):
-                group = ttk.LabelFrame(parameters, text=heading, padding=10)
-                group.grid(row=0, column=column, sticky="nsew", padx=(0, 8) if column == 0 else (8, 0))
+                group_card, group = self._card(parameters, heading)
+                group_card.grid(row=0, column=column, sticky="nsew", padx=(0, theme.px(6)) if column == 0 else (theme.px(6), 0))
                 group.columnconfigure(1, weight=1)
                 for number in range(1, 4):
                     self._entry(group, number - 1, f"Parameter {number}", labels[f"Par{number}"], f"{prefix}{number}", width=19)
@@ -185,14 +206,14 @@ class CodingSetupWizard:
             overview = ttk.Frame(self.content)
             overview.pack(fill="x")
             overview.columnconfigure(1, weight=1)
-            diagram = ttk.LabelFrame(overview, text=f"{TEMPLATE_LABELS[self.setup.template]} diagram with zone labels", padding=10)
-            diagram.grid(row=0, column=0, rowspan=3, sticky="n", padx=(0, 6), pady=6)
+            diagram_card, diagram = self._card(overview, f"{TEMPLATE_LABELS[self.setup.template]} diagram with zone labels")
+            diagram_card.grid(row=0, column=0, rowspan=3, sticky="n", padx=(0, theme.px(6)), pady=theme.px(3))
             self.review_diagram(diagram).pack()
             self._review_group(overview, "Channels", tuple((f"Channel {i}", f"{label}; Zones: {self.channel_zone_labels(key)}") for i, (key, label) in enumerate(self.setup.channel_labels.items(), 1)), 0, 1)
             self._review_group(overview, "Global parameters", tuple((f"Parameter {i}", label) for i, label in enumerate(self.setup.parameter_labels.values(), 1)), 1, 1)
             self._review_group(overview, "Channel parameters", tuple((f"Parameter {i}", label) for i, label in enumerate(self.setup.limb_parameter_labels.values(), 1)), 2, 1)
-            table = ttk.LabelFrame(self.content, text="Reusable configuration (optional)", padding=10)
-            table.pack(fill="x", pady=(6, 0))
+            table_card, table = self._card(self.content, "Reusable configuration (optional)")
+            table_card.pack(fill="x", pady=(theme.px(3), 0))
             table.columnconfigure(1, weight=1)
             self._entry(table, 0, "Save configuration as", "", "save_name")
 
@@ -208,15 +229,15 @@ class CodingSetupWizard:
 
     def highlight_template_selection(self):
         for template, card in self.template_cards.items():
-            theme.bind_colors(card, highlightbackground="ACCENT" if template == self.template.get() else "BORDER")
+            set_tile_selected(card, template == self.template.get())
 
     def _review_group(self, parent, heading, values, row, column):
-        group = ttk.LabelFrame(parent, text=heading, padding=10)
-        group.grid(row=row, column=column, sticky="nsew", padx=(0, 6) if column == 0 else (6, 0), pady=6)
+        card, group = self._card(parent, heading)
+        card.grid(row=row, column=column, sticky="nsew", padx=(0, theme.px(6)) if column == 0 else (theme.px(6), 0), pady=theme.px(3))
         group.columnconfigure(1, weight=1)
         for index, (key, label) in enumerate(values):
-            ttk.Label(group, text=key, style="Muted.TLabel").grid(row=index, column=0, sticky="nw", padx=(0, 12), pady=2)
-            ttk.Label(group, text=label, wraplength=300).grid(row=index, column=1, sticky="nw", pady=2)
+            ttk.Label(group, text=key, style="CardMuted.TLabel").grid(row=index, column=0, sticky="nw", padx=(0, theme.px(12)), pady=theme.px(1))
+            ttk.Label(group, text=label, style="Card.TLabel", wraplength=theme.px(300)).grid(row=index, column=1, sticky="nw", pady=theme.px(1))
 
     def _preview_image(self):
         with Image.open(template_diagram(self.setup.template)) as source:
@@ -227,9 +248,9 @@ class CodingSetupWizard:
         if zone:
             pixels = dict(load_zone_masks(zones_dir(self.setup.template), coding_setup=self.setup))[zone]
             mask = Image.fromarray(pixels).point(lambda value: 110 if value == 0 else 0)
-            tint = Image.new("RGBA", image.size, theme.ACCENT)
+            tint = Image.new("RGBA", image.size, theme.color("ACCENT"))
             image = Image.composite(tint, image, mask)
-        image.thumbnail(ZONE_PREVIEW_SIZE)
+        image.thumbnail(_scaled(ZONE_PREVIEW_SIZE))
         self.zone_photo = ImageTk.PhotoImage(image, master=self.win)
         self.zone_preview.configure(image=self.zone_photo)
 
@@ -237,11 +258,11 @@ class CodingSetupWizard:
         """Diagram canvas with every zone labelled by its resolved display name."""
         image = self._preview_image()
         native_width = image.width
-        image.thumbnail(REVIEW_DIAGRAM_SIZE)
+        image.thumbnail(_scaled(REVIEW_DIAGRAM_SIZE))
         scale = image.width / native_width
         self.review_photo = ImageTk.PhotoImage(image, master=self.win)
         canvas = tk.Canvas(parent, width=image.width, height=image.height, highlightthickness=0)
-        theme.bind_colors(canvas, bg="DIAGRAM_BG")
+        theme.bind_colors(canvas, bg="DIAGRAM")
         canvas.create_image(0, 0, image=self.review_photo, anchor="nw", tags=("diagram",))
         positions = zone_label_positions(load_zone_masks(zones_dir(self.setup.template), coding_setup=self.setup))
         draw_zone_labels(canvas, ZoneDisplaySettings(self.setup.zone_labels, show_names=True), positions, scale)
@@ -250,7 +271,7 @@ class CodingSetupWizard:
     def highlight_channel(self, channel):
         """Outline assigned zones at preview scale, leaving their interiors intact."""
         image = self._preview_image()
-        image.thumbnail(CHANNEL_PREVIEW_SIZE)
+        image.thumbnail(_scaled(CHANNEL_PREVIEW_SIZE))
         selected = set(self.setup.channel_zones.get(channel, ()))
         combined = Image.new("L", image.size, 0)
         for zone, pixels in load_zone_masks(zones_dir(self.setup.template), coding_setup=self.setup):
@@ -260,7 +281,7 @@ class CodingSetupWizard:
                 combined = ImageChops.lighter(combined, mask)
         expanded = combined.filter(ImageFilter.MaxFilter(2 * CHANNEL_OUTLINE_WIDTH + 1))
         outline = ImageChops.subtract(expanded, combined)
-        image.paste(CHANNEL_OUTLINE_COLOR, mask=outline)
+        image.paste(theme.color(CHANNEL_OUTLINE_ROLE), mask=outline)
         self.channel_photo = ImageTk.PhotoImage(image, master=self.win)
         self.channel_preview.configure(image=self.channel_photo)
 

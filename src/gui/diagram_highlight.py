@@ -286,7 +286,7 @@ class DiagramHighlighter:
         overlay = self._compose(sprite, level, flash, flash_color)
         item = self._items.get(zone)
         if item is None:
-            photo = ImageTk.PhotoImage(overlay)
+            photo = ImageTk.PhotoImage(overlay, master=self.canvas)
             item_id = self.canvas.create_image(
                 sprite.box[0], sprite.box[1], anchor="nw", image=photo, tags=(HOVER_TAG,),
             )

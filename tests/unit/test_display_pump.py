@@ -35,7 +35,7 @@ class Chip:
 class FakePhoto:
     """Stand-in for ImageTk.PhotoImage (which needs a Tk root)."""
 
-    def __init__(self, img):
+    def __init__(self, img, master=None):
         self.size = img.size
 
     def paste(self, img):

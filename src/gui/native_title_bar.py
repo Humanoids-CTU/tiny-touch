@@ -13,6 +13,9 @@ GA_ROOT = 2
 DWMWA_USE_IMMERSIVE_DARK_MODE = 20
 DWMWA_CAPTION_COLOR = 35
 DWMWA_TEXT_COLOR = 36
+DWMWA_BORDER_COLOR = 34
+DWMWA_WINDOW_CORNER_PREFERENCE = 33
+DWMWCP_ROUNDSMALL = 3           # Windows 11 menu-style rounded corners
 
 
 @cache
@@ -28,6 +31,29 @@ def _windows_api():
                              ctypes.c_void_p, ctypes.c_uint32]
     set_attribute.restype = ctypes.c_int32  # signed HRESULT, also on 64-bit Windows
     return ancestor, set_attribute
+
+
+def round_popup(window_id, border):
+    """Round a popup window's corners (Windows 11) with a `border` (#rrggbb) hairline.
+
+    `window_id` is Tk's `winfo id` of the popup. Older Windows and other
+    platforms keep square corners.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        ancestor, set_attribute = _windows_api()
+        hwnd = ancestor(window_id, GA_ROOT)
+        if not hwnd:
+            return False
+        for attribute, value in ((DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUNDSMALL),
+                                 (DWMWA_BORDER_COLOR, int.from_bytes(bytes.fromhex(border[1:]), "little"))):
+            native_value = ctypes.c_uint32(value)
+            set_attribute(hwnd, attribute, ctypes.byref(native_value), ctypes.sizeof(native_value))
+        return True
+    except OSError as exc:
+        logger.debug("Popup corner rounding unavailable: %s", exc)
+        return False
 
 
 def apply_title_bar(window, *, dark, background, foreground):

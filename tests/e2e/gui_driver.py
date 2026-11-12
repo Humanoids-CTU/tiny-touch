@@ -26,6 +26,13 @@ import time
 import tkinter as tk
 from tkinter import ttk
 
+try:  # the app's drawn controls; absent when a demo imports this without src/
+    from gui.widgets import ParamPill, SegmentedControl
+except ImportError:  # pragma: no cover - standalone demo scripts
+    ParamPill = SegmentedControl = None
+
+_BUTTON_CLASSES = tuple(c for c in (ttk.Button, tk.Button, ParamPill) if c is not None)
+
 
 # === event loop ===============================================================
 def pump(app, seconds=0.0):
@@ -67,6 +74,11 @@ def find_widget(root, *, cls=None, text=None):
     for widget in walk(root):
         if cls is not None and not isinstance(widget, cls):
             continue
+        if text is not None and SegmentedControl is not None and isinstance(widget, SegmentedControl):
+            # Segments (channels, modes) are drawn labels, not child widgets.
+            if text in widget._labels:
+                return widget
+            continue
         if text is not None:
             try:
                 if widget.cget("text") != text:
@@ -78,21 +90,46 @@ def find_widget(root, *, cls=None, text=None):
 
 
 def find_button(root, text):
-    button = find_widget(root, cls=(ttk.Button, tk.Button), text=text)
+    button = find_widget(root, cls=_BUTTON_CLASSES, text=text)
     assert button is not None, f"no button labeled {text!r} in {root}"
     return button
 
 
+def find_segment(root, text):
+    """(SegmentedControl, value) of the segment labeled `text`, or None."""
+    for widget in walk(root):
+        if SegmentedControl is not None and isinstance(widget, SegmentedControl):
+            for value, label in zip(widget.values, widget._labels):
+                if label == text:
+                    return widget, value
+    return None
+
+
 def click(root, text):
-    """Press the button labeled `text` through its OWN command callback."""
+    """Press the button (or toolbar segment) labeled `text` through its OWN command."""
+    segment = find_segment(root, text)
+    if segment is not None:
+        control, value = segment
+        control.invoke(value)
+        return
     find_button(root, text).invoke()
 
 
 def select_radio(root, text):
-    """Select the radiobutton labeled `text` (sets its var + runs its command)."""
+    """Select the option labeled `text` (sets its var + runs its command).
+
+    Options are radiobuttons or segments of a SegmentedControl (the restyled
+    mode picker, channel selector and appearance toggle).
+    """
+    historical = {"Right Hand": "RH", "Left Hand": "LH", "Right Leg": "RL", "Left Leg": "LL"}
+    for widget in walk(root):
+        if SegmentedControl is not None and isinstance(widget, SegmentedControl):
+            for value, label in zip(widget.values, widget._labels):
+                if text in (label, value) or historical.get(text) == value:
+                    widget.invoke(value)
+                    return
     radio = find_widget(root, cls=(ttk.Radiobutton, tk.Radiobutton), text=text)
     if radio is None:
-        historical = {"Right Hand": "RH", "Left Hand": "LH", "Right Leg": "RL", "Left Leg": "LL"}
         key = historical.get(text)
         if key:
             radio = next((widget for widget in walk(root) if isinstance(widget, (ttk.Radiobutton, tk.Radiobutton)) and str(widget.cget("value")) == key), None)

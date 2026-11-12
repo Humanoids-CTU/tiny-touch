@@ -12,25 +12,27 @@ class FrameDialog(simpledialog.Dialog):
         super().__init__(parent, "Select Frame")
 
     def body(self, master):
-        theme.bind_colors(self, bg="SURFACE")
-        theme.bind_colors(master, bg="SURFACE")
+        px = theme.px
+        theme.bind_colors(self, bg="WIN")
+        theme.bind_colors(master, bg="WIN")
         ttk.Label(master, text=f"Frame number (0–{self.last_frame}):").pack(
-            anchor="w", padx=5, pady=(0, 5),
+            anchor="w", padx=px(10), pady=(px(10), px(6)),
         )
         self.entry = ttk.Entry(master)
-        self.entry.pack(fill="x", padx=5)
+        self.entry.pack(fill="x", padx=px(10))
         self.entry.insert(0, str(self.current_frame))
         self.entry.selection_range(0, tk.END)
         return self.entry
 
     def buttonbox(self):
+        px = theme.px
         buttons = ttk.Frame(self)
-        buttons.pack(padx=10, pady=10)
-        for text, command in (("OK", self.ok), ("Cancel", self.cancel)):
+        buttons.pack(padx=px(14), pady=(px(10), px(14)))
+        for text, command, style in (("OK", self.ok, "Primary.TButton"), ("Cancel", self.cancel, "Tool.TButton")):
             ttk.Button(
                 buttons, text=text, command=command, width=10,
-                style="Tool.TButton",
-            ).pack(side="left", padx=5)
+                style=style,
+            ).pack(side="left", padx=theme.toolbar_padx())
         self.bind("<Return>", self.ok)
         self.bind("<Escape>", self.cancel)
 

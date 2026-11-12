@@ -19,7 +19,7 @@ def _isolated_dot_cache():
 
 
 def test_dot_sprite_is_antialiased_sized_and_cached(monkeypatch):
-    monkeypatch.setattr(theme.ImageTk, "PhotoImage", lambda image: image)
+    monkeypatch.setattr(theme.ImageTk, "PhotoImage", lambda image, master=None: image)
 
     sprite = theme.dot_sprite(theme.DOT_ONSET, 6)
 
@@ -30,7 +30,7 @@ def test_dot_sprite_is_antialiased_sized_and_cached(monkeypatch):
 
 
 def test_hollow_dot_sprite_keeps_its_center_transparent(monkeypatch):
-    monkeypatch.setattr(theme.ImageTk, "PhotoImage", lambda image: image)
+    monkeypatch.setattr(theme.ImageTk, "PhotoImage", lambda image, master=None: image)
 
     sprite = theme.dot_sprite(theme.DOT_ONSET, 6, hollow=True)
 

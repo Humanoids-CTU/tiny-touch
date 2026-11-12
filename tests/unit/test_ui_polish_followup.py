@@ -19,6 +19,13 @@ def test_note_helpers_use_multiline_text_indices():
         def insert(self, *args):
             calls.append(("insert", args))
 
+        # The helpers unlock the (disabled without a video) field around edits.
+        def cget(self, key):
+            return "normal"
+
+        def config(self, **kwargs):
+            pass
+
     widget = NoteWidget()
     stub = SimpleNamespace(note_entry=widget)
 

@@ -12,8 +12,7 @@ pytestmark = pytest.mark.gui
 
 def test_frame_selection_dialog(loaded_app, workspace):
     app = loaded_app
-    button = app.select_frame_button
-    labels = [child.cget("text") for child in button.master.winfo_children()]
+    labels = list(app.frame_nav._labels)
     assert labels[:5] == ["<<", "<", "Select Frame", ">", ">>"]
     app.video.frames.setdefault(3, {})["Note"] = "destination note"
 
@@ -46,7 +45,7 @@ def test_frame_selection_dialog(loaded_app, workspace):
                     dialog.destroy()
 
         app.after(150, respond)
-        button.invoke()
+        app.frame_nav.invoke("select")
         pump(app)
         assert visited
         if errors:

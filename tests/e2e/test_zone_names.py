@@ -10,7 +10,9 @@ from domain.coding_setup import default_coding_setup
 import pytest
 
 import labeling_app
+from gui import app_dialogs
 
+from gui.widgets import Switch
 from gui_driver import click, click_canvas, find_toplevel, find_widget, goto_frame, load_video, save, walk
 
 
@@ -19,14 +21,14 @@ pytestmark = pytest.mark.gui
 
 def _show_toggle(settings):
     label = find_widget(settings, text="Show zone names on diagrams")
-    info = label.grid_info()
-    return next(widget for widget in label.master.grid_slaves(row=info["row"], column=1))
+    row = label.master.master   # grouped-list row: [label (+ hint)] ... [control]
+    return next(widget for widget in walk(row) if isinstance(widget, Switch))
 
 
 def _set_visibility(settings, show):
     toggle = _show_toggle(settings)
-    if bool(toggle.instate(["selected"])) != show:
-        toggle.invoke()
+    if bool(toggle.variable.get()) != show:
+        toggle.toggle()
     click(settings, "Save")  # applies and closes the window
 
 
@@ -59,7 +61,7 @@ def test_zone_names_save_reopen_freeze_and_keep_annotation_ids(app, workspace, t
     click(app, "Settings")
     settings = find_toplevel(app, "Settings")
     _set_visibility(settings, True)
-    if labeling_app.SETTINGS_SHOW_ZONE_NAME_EDITOR:
+    if app_dialogs.SETTINGS_SHOW_ZONE_NAME_EDITOR:
         assert find_widget(settings, text="Edit zone names").instate(["disabled"])
     assert app._get_note_entry_text() == "Unsubmitted draft"
     assert "Light on" in _texts(app.diagram_canvas)
@@ -91,7 +93,7 @@ def test_zone_names_save_reopen_freeze_and_keep_annotation_ids(app, workspace, t
 
     click(app, "Settings")
     settings = find_toplevel(app, "Settings")
-    if labeling_app.SETTINGS_SHOW_ZONE_NAME_EDITOR:
+    if app_dialogs.SETTINGS_SHOW_ZONE_NAME_EDITOR:
         assert find_widget(settings, text="Edit zone names").instate(["disabled"])
     _set_visibility(settings, False)
     assert not app.diagram_canvas.find_withtag("zone-label")
@@ -112,7 +114,8 @@ def test_zone_names_save_reopen_freeze_and_keep_annotation_ids(app, workspace, t
 ])
 def test_named_template_full_workflow_and_reliability(app, workspace, tmp_path, choice, zone, point):
     """Exercise Settings -> annotate -> reopen -> Analysis in both labeling passes."""
-    assert not app.diagram_canvas.find_all()
+    assert not [item for item in app.diagram_canvas.find_all()
+                if "resize_grip" not in app.diagram_canvas.gettags(item)]
     load_video(app, workspace, workspace.video, template=choice, setup=_named_setup(choice, zone, "Acceptance target"))
     assert app.diagram_canvas.find_withtag("diagram")
     click(app, "Settings")

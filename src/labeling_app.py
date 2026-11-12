@@ -10,7 +10,7 @@ from threading import Thread, Event, get_ident, current_thread
 import keyboard
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 
 from adapters import config
 from adapters import video_probe
@@ -30,10 +30,13 @@ from domain.model import (
 )
 from domain.project import ProjectPaths
 from domain.touch import NO_ZONE, find_last_open_onset, find_open_touches, zones_at
-from domain.templates import TEMPLATE_LABELS, DEFAULT_TEMPLATE, get_template
+from domain.templates import DEFAULT_TEMPLATE, get_template
 from domain.zone_display import ZoneDisplaySettings
 from gui import theme
-from gui.video_surface import GpuVideoSurface, VideoRendererError
+from gui import widgets
+from gui import app_dialogs
+from gui.app_dialogs import center_over_parent, custom_confirm_close
+from gui.video_surface import GpuVideoSurface, VideoRendererError, rounded_corner_mask
 from gui.special_zones_app import SpecialZonesApp, DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE
 from gui.frame_dialog import FrameDialog
 from gui.open_touches_dialog import OpenTouchesDialog, GO_TO_ONSET, ANALYZE_ANYWAY, SAVE_AND_CLOSE
@@ -47,7 +50,10 @@ from gui.zone_names_dialog import edit_zone_names
 from gui.zone_labels import draw_zone_labels
 from gui.diagram_highlight import DiagramHighlighter
 from gui.resource_utils import asset_path
-from gui.ui_components import build_ui, draw_startup_diagram
+from gui.ui_components import (CARD_CONTENT_PAD, build_ui, draw_startup_diagram, sync_play_control,
+                               align_timeline_to_video, max_diagram_scale)
+from gui.diagram_resize import clamp_scale
+from gui.video_overlay import BADGE_INSET
 from log_setup import open_logs_folder
 from perf_utils import PerfLogger
 from service_layer import analysis_service, annotation_service, project_service, save_service
@@ -64,14 +70,6 @@ annotation_logger = logging.getLogger("annot")
 # =============================================================================
 # Keep taps precise without waiting for the operating system's repeat delay.
 ARROW_HOLD_DELAY_MS = 150
-# Settings dialog: which optional sections and rows are shown. The settings
-# themselves keep working (config values, project data, and apply logic are
-# untouched); these flags only hide the widgets from the Settings window.
-SETTINGS_SHOW_ARROW_HOLD = False
-SETTINGS_SHOW_HOVER_HIGHLIGHT = False
-SETTINGS_SHOW_PARAMETER_LABELS = False
-SETTINGS_SHOW_PROJECT_TEMPLATE = False
-SETTINGS_SHOW_ZONE_NAME_EDITOR = False
 # Mouse-wheel navigation. Notches are queued and consumed one frame per video
 # frame interval, so a fast flick moves at playback speed (like holding an
 # arrow key) instead of racing the redraw. The queue is capped at
@@ -102,6 +100,80 @@ PLAYBACK_MAX_LAG_S = 0.25
 # <Configure> events of a window-edge drag (~16 ms) and the perf scenario's
 # 50 ms resize steps; every extra millisecond delays the sharp frame.
 RESIZE_SETTLE_MS = 100
+# Timeline playhead (design px): cap width / height, corner rounding, stem width.
+PLAYHEAD_CAP_W, PLAYHEAD_CAP_H = 10, 7
+PLAYHEAD_CAP_ROUND = 1.5
+PLAYHEAD_STEM_W = 2
+PLAYHEAD_SUPERSAMPLE = 8
+
+
+def _playhead_photo(canvas, height):
+    """Antialiased playhead image `height` px tall, cached on the canvas."""
+    color = theme.PLAYHEAD
+    key = (height, color, theme.SCALE)
+    cache = canvas.__dict__.setdefault("_playhead_photos", {})
+    if key not in cache:
+        s, px = PLAYHEAD_SUPERSAMPLE, theme.px
+        # Even width with an even stem: the stem's centre is the image's centre.
+        w = px(PLAYHEAD_CAP_W) // 2 * 2
+        stem = max(2, px(PLAYHEAD_STEM_W) // 2 * 2)
+        cap_h = min(height, px(PLAYHEAD_CAP_H))
+        r = PLAYHEAD_CAP_ROUND * theme.SCALE * s
+        big = Image.new("RGBA", (w * s, height * s), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(big)
+        mid = w * s / 2
+        draw.rectangle([mid - stem * s / 2, cap_h * s / 2, mid + stem * s / 2 - 1, height * s - 1], fill=color)
+        # Downward triangle with rounded corners: an inset triangle stroked
+        # with a round-joined line of the rounding radius.
+        tri = [(r, r), (w * s - r, r), (mid, cap_h * s - r)]
+        draw.polygon(tri, fill=color)
+        draw.line(tri + [tri[0]], fill=color, width=round(2 * r), joint="curve")
+        for cx, cy in tri:
+            draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color)
+        cache[key] = ImageTk.PhotoImage(big.resize((w, height), Image.Resampling.LANCZOS), master=canvas)
+    return cache[key]
+
+
+TIMELINE_CORNER_RADIUS = 6       # design px: rounded ends of the timeline tracks
+
+
+def _round_track_corners(canvas, left, top, right, bottom):
+    """Card-coloured corner masks over a timeline track's four corners.
+
+    Drawn last in a full redraw (the playhead is raised above them), so the
+    track reads as a rounded bar without changing how anything else is drawn.
+    """
+    r = min(theme.px(TIMELINE_CORNER_RADIUS), (right - left) // 2, (bottom - top) // 2)
+    if r <= 0:
+        return
+    key = (r, theme.CARD)
+    cache = canvas.__dict__.setdefault("_corner_photos", {})
+    if key not in cache:
+        corner = Image.new("RGBA", (r, r), theme.CARD)
+        corner.putalpha(rounded_corner_mask(r))
+        flips = (None, Image.Transpose.FLIP_LEFT_RIGHT, Image.Transpose.FLIP_TOP_BOTTOM,
+                 Image.Transpose.ROTATE_180)
+        cache[key] = [ImageTk.PhotoImage(corner if f is None else corner.transpose(f), master=canvas)
+                      for f in flips]
+    for (x, y), photo in zip(((left, top), (right - r, top), (left, bottom - r), (right - r, bottom - r)),
+                             cache[key]):
+        canvas.create_image(x, y, image=photo, anchor="nw", tags="track_corner")
+
+
+def format_counter_time(ms, total_ms):
+    """`ms` as S.mmm, M:SS.mmm or H:MM:SS.mmm, chosen by the video's length `total_ms`."""
+    hours, remainder = divmod(ms, 3600000)
+    minutes, remainder = divmod(remainder, 60000)
+    seconds, milliseconds = divmod(remainder, 1000)
+    if total_ms >= 3600000:
+        return f"{hours}:{minutes:02}:{seconds:02}.{milliseconds:03}"
+    if total_ms >= 60000:
+        return f"{minutes + 60 * hours}:{seconds:02}.{milliseconds:03}"
+    return f"{seconds + 60 * minutes}.{milliseconds:03}"
+
+
+# Rounded corners of the shown video frame (design px; CPU and GPU paths).
+VIDEO_CORNER_RADIUS = 12
 # Canvas tag of the per-frame dots on the diagram, so a frame change can
 # replace just them and leave the limb image and zone labels alone.
 DIAGRAM_DOT_TAG = "dot"
@@ -109,19 +181,16 @@ DIAGRAM_DOT_TAG = "dot"
 # off the Tk main thread, so any future thread-boundary regression fails loudly
 # at the offending call site instead of crashing Tcl intermittently.
 DEBUG_ASSERT_UI_THREAD = False
+# Progress / export windows (design px, scaled with theme.px).
+PROGRESS_WINDOW_W = 520
+PROGRESS_WINDOW_H = 180
+EXPORT_WINDOW_H = 160
+PROGRESS_BAR_LENGTH = 460
 
 
 # =============================================================================
 # Standalone helpers
 # =============================================================================
-def center_over_parent(window, parent) -> None:
-    """Place a realized dialog in the center of its parent window."""
-    window.update_idletasks()
-    x = parent.winfo_rootx() + (parent.winfo_width() - window.winfo_width()) // 2
-    y = parent.winfo_rooty() + (parent.winfo_height() - window.winfo_height()) // 2
-    window.geometry(f"+{max(0, x)}+{max(0, y)}")
-
-
 @contextmanager
 def center_native_file_dialog(parent):
     """Center the Windows common file dialog that belongs to *parent*.
@@ -229,60 +298,6 @@ def center_native_file_dialog(parent):
         yield
     finally:
         user32.UnhookWinEvent(hook)
-
-
-def custom_confirm_close(root) -> bool:
-    win = tk.Toplevel(root)
-    win.withdraw()
-    win.title("Close Application")
-    win.geometry("420x180")
-    win.resizable(False, False)
-    win.transient(root)
-    theme.bind_colors(win, bg="SURFACE")
-    win.grab_set()  # makes it modal
-
-    confirmed = False
-
-    content = ttk.Frame(win, padding=16)
-    content.pack(fill="both", expand=True)
-
-    msg = ttk.Label(
-        content,
-        text="Do you want to close the application?\n\nYour progress will be saved.",
-        font=theme.FONT_TITLE,
-        justify="center",
-        anchor="center",
-        wraplength=350
-    )
-    msg.pack(expand=True, fill="both")
-
-    btn_frame = ttk.Frame(content)
-    btn_frame.pack(pady=(12, 0))
-
-    def on_yes():
-        nonlocal confirmed
-        confirmed = True
-        win.destroy()
-
-    ttk.Button(
-        btn_frame,
-        text="OK",
-        command=on_yes,
-        style="Tool.TButton",
-        takefocus=0,
-    ).pack(side="left", padx=5)
-    ttk.Button(
-        btn_frame,
-        text="Cancel",
-        command=win.destroy,
-        style="Tool.TButton",
-        takefocus=0,
-    ).pack(side="left", padx=5)
-    win.protocol("WM_DELETE_WINDOW", win.destroy)
-    center_over_parent(win, root)
-    win.deiconify()
-    win.wait_window()
-    return confirmed
 
 
 def load_parameter_names_into(video_obj, par_buttons, limb_par_buttons, setup=None):
@@ -478,6 +493,18 @@ class LabelingApp(tk.Tk):
             self.analysis_btn.config(state=state)
         if getattr(self, "special_zones_btn", None):
             self.special_zones_btn.config(state=state)
+        # The right column only annotates a loaded video.
+        selector = getattr(self, "channel_selector", None)
+        if selector is not None:
+            for value in selector.values:
+                selector.set_enabled(value, has_video)
+        for name in ("save_btn", "par1_btn", "par2_btn", "par3_btn",
+                     "limb_par1_btn", "limb_par2_btn", "limb_par3_btn", "save_note_button"):
+            button = getattr(self, name, None)
+            if button is not None:
+                button.config(state=state)
+        if getattr(self, "note_entry", None) is not None:
+            self.note_entry.config(state=state)
 
     # === UI Rebuild & Annotation Controls =====================================
     def _reset_zone_cache(self):
@@ -505,53 +532,37 @@ class LabelingApp(tk.Tk):
         self.limb_par2_btn = None
         self.limb_par3_btn = None
 
+        px = theme.px
+        inset = px(CARD_CONTENT_PAD)
         ttk.Label(
             self.mode_controls_frame,
             text="Channel Selector",
-            font=theme.FONT_BOLD,
-        ).pack(anchor="n", pady=(5, 6))
+            style="CardHead.TLabel",
+        ).pack(anchor="w", padx=inset, pady=(px(12), px(8)))
 
-        # Center the selector as one group while keeping labels easy to scan.
-        limb_selector_frame = ttk.Frame(self.mode_controls_frame)
-        limb_selector_frame.pack(anchor="n")
-        for index, channel in enumerate(definition.channels):
-            ttk.Radiobutton(
-                limb_selector_frame,
-                text=(self.coding_setup.channel_labels[channel.key]
-                      if getattr(self, "coding_setup", None) else channel.label),
-                variable=self.option_var_1,
-                value=channel.key,
-                command=self._on_limb_selected,
-                takefocus=0,
-            ).grid(row=index // 2, column=index % 2, sticky="w", padx=8, pady=2)
+        # 2x2 gapless grid; a click sets option_var_1, then reports the change.
+        self.channel_selector = widgets.SegmentedControl(
+            self.mode_controls_frame,
+            [(channel.key,
+              self.coding_setup.channel_labels[channel.key]
+              if getattr(self, "coding_setup", None) else channel.label)
+             for channel in definition.channels],
+            variable=self.option_var_1,
+            command=lambda _value: self._on_limb_selected(),
+            columns=2,
+            bg="CARD",
+        )
+        self.channel_selector.pack(fill="x", padx=inset, pady=(0, inset))
 
-        self.limb_par1_btn = ttk.Button(
-            self.limb_parameter_frame,
-            text=self.config.limb_parameter1,
-            command=lambda: self.toggle_limb_parameter(1),
-            width=15,
-            style="StateNeutral.TButton",
-            takefocus=0,
-        )
-        self.limb_par1_btn.pack(anchor="n", pady=4)
-        self.limb_par2_btn = ttk.Button(
-            self.limb_parameter_frame,
-            text=self.config.limb_parameter2,
-            command=lambda: self.toggle_limb_parameter(2),
-            width=15,
-            style="StateNeutral.TButton",
-            takefocus=0,
-        )
-        self.limb_par2_btn.pack(anchor="n", pady=4)
-        self.limb_par3_btn = ttk.Button(
-            self.limb_parameter_frame,
-            text=self.config.limb_parameter3,
-            command=lambda: self.toggle_limb_parameter(3),
-            width=15,
-            style="StateNeutral.TButton",
-            takefocus=0,
-        )
-        self.limb_par3_btn.pack(anchor="n", pady=4)
+        def pill(index, text):
+            button = widgets.ParamPill(self.limb_parameter_frame, text=text,
+                                       command=lambda: self.toggle_limb_parameter(index))
+            button.pack(fill="x")
+            return button
+
+        self.limb_par1_btn = pill(1, self.config.limb_parameter1)
+        self.limb_par2_btn = pill(2, self.config.limb_parameter2)
+        self.limb_par3_btn = pill(3, self.config.limb_parameter3)
 
         self._set_mode_button_states()
 
@@ -593,7 +604,14 @@ class LabelingApp(tk.Tk):
             focus = self.focus_get()
         except Exception:
             focus = None
-        if getattr(self, "note_entry", None) and focus == self.note_entry and event.widget != self.note_entry:
+        # Only clicks inside the main window leave the note: a click in a
+        # dialog (Settings, ...) must keep the focus it just gave its field.
+        try:
+            in_main = event.widget.winfo_toplevel() is self
+        except (AttributeError, tk.TclError):
+            in_main = False
+        if (in_main and getattr(self, "note_entry", None) and focus == self.note_entry
+                and event.widget != self.note_entry):
             self.focus_set()
 
     def _entry_has_focus(self):
@@ -883,6 +901,7 @@ class LabelingApp(tk.Tk):
             self._play_ui_next_due = None
         self.play_dir = direction
         self.play = True
+        sync_play_control(self)
         self._precise_timers.hold("playback")
         if self._play_tick_id is None:
             self._play_tick()
@@ -892,6 +911,7 @@ class LabelingApp(tk.Tk):
         self._play_next_due = None
         self._precise_timers.release("playback")
         self._flush_playback_ui()
+        sync_play_control(self)
 
     @staticmethod
     def _next_playback_deadline(due, interval_s):
@@ -1053,7 +1073,7 @@ class LabelingApp(tk.Tk):
         if cache is None:
             cache = self._diagram_native_cache = {}
         native = cache.get((path, repr(getattr(self, "coding_setup", None)), self.option_var_1.get()))
-        if native is None:
+        if native is None and self.video is not None:   # no video: the diagram stays empty
             try:
                 with Image.open(path) as img:
                     native = img.convert("RGBA")
@@ -1064,7 +1084,7 @@ class LabelingApp(tk.Tk):
                 logger.debug("diagram preview skipped: %s unreadable", path)
                 native = None
         if native is not None:
-            self.photo = ImageTk.PhotoImage(native.resize((w, h), Image.BILINEAR))
+            self.photo = ImageTk.PhotoImage(native.resize((w, h), Image.BILINEAR), master=self)
             self.diagram_canvas.create_image(0, 0, anchor="nw", image=self.photo, tags=("diagram",))
         if self._highlighter is not None:
             self._highlighter.canvas_cleared()
@@ -1077,6 +1097,17 @@ class LabelingApp(tk.Tk):
         changes. The Settings dialog no longer edits this value; it writes the
         live scale back so an open dialog cannot undo the drag.
         """
+        scale = self.apply_diagram_scale(scale)
+        try:
+            cfg = config.load_config()
+            cfg["diagram_scale"] = round(scale, 3)
+            config.save_config(cfg)
+            self.config = config.load_app_config()
+        except Exception:
+            logger.exception("could not store the diagram scale in config.json")
+
+    def apply_diagram_scale(self, scale):
+        """Full diagram redraw at `scale` without saving it (window fit, commit)."""
         scale = float(scale)
         self.diagram_scale = scale
         w, h = self._diagram_display_size(scale)
@@ -1093,13 +1124,7 @@ class LabelingApp(tk.Tk):
             for key in [key for key in cache if key[1] != scale]:
                 del cache[key]
         logger.debug("diagram scale set to %.3f (%sx%s px)", scale, w, h)
-        try:
-            cfg = config.load_config()
-            cfg["diagram_scale"] = round(scale, 3)
-            config.save_config(cfg)
-            self.config = config.load_app_config()
-        except Exception:
-            logger.exception("could not store the diagram scale in config.json")
+        return scale
 
     def _draw_diagram_dots(self):
         """Repaint only the current frame's dots + the open-onset ghost.
@@ -1296,7 +1321,7 @@ class LabelingApp(tk.Tk):
                 )
             white = Image.new("RGBA", resized.size, (255, 255, 255, 255))
             flat = Image.alpha_composite(white, resized.convert("RGBA")).convert("RGB")
-            cached = cache[(image_key, scale)] = (ImageTk.PhotoImage(resized), flat)
+            cached = cache[(image_key, scale)] = (ImageTk.PhotoImage(resized, master=self), flat)
         self.photo, base_rgb = cached
         self.diagram_canvas.create_image(0, 0, anchor="nw", image=self.photo, tags=("diagram",))
         draw_zone_labels(self.diagram_canvas, self.zone_display, self._zone_label_positions, scale)
@@ -1419,27 +1444,18 @@ class LabelingApp(tk.Tk):
 
     @staticmethod
     def _update_timeline_playhead(canvas, item_id, x, top, bottom):
-        """Create or move the shared playhead: a triangle cap on a 2 px stem.
+        """Create or move the shared playhead: a rounded cap on a 2 px stem.
 
-        Cap and stem are one polygon so Tk rasterizes them together; two
-        separate items (line + polygon) snapped to pixels differently and
-        the stem visibly detached from the cap at fractional x positions.
+        It is one antialiased image (cached per height and colour), so cap and
+        stem never snap apart, and the stem's centre sits exactly on `x`.
         """
-        cap_height = 7
-        x = int(round(x))
-        stem_top = min(bottom, top + cap_height)
-        coords = (
-            x - 4, top,
-            x + 4, top,
-            x + 1, stem_top,
-            x + 1, bottom,
-            x - 1, bottom,
-            x - 1, stem_top,
-        )
+        photo = _playhead_photo(canvas, max(1, int(bottom - top)))
+        left = int(round(x)) - photo.width() // 2
         if item_id is None:
-            return canvas.create_polygon(*coords, fill=theme.PLAYHEAD, outline="")
-
-        canvas.coords(item_id, *coords)
+            return canvas.create_image(left, top, image=photo, anchor="nw")
+        canvas.coords(item_id, left, top)
+        if canvas.itemcget(item_id, "image") != str(photo):
+            canvas.itemconfigure(item_id, image=photo)
         canvas.tag_raise(item_id)
         return item_id
 
@@ -1451,7 +1467,11 @@ class LabelingApp(tk.Tk):
             canvas_width = self.timeline_canvas.winfo_width()
             canvas_height = self.timeline_canvas.winfo_height()
             limb = self.option_var_1.get()
-            zone = self.video.current_frame_zone
+            # From the current frame: during playback the playhead moves every
+            # frame, before the (throttled) frame counter updates the zone.
+            per_zone = self.video.number_frames_in_zone
+            zone = self.video.current_frame // per_zone if per_zone else self.video.current_frame_zone
+            self.video.current_frame_zone = zone
             needs_full = (
                 self._timeline_dirty
                 or self._timeline_last_zone != zone
@@ -1559,6 +1579,7 @@ class LabelingApp(tk.Tk):
                         x = min(max(x, left_edge + 4), right_edge - 4)
                         LabelingApp._draw_note_marker(self.timeline_canvas, frame_idx, x, bottom)
 
+                _round_track_corners(self.timeline_canvas, 0, 0, canvas_width, canvas_height)
                 self._timeline_dirty = False
                 self._timeline_last_zone = zone
                 self._timeline_last_limb = limb
@@ -1688,6 +1709,7 @@ class LabelingApp(tk.Tk):
                         x = min(max(x, left_edge + 4), right_edge - 4)
                         LabelingApp._draw_note_marker(self.timeline2_canvas, frame, x, bottom)
 
+                _round_track_corners(self.timeline2_canvas, 0, 0, canvas_width, canvas_height)
                 self._timeline2_dirty = False
                 self._timeline2_last_limb = limb
                 self._timeline2_canvas_size = (canvas_width, canvas_height)
@@ -1707,30 +1729,23 @@ class LabelingApp(tk.Tk):
             )
     
     def update_frame_counter(self):
-        self.select_frame_button.config(state="normal" if self.video else "disabled")
+        # Runs on every control refresh (25 Hz in playback): each call below is
+        # a no-op when nothing changed, and the counters have a fixed width.
+        self.frame_nav.set_enabled("select", self.video is not None)
         if self.video:
-            current_frame_text = f"{self.video.current_frame} / {self.video.total_frames}"
-            self.frame_counter_label.config(text=current_frame_text)
-
-            def format_time(ms):
-                hours, remainder = divmod(ms, 3600000)
-                minutes, remainder = divmod(remainder, 60000)
-                seconds, milliseconds = divmod(remainder, 1000)
-                if hours > 0:
-                    return f"{hours}:{minutes:02}:{seconds:02}.{milliseconds:03}"
-                else:
-                    return f"{minutes}:{seconds:02}.{milliseconds:03}"
+            self.frame_counter_label.set(self.video.current_frame, self.video.total_frames)
 
             if self.video.frame_rate:
                 current_time = self.video.current_frame / self.video.frame_rate * 1000
                 total_time = self.video.total_frames / self.video.frame_rate * 1000
-                self.time_counter_label.config(text=f"{format_time(int(current_time))} / {format_time(int(total_time))}")
+                self.time_counter_label.set(format_counter_time(int(current_time), int(total_time)),
+                                            format_counter_time(int(total_time), int(total_time)))
             else:
                 # FPS probe returned 0/None for this container; time is unknowable.
-                self.time_counter_label.config(text="--:-- / --:--")
+                self.time_counter_label.set("--:--", "--:--")
 
         else:
-            self.frame_counter_label.config(text="0 / 0")
+            self.frame_counter_label.set(0, 0)
             return
 
         self.video.current_frame_zone = int(self.video.current_frame / self.video.number_frames_in_zone)
@@ -1757,12 +1772,12 @@ class LabelingApp(tk.Tk):
     def _open_progress_window(self, title, heading):
         win = tk.Toplevel(self)
         win.title(title)
-        win.geometry("520x180")
+        win.geometry(f"{theme.px(PROGRESS_WINDOW_W)}x{theme.px(PROGRESS_WINDOW_H)}")
         win.resizable(False, False)
         win.transient(self)
-        theme.bind_colors(win, bg="SURFACE")
+        theme.bind_colors(win, bg="WIN")
 
-        content = ttk.Frame(win, padding=16)
+        content = ttk.Frame(win, padding=theme.px(16))
         content.pack(fill="both", expand=True)
         ttk.Label(content, text=heading, font=theme.FONT_TITLE).pack(pady=(0, 6))
         status = ttk.Label(content, text="Starting...", font=theme.FONT_BASE)
@@ -1770,8 +1785,7 @@ class LabelingApp(tk.Tk):
         bar = ttk.Progressbar(
             content,
             mode="determinate",
-            length=460,
-            bootstyle="success-striped",
+            length=theme.px(PROGRESS_BAR_LENGTH),
         )
         bar.pack(pady=8)
         time_label = ttk.Label(
@@ -1780,7 +1794,7 @@ class LabelingApp(tk.Tk):
             font=theme.FONT_SMALL,
         )
         time_label.pack()
-        win.update_idletasks()
+        center_over_parent(win, self)
 
         def update(count, total, stage, elapsed_s):
             try:
@@ -1820,14 +1834,14 @@ class LabelingApp(tk.Tk):
         self._assert_ui_thread()
         win = tk.Toplevel(self)
         win.title("Saving Data")
-        win.geometry("520x160")
+        win.geometry(f"{theme.px(PROGRESS_WINDOW_W)}x{theme.px(EXPORT_WINDOW_H)}")
         win.resizable(False, False)
         win.transient(self)
-        theme.bind_colors(win, bg="SURFACE")
+        theme.bind_colors(win, bg="WIN")
         win.grab_set()
         win.protocol("WM_DELETE_WINDOW", lambda: None)
 
-        content = ttk.Frame(win, padding=16)
+        content = ttk.Frame(win, padding=theme.px(16))
         content.pack(fill="both", expand=True)
         ttk.Label(content, text="Building full export...", font=theme.FONT_TITLE).pack(
             pady=(2, 8)
@@ -1837,12 +1851,11 @@ class LabelingApp(tk.Tk):
         bar = ttk.Progressbar(
             content,
             mode="indeterminate",
-            length=460,
-            bootstyle="success-striped",
+            length=theme.px(PROGRESS_BAR_LENGTH),
         )
         bar.pack(pady=10)
         bar.start(12)
-        win.update_idletasks()
+        center_over_parent(win, self)
 
         started = time.perf_counter()
         result = {}
@@ -1979,7 +1992,9 @@ class LabelingApp(tk.Tk):
             label.pack_forget()
         try:
             self._gpu_video = GpuVideoSurface(
-                self.video_frame, self._on_gpu_redraw_failure, theme.VIDEO_BG)
+                self.video_frame, self._on_gpu_redraw_failure, theme.WIN)
+            self._gpu_video.set_corners(theme.px(VIDEO_CORNER_RADIUS))
+            self._refresh_video_badge()
         except (ImportError, OSError, RuntimeError, tk.TclError) as error:
             self._gpu_failed = True
             self._renderer_status.set("CPU (GPU unavailable)")
@@ -2011,6 +2026,15 @@ class LabelingApp(tk.Tk):
             self._show_frame_image(source)
 
     def _show_frame_image(self, pil_img):
+        """Show `pil_img` (GPU or CPU) and line the timeline card up with the frame."""
+        # Called through the class so display-pipeline unit tests can bind
+        # this method onto a lightweight stub that lacks the helpers.
+        size = LabelingApp._paint_frame_image(self, pil_img)
+        if size and getattr(self, "timeline_card", None) is not None:
+            align_timeline_to_video(self, max(0, (int(self._display_w) - int(size[0])) // 2))
+        return size
+
+    def _paint_frame_image(self, pil_img):
         """Put `pil_img` on the video label, reusing the PhotoImage on screen.
 
         Pasting new pixels into the image that is already displayed skips
@@ -2037,25 +2061,85 @@ class LabelingApp(tk.Tk):
         if (self.image is not None and shown is not None
                 and shown.size == pil_img.size and shown.mode == pil_img.mode):
             self.image.paste(pil_img)
+            LabelingApp._patch_frame_overlays(self, pil_img)
             return pil_img.size
-        photo_img = ImageTk.PhotoImage(pil_img)
+        photo_img = ImageTk.PhotoImage(pil_img, master=self)
         if getattr(self, "frame_label", None):
             self.frame_label.configure(image=photo_img)
         else:
             self.frame_label = tk.Label(
                 self.video_frame,
                 image=photo_img,
-                bg=theme.VIDEO_BG,
+                bg=theme.WIN,
                 bd=0,
-                highlightbackground=theme.BORDER,
-                highlightcolor=theme.BORDER,
-                highlightthickness=2,
+                highlightthickness=0,
             )
             self.frame_label.pack(expand=True)
-            theme.bind_colors(self.frame_label, bg="VIDEO_BG",
-                              highlightbackground="BORDER", highlightcolor="BORDER")
+            theme.bind_colors(self.frame_label, bg="WIN")
         self.image = photo_img  # the label does not keep the Python object alive
+        LabelingApp._patch_frame_overlays(self, pil_img)
         return pil_img.size
+
+    def _patch_frame_overlays(self, pil_img):
+        """Round the shown CPU frame's corners and blend the name badge on it.
+
+        Only small regions are touched: each is cut from `pil_img` (never
+        modified: it may live in the buffer), composed, and copied into the
+        displayed PhotoImage, so the per-frame cost stays tiny.
+        """
+        photo_img = self.image
+        if not hasattr(photo_img, "tk"):   # no Tk photo on screen (or a test stub)
+            return
+        w, h = pil_img.size
+        if (photo_img.width(), photo_img.height()) != (w, h):
+            return
+        badge = getattr(self, "name_label", None)
+        badge_img = badge.image() if badge is not None else None
+        inset = theme.px(BADGE_INSET)
+        if badge_img is not None and badge_img.width + 2 * inset <= w and badge_img.height + 2 * inset <= h:
+            x, y = w - inset - badge_img.width, inset
+            region = pil_img.crop((x, y, x + badge_img.width, y + badge_img.height)).convert("RGBA")
+            region = Image.alpha_composite(region, badge_img).convert(pil_img.mode)
+            key = (region.size, pil_img.mode)
+            if getattr(self, "_badge_photo_key", None) != key:
+                self._badge_photo = ImageTk.PhotoImage(pil_img.mode, region.size, master=self)
+                self._badge_photo_key = key
+            self._badge_photo.paste(region)
+            photo_img.tk.call(str(photo_img), "copy", str(self._badge_photo), "-to", x, y)
+        r = min(theme.px(VIDEO_CORNER_RADIUS), w // 2, h // 2)
+        if r <= 0:
+            return
+        key = (r, pil_img.mode, theme.WIN)
+        if getattr(self, "_corner_key", None) != key:
+            top_left = rounded_corner_mask(r)
+            flips = (None, Image.Transpose.FLIP_LEFT_RIGHT, Image.Transpose.FLIP_TOP_BOTTOM,
+                     Image.Transpose.ROTATE_180)
+            self._corner_masks = [top_left if f is None else top_left.transpose(f) for f in flips]
+            self._corner_fill = Image.new(pil_img.mode, (r, r), theme.WIN)
+            self._corner_photos = [ImageTk.PhotoImage(pil_img.mode, (r, r), master=self) for _ in flips]
+            self._corner_key = key
+        for (x, y), mask, photo in zip(((0, 0), (w - r, 0), (0, h - r), (w - r, h - r)),
+                                       self._corner_masks, self._corner_photos):
+            part = pil_img.crop((x, y, x + r, y + r))
+            part.paste(self._corner_fill, mask=mask)
+            photo.paste(part)
+            photo_img.tk.call(str(photo_img), "copy", str(photo), "-to", x, y)
+
+    def _refresh_video_badge(self):
+        """Redraw the name badge after its text (or the renderer) changed."""
+        badge = getattr(self, "name_label", None)
+        if badge is None:
+            return
+        surface = getattr(self, "_gpu_video", None)
+        if surface is not None:
+            try:
+                surface.set_overlay(badge.image(), theme.px(BADGE_INSET))
+            except VideoRendererError as error:
+                self._disable_gpu(error)
+            return
+        shown = getattr(self, "_displayed_image", None)
+        if shown is not None:
+            LabelingApp._patch_frame_overlays(self, shown)
 
     def display_first_frame(self, frame_number=None, *, refresh_ui=True):
         self._assert_ui_thread()
@@ -2113,18 +2197,28 @@ class LabelingApp(tk.Tk):
         self._play_ui_pending = False
 
     def _refresh_playback_ui(self, *, force=False):
-        """Refresh annotation controls and timelines at most 25 times/second."""
+        """Move the playheads every frame; refresh the other controls at most 25 times/second.
+
+        A playhead move is two canvas coords calls (a timeline is rebuilt
+        only when the 100-frame zone changes), so the playheads follow the
+        video exactly, like single steps do.
+        """
         if self.video is None:
             self._play_ui_pending = False
             return
+        self.draw_timeline()
+        self.draw_timeline2()
         now = time.perf_counter()
         due = self._play_ui_next_due
         if not force and due is not None and now < due:
             return
         self._refresh_frame_controls()
-        self.draw_timeline()
-        self.draw_timeline2()
-        self._play_ui_next_due = time.perf_counter() + PLAYBACK_UI_INTERVAL_S
+        # Anchor on the due time, not on when this refresh finished: otherwise
+        # 25-30 fps playback skips every other refresh (12-15 Hz).
+        if due is not None and 0 <= now - due < PLAYBACK_UI_INTERVAL_S:
+            self._play_ui_next_due = due + PLAYBACK_UI_INTERVAL_S
+        else:
+            self._play_ui_next_due = now + PLAYBACK_UI_INTERVAL_S
 
     def _flush_playback_ui(self):
         """Complete a deferred refresh before pausing, editing, or stalling."""
@@ -2241,12 +2335,20 @@ class LabelingApp(tk.Tk):
     def _get_note_entry_text(self):
         return self.note_entry.get("1.0", "end-1c")
 
+    # The note field is disabled without a video; these programmatic edits
+    # unlock it for the change and restore its state afterwards.
     def _clear_note_entry(self):
+        state = self.note_entry.cget("state")
+        self.note_entry.config(state="normal")
         self.note_entry.delete("1.0", tk.END)
+        self.note_entry.config(state=state)
 
     def _set_note_entry_text(self, text):
         self._clear_note_entry()
+        state = self.note_entry.cget("state")
+        self.note_entry.config(state="normal")
         self.note_entry.insert("1.0", text)
+        self.note_entry.config(state=state)
 
     def select_frame(self):
         """Pause navigation and ask for an absolute frame in a modal dialog."""
@@ -2480,6 +2582,7 @@ class LabelingApp(tk.Tk):
         # prior arrow-hold state that may have left play_dir = -1.
         self._hold_play_active = False
         self._start_playback(1)
+        sync_play_control(self)
 
     def stop_video(self):
         # Keep the held direction until key-up, so an OS repeat cannot re-arm
@@ -2493,6 +2596,7 @@ class LabelingApp(tk.Tk):
         self._play_next_due = None
         self._precise_timers.release("playback")
         self._flush_playback_ui()
+        sync_play_control(self)
 
     def toggle_play(self, event=None):
         if self.play:
@@ -2604,74 +2708,8 @@ class LabelingApp(tk.Tk):
             self.open_settings()
 
     def ask_labeling_mode(self):
-        """Modal mode picker. Returns "Normal" / "Reliability", or None when
-        the window is closed without confirming.
-
-        Deliberately side-effect free on the app: the caller commits the mode
-        (self.labeling_mode + the mode chip) only once the load is actually
-        going ahead, so cancelling a load can never leave the OPEN video
-        tagged with a half-switched mode (its export metadata records
-        self.labeling_mode on every save).
-        """
-        mode_window = tk.Toplevel(self)
-        mode_window.withdraw()
-        mode_window.title("Select Mode")
-        mode_window.geometry("420x220")
-        mode_window.resizable(False, False)
-        mode_window.transient(self)
-        theme.bind_colors(mode_window, bg="SURFACE")
-        mode_window.grab_set()
-
-        content = ttk.Frame(mode_window, padding=16)
-        content.pack(fill="both", expand=True)
-        label = ttk.Label(
-            content,
-            text="Choose labeling mode:",
-            font=theme.FONT_DIALOG_TITLE,
-        )
-        label.pack(pady=(0, 10))
-        cfg = config.load_config()
-        labeling_var = tk.StringVar(value=getattr(self, "labeling_mode", cfg.get("last_labeling_mode", "Normal")))
-
-        options = ttk.Frame(content)
-        options.pack()
-        ttk.Radiobutton(
-            options,
-            text="Normal",
-            variable=labeling_var,
-            value="Normal",
-            takefocus=0,
-        ).pack(anchor="w")
-        ttk.Radiobutton(
-            options,
-            text="Reliability",
-            variable=labeling_var,
-            value="Reliability",
-            takefocus=0,
-        ).pack(anchor="w")
-
-        chosen = {"mode": None}
-
-        def set_mode():
-            chosen["mode"] = labeling_var.get()
-            # The preference default is fine to persist right away; it does
-            # not touch the open video's state.
-            cfg["last_labeling_mode"] = chosen["mode"]
-            config.save_config(cfg)
-            mode_window.destroy()
-
-        ttk.Button(
-            content,
-            text="Continue",
-            command=set_mode,
-            width=18,
-            style="Tool.TButton",
-            takefocus=0,
-        ).pack(pady=(16, 0))
-        center_over_parent(mode_window, self)
-        mode_window.deiconify()
-        mode_window.wait_window()
-        return chosen["mode"]
+        """Modal mode picker; see gui.app_dialogs.ask_labeling_mode."""
+        return app_dialogs.ask_labeling_mode(self)
 
     def _unload_current_video(self) -> bool:
         """Persist and fully detach the open project — the same writes
@@ -3221,322 +3259,7 @@ class LabelingApp(tk.Tk):
 
     # === Settings ==============================================================
     def open_settings(self):
-        if getattr(self, "_settings_win", None) and self._settings_win.winfo_exists():
-            self._settings_win.lift()
-            return
-
-        cfg = config.load_config()
-        win = tk.Toplevel(self)
-        win.title("Settings")
-        win.resizable(False, False)
-        win.transient(self)
-        theme.bind_colors(win, bg="SURFACE")
-        self._settings_win = win
-
-        content = ttk.Frame(win, padding=16)
-        content.pack(fill="both", expand=True)
-        content.columnconfigure(1, weight=1)
-
-        def _v(key, default):
-            return cfg.get(key, default)
-
-        vars_map = {
-            "appearance": tk.StringVar(value=self.config.appearance.title()),
-            "video_renderer": tk.StringVar(value=(
-                "CPU" if self.config.video_renderer == "cpu" else "Automatic (GPU preferred)")),
-            "video_downscale": tk.StringVar(value=str(_v("video_downscale", 1.0))),
-            # "diagram_scale": the diagram is resized by dragging its corner grip.
-            # "diagram_scale": tk.StringVar(value=str(_v("diagram_scale", 1.0))),
-            "dot_size": tk.StringVar(value=str(_v("dot_size", 10))),
-            "jump_seconds": tk.StringVar(value=str(_v("jump_seconds", 1.0))),
-            "parameter1": tk.StringVar(value=str(_v("parameter1", "Parameter 1"))),
-            "parameter2": tk.StringVar(value=str(_v("parameter2", "Parameter 2"))),
-            "parameter3": tk.StringVar(value=str(_v("parameter3", "Parameter 3"))),
-            "limb_parameter1": tk.StringVar(value=str(_v("limb_parameter1", "CP1"))),
-            "limb_parameter2": tk.StringVar(value=str(_v("limb_parameter2", "CP2"))),
-            "limb_parameter3": tk.StringVar(value=str(_v("limb_parameter3", "CP3"))),
-            "realtime_arrow_hold": tk.BooleanVar(value=bool(_v("realtime_arrow_hold", True))),
-            "diagram_hover_effects": tk.BooleanVar(value=bool(_v("diagram_hover_effects", True))),
-        }
-
-        show_zone_names = tk.BooleanVar(value=self.zone_display.show_names)
-
-        row = 0
-        ttk.Label(content, text="Display", font=theme.FONT_BOLD).grid(
-            row=row,
-            column=0,
-            columnspan=2,
-            sticky="w",
-            padx=8,
-            pady=(0, 6),
-        )
-        row += 1
-        ttk.Label(content, text="Appearance").grid(
-            row=row, column=0, sticky="w", padx=8, pady=4
-        )
-        ttk.Combobox(
-            content, textvariable=vars_map["appearance"],
-            values=("Light", "Dark"), state="readonly", width=12,
-        ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
-        row += 1
-        ttk.Label(content, text="Video renderer").grid(
-            row=row, column=0, sticky="w", padx=8, pady=4)
-        ttk.Combobox(
-            content, textvariable=vars_map["video_renderer"],
-            values=("Automatic (GPU preferred)", "CPU"), state="readonly", width=25,
-        ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
-        row += 1
-        ttk.Label(content, text="Active renderer").grid(
-            row=row, column=0, sticky="w", padx=8, pady=4)
-        ttk.Label(content, textvariable=self._renderer_status).grid(
-            row=row, column=1, sticky="w", padx=8, pady=4)
-        row += 1
-        ttk.Label(content, text="Video downscale (1 = full, 2 = half)").grid(
-            row=row, column=0, sticky="w", padx=8, pady=4
-        )
-        ttk.Entry(content, textvariable=vars_map["video_downscale"], width=10).grid(
-            row=row, column=1, sticky="w", padx=8, pady=4
-        )
-        row += 1
-        # Diagram scale: set by dragging the grip in the diagram's bottom-left
-        # corner (LabelingApp.commit_diagram_scale) instead of this field.
-        # ttk.Label(content, text="Diagram scale").grid(
-        #     row=row, column=0, sticky="w", padx=8, pady=4
-        # )
-        # ttk.Entry(content, textvariable=vars_map["diagram_scale"], width=10).grid(
-        #     row=row, column=1, sticky="w", padx=8, pady=4
-        # )
-        # row += 1
-        ttk.Label(content, text="Dot size").grid(
-            row=row, column=0, sticky="w", padx=8, pady=4
-        )
-        ttk.Entry(content, textvariable=vars_map["dot_size"], width=10).grid(
-            row=row, column=1, sticky="w", padx=8, pady=4
-        )
-        row += 1
-        ttk.Label(content, text="Fast-jump seconds (>> / Shift+Arrow)").grid(
-            row=row, column=0, sticky="w", padx=8, pady=4
-        )
-        ttk.Entry(content, textvariable=vars_map["jump_seconds"], width=10).grid(
-            row=row, column=1, sticky="w", padx=8, pady=4
-        )
-        row += 1
-        if SETTINGS_SHOW_ARROW_HOLD:
-            ttk.Label(content, text=f"Hold arrows to play ({ARROW_HOLD_DELAY_MS} ms tap delay; target: video FPS)").grid(
-                row=row, column=0, sticky="w", padx=8, pady=4
-            )
-            ttk.Checkbutton(
-                content,
-                variable=vars_map["realtime_arrow_hold"],
-                bootstyle="round-toggle",
-                takefocus=0,
-            ).grid(
-                row=row, column=1, sticky="w", padx=8, pady=4
-            )
-            row += 1
-        if SETTINGS_SHOW_HOVER_HIGHLIGHT:
-            ttk.Label(content, text="Highlight the zone under the pointer").grid(
-                row=row, column=0, sticky="w", padx=8, pady=4
-            )
-            ttk.Checkbutton(
-                content,
-                variable=vars_map["diagram_hover_effects"],
-                bootstyle="round-toggle",
-                takefocus=0,
-            ).grid(
-                row=row, column=1, sticky="w", padx=8, pady=4
-            )
-            row += 1
-        # Project-level toggle (saved with the project, not config.json), shown
-        # under Display; it only takes effect while a video is loaded.
-        ttk.Label(content, text="Show zone names on diagrams").grid(
-            row=row, column=0, sticky="w", padx=8, pady=4)
-        ttk.Checkbutton(
-            content, variable=show_zone_names, bootstyle="round-toggle", takefocus=0,
-            state=tk.NORMAL if self.video is not None else tk.DISABLED,
-        ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
-        row += 1
-
-        def parse_float(value, key):
-            if value is None:
-                return 0.0
-            s = str(value).strip()
-            if s == "":
-                return 0.0
-            try:
-                return float(s)
-            except Exception:
-                raise ValueError(f"{key} must be a number")
-
-        if self.video is not None and getattr(self, "coding_setup", None):
-            for i in range(1, 4):
-                vars_map[f"parameter{i}"].set(self.coding_setup.parameter_labels[f"Par{i}"])
-                vars_map[f"limb_parameter{i}"].set(self.coding_setup.limb_parameter_labels[f"Par{i}"])
-        if SETTINGS_SHOW_PARAMETER_LABELS:
-            ttk.Separator(content, orient="horizontal").grid(
-                row=row,
-                column=0,
-                columnspan=2,
-                sticky="ew",
-                padx=8,
-                pady=(10, 8),
-            )
-            row += 1
-            ttk.Label(content, text="Parameter Labels", font=theme.FONT_BOLD).grid(
-                row=row,
-                column=0,
-                columnspan=2,
-                sticky="w",
-                padx=8,
-                pady=(0, 6),
-            )
-            row += 1
-            channel_noun = "Channel"
-            coding_readonly = self.video is not None and self.state_repo.load_preparation_state() == "ready"
-            ttk.Label(content, text=f"{channel_noun} Parameter 1").grid(
-                row=row, column=0, sticky="w", padx=8, pady=4
-            )
-            ttk.Entry(content, textvariable=vars_map["limb_parameter1"], width=18, state="readonly" if coding_readonly else "normal").grid(
-                row=row, column=1, sticky="w", padx=8, pady=4
-            )
-            row += 1
-            ttk.Label(content, text=f"{channel_noun} Parameter 2").grid(
-                row=row, column=0, sticky="w", padx=8, pady=4
-            )
-            ttk.Entry(content, textvariable=vars_map["limb_parameter2"], width=18, state="readonly" if coding_readonly else "normal").grid(
-                row=row, column=1, sticky="w", padx=8, pady=4
-            )
-            row += 1
-            ttk.Label(content, text=f"{channel_noun} Parameter 3").grid(
-                row=row, column=0, sticky="w", padx=8, pady=4
-            )
-            ttk.Entry(content, textvariable=vars_map["limb_parameter3"], width=18, state="readonly" if coding_readonly else "normal").grid(
-                row=row, column=1, sticky="w", padx=8, pady=4
-            )
-            row += 1
-            ttk.Label(content, text="Parameter 1").grid(
-                row=row, column=0, sticky="w", padx=8, pady=4
-            )
-            ttk.Entry(content, textvariable=vars_map["parameter1"], width=18, state="readonly" if coding_readonly else "normal").grid(
-                row=row, column=1, sticky="w", padx=8, pady=4
-            )
-            row += 1
-            ttk.Label(content, text="Parameter 2").grid(
-                row=row, column=0, sticky="w", padx=8, pady=4
-            )
-            ttk.Entry(content, textvariable=vars_map["parameter2"], width=18, state="readonly" if coding_readonly else "normal").grid(
-                row=row, column=1, sticky="w", padx=8, pady=4
-            )
-            row += 1
-            ttk.Label(content, text="Parameter 3").grid(
-                row=row, column=0, sticky="w", padx=8, pady=4
-            )
-            ttk.Entry(content, textvariable=vars_map["parameter3"], width=18, state="readonly" if coding_readonly else "normal").grid(
-                row=row, column=1, sticky="w", padx=8, pady=4
-            )
-            row += 1
-
-        if self.video is not None and (SETTINGS_SHOW_PROJECT_TEMPLATE or SETTINGS_SHOW_ZONE_NAME_EDITOR):
-            # Project settings live in the project DB, not config.json.
-            ttk.Separator(content, orient="horizontal").grid(
-                row=row, column=0, columnspan=2, sticky="ew", padx=8, pady=(10, 8))
-            row += 1
-            ttk.Label(content, text="Project", font=theme.FONT_BOLD).grid(
-                row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 6))
-            row += 1
-            if SETTINGS_SHOW_PROJECT_TEMPLATE:
-                template_state = self.state_repo.load_template()
-                status = "locked after preparation" if template_state.locked else "changeable before preparation"
-                ttk.Label(content, text=f"Template: {TEMPLATE_LABELS[template_state.template]}\n({status})").grid(
-                    row=row, column=0, sticky="w", padx=8, pady=4)
-                ttk.Button(
-                    content, text="Change project template", command=self.change_project_template,
-                    style="Tool.TButton", takefocus=0,
-                    state=tk.DISABLED if template_state.locked else tk.NORMAL,
-                ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
-                row += 1
-            if SETTINGS_SHOW_ZONE_NAME_EDITOR:
-                ttk.Label(content, text="Zone names").grid(
-                    row=row, column=0, sticky="w", padx=8, pady=4)
-                ttk.Button(
-                    content, text="Edit zone names", command=self.edit_project_zone_names,
-                    state=tk.DISABLED if self.state_repo.load_preparation_state() == "ready" else tk.NORMAL,
-                    style="Tool.TButton", takefocus=0,
-                ).grid(row=row, column=1, sticky="w", padx=8, pady=4)
-                row += 1
-
-        def apply_settings(close=False):
-            try:
-                new_cfg = dict(cfg)
-                new_cfg["appearance"] = vars_map["appearance"].get().lower()
-                new_cfg["video_renderer"] = (
-                    "cpu" if vars_map["video_renderer"].get() == "CPU" else "auto")
-                downscale = parse_float(vars_map["video_downscale"].get(), "video_downscale")
-                if downscale <= 0:
-                    downscale = 1.0
-                new_cfg["video_downscale"] = downscale
-                # The corner grip owns the diagram scale; write the live value so a
-                # dialog opened before a drag does not restore the old size.
-                # new_cfg["diagram_scale"] = parse_float(vars_map["diagram_scale"].get(), "diagram_scale")
-                new_cfg["diagram_scale"] = round(float(self.diagram_scale), 3)
-                new_cfg["dot_size"] = parse_float(vars_map["dot_size"].get(), "dot_size")
-                jump_seconds = parse_float(vars_map["jump_seconds"].get(), "jump_seconds")
-                if jump_seconds <= 0:
-                    jump_seconds = 1.0
-                new_cfg["jump_seconds"] = jump_seconds
-
-                def _label_from(key, default):
-                    raw = vars_map[key].get()
-                    val = str(raw).strip() if raw is not None else ""
-                    return val if val else default
-
-                new_cfg["parameter1"] = _label_from("parameter1", new_cfg.get("parameter1", "Parameter 1"))
-                new_cfg["parameter2"] = _label_from("parameter2", new_cfg.get("parameter2", "Parameter 2"))
-                new_cfg["parameter3"] = _label_from("parameter3", new_cfg.get("parameter3", "Parameter 3"))
-                new_cfg["limb_parameter1"] = _label_from("limb_parameter1", new_cfg.get("limb_parameter1", "CP1"))
-                new_cfg["limb_parameter2"] = _label_from("limb_parameter2", new_cfg.get("limb_parameter2", "CP2"))
-                new_cfg["limb_parameter3"] = _label_from("limb_parameter3", new_cfg.get("limb_parameter3", "CP3"))
-                new_cfg["realtime_arrow_hold"] = bool(vars_map["realtime_arrow_hold"].get())
-                new_cfg["diagram_hover_effects"] = bool(vars_map["diagram_hover_effects"].get())
-            except ValueError as e:
-                messagebox.showerror("Invalid settings", str(e), parent=win)
-                return
-
-            config.save_config(new_cfg)
-            self.apply_runtime_settings(new_cfg)
-            for key, new_value in new_cfg.items():
-                old_value = cfg.get(key)
-                if old_value != new_value:
-                    annotation_logger.info(
-                        "setting %s %r -> %r", key, old_value, new_value
-                    )
-            cfg.clear()
-            cfg.update(new_cfg)
-            if self.video is not None and show_zone_names.get() != self.zone_display.show_names:
-                if not self._save_zone_display(
-                        ZoneDisplaySettings(self.zone_display.labels, show_zone_names.get())):
-                    return
-            if close:
-                win.destroy()
-
-        # Save applies and closes; closing the window (title-bar X) discards.
-        # The logs link is a quiet secondary action, kept apart from Save.
-        ttk.Separator(content, orient="horizontal").grid(
-            row=row, column=0, columnspan=2, sticky="ew", padx=8, pady=(10, 4))
-        row += 1
-        btn_frame = ttk.Frame(content)
-        btn_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=8, pady=(4, 8))
-        logs_link = ttk.Label(
-            btn_frame, text="Open logs folder", style="Link.TLabel", cursor="hand2")
-        logs_link.pack(side="left")
-        logs_link.bind("<Button-1>", lambda _event: self._open_logs_folder())
-        ttk.Button(
-            btn_frame,
-            text="Save",
-            command=lambda: apply_settings(close=True),
-            style="Tool.TButton",
-            takefocus=0,
-        ).pack(side="right")
+        return app_dialogs.open_settings(self)
 
     def _open_logs_folder(self):
         try:
@@ -3581,7 +3304,7 @@ class LabelingApp(tk.Tk):
             theme.apply_appearance(self, self.style, self.config.appearance)
             if self._gpu_video is not None:
                 try:
-                    self._gpu_video.set_background(theme.VIDEO_BG)
+                    self._gpu_video.set_background(theme.WIN)
                 except VideoRendererError as error:
                     self._on_gpu_redraw_failure(error)
             self.color_start = theme.TOUCH_START
@@ -3657,14 +3380,12 @@ class LabelingApp(tk.Tk):
         if not display_changed:
             return
 
-        base_w, base_h = get_template(self.template).native_size
-        w, h = int(base_w * new_scale), int(base_h * new_scale)
+        # Same path as the window fit: the startup diagram without a video,
+        # and never taller than the window leaves room for.
         try:
-            self.diagram_canvas.config(width=w, height=h)
-            self.diagram_canvas.delete("all")
-            self.on_radio_click()
+            self.apply_diagram_scale(min(clamp_scale(new_scale), max_diagram_scale(self)))
         except Exception:
-            pass
+            logger.debug("diagram redraw after settings failed", exc_info=True)
 
         # Flush buffer so new resolution takes effect immediately.
         self._buffer_reset()

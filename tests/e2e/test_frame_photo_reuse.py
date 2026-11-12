@@ -13,7 +13,7 @@ from gui_driver import click, pump, wait_until
 
 pytestmark = pytest.mark.gui
 
-PROBE_XY = (2, 2)   # background corner, away from the frame-number text
+PROBE_XY = (2, 20)  # left edge, below the rounded corner, away from the frame-number text
 
 
 def _screen_pixel(app):

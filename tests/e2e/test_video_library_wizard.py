@@ -2,6 +2,7 @@
 import pytest
 
 import labeling_app
+from gui import app_dialogs
 from gui.coding_setup_wizard import CodingSetupWizard
 from gui_driver import click, pump, load_video, find_button, walk, dismiss_dialog
 from domain.coding_setup import default_coding_setup
@@ -90,7 +91,7 @@ def test_prepared_video_resumes_without_setup(app, workspace, monkeypatch):
     assert app.coding_setup == setup
     assert workspace.errors() == []
     app.open_settings()
-    if labeling_app.SETTINGS_SHOW_ZONE_NAME_EDITOR:
+    if app_dialogs.SETTINGS_SHOW_ZONE_NAME_EDITOR:
         assert str(find_button(app._settings_win, "Edit zone names").cget("state")) == "disabled"
     app._settings_win.destroy()
 
@@ -110,7 +111,6 @@ def test_library_missing_thumbnail_and_search(app):
             app.after(20, inspect)
             return
         assert find_widget(window, cls=ttk.Label, text="No thumbnail") is not None
-        assert all(widget.cget("style") == "Tool.TButton" for widget in walk(window) if isinstance(widget, ttk.Button))
         search = next(widget for widget in walk(window) if isinstance(widget, ttk.Entry))
         search.insert(0, "unmatched")
         pump(app)
@@ -208,20 +208,12 @@ def test_diagram_changes_update_only_default_labels(app):
     click(wizard.win, "Cancel")
 
 
-def test_setup_actions_use_neutral_style_and_diagram_previews_select(app):
-    from tkinter import ttk
-    from gui_driver import find_widget
+def test_diagram_previews_select_the_template(app):
+    """Clicking a diagram preview in the setup wizard selects that template."""
     wizard = CodingSetupWizard(app)
-    def neutral_buttons(window):
-        assert all(widget.cget("style") == "Tool.TButton" for widget in walk(window) if isinstance(widget, ttk.Button))
-    neutral_buttons(wizard.win)
     preview = next(widget for widget in walk(wizard.win) if getattr(widget, "template_id", None) == "general")
     preview.event_generate("<Button-1>")
     click(wizard.win, "Next")
     assert wizard.setup.template == "general"
     click(wizard.win, "Next")
-    assert find_widget(wizard.win, cls=ttk.LabelFrame, text="Channel names") is not None
-    assert find_widget(wizard.win, cls=ttk.LabelFrame, text="Global parameters") is not None
-    assert find_widget(wizard.win, cls=ttk.LabelFrame, text="Channel parameters") is not None
-    neutral_buttons(wizard.win)
     click(wizard.win, "Cancel")

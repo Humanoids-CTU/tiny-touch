@@ -8,7 +8,21 @@ import ctypes
 import importlib
 import tkinter as tk
 
-from PIL import Image
+from PIL import Image, ImageDraw
+
+CORNER_SUPERSAMPLE = 4   # antialiasing factor for the rounded-corner mask
+
+
+def rounded_corner_mask(radius):
+    """Top-left corner mask (mode L, radius x radius): 255 outside the arc, 0 inside.
+
+    Painting the background colour through it rounds a video frame's corner;
+    flip it for the other three corners.
+    """
+    s = CORNER_SUPERSAMPLE
+    big = Image.new("L", (radius * s, radius * s), 255)
+    ImageDraw.Draw(big).ellipse([0, 0, 2 * radius * s - 1, 2 * radius * s - 1], fill=0)
+    return big.resize((radius, radius), Image.Resampling.LANCZOS)
 
 
 class VideoRendererError(RuntimeError):
@@ -23,6 +37,12 @@ class GpuVideoSurface:
         self.renderer = None
         self.texture = None
         self.texture_size = None
+        self._corner_texture = None
+        self._corner_radius = 0
+        self._overlay_texture = None
+        self._overlay_size = (0, 0)
+        self._overlay_inset = 0
+        self._background = background
         self._initialized = False
         self._closed = False
         self._redraw_id = None
@@ -76,7 +96,10 @@ class GpuVideoSurface:
     def set_background(self, color):
         """Use a ``#rrggbb`` color for letterboxing so it matches the Tk theme."""
         red, green, blue = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+        self._background = color
         self.widget.configure(bg=color)
+        if self._corner_radius:
+            self._build_corner_texture()
         self._check(self.sdl.SDL_SetRenderDrawColor(self.renderer, red, green, blue, 255))
         if self._last_image is None:
             self._check(self.sdl.SDL_RenderClear(self.renderer))
@@ -84,7 +107,73 @@ class GpuVideoSurface:
         else:
             self._schedule_redraw(None)
 
-    def _draw(self):
+    def set_corners(self, radius):
+        """Round the drawn frame's corners by `radius` device px (0: square)."""
+        self._corner_radius = max(0, int(radius))
+        self._build_corner_texture()
+        self._schedule_redraw(None)
+
+    def _build_corner_texture(self):
+        sdl = self.sdl
+        if self._corner_texture:
+            sdl.SDL_DestroyTexture(self._corner_texture)
+            self._corner_texture = None
+        r = self._corner_radius
+        if r <= 0:
+            return
+        corner = Image.new("RGBA", (r, r), self._background)
+        corner.putalpha(rounded_corner_mask(r))
+        texture = sdl.SDL_CreateTexture(self.renderer, sdl.SDL_PIXELFORMAT_RGBA32,
+                                        sdl.SDL_TEXTUREACCESS_STATIC, r, r)
+        if not texture:
+            raise VideoRendererError(self._error())
+        pixels = corner.tobytes()
+        pointer = ctypes.cast(ctypes.c_char_p(pixels), ctypes.c_void_p)
+        self._check(sdl.SDL_UpdateTexture(texture, None, pointer, r * 4))
+        self._check(sdl.SDL_SetTextureBlendMode(texture, sdl.SDL_BLENDMODE_BLEND))
+        self._corner_texture = texture
+
+    def set_overlay(self, image, inset):
+        """Blend RGBA `image` into the frame's top-right corner, `inset` px in (None: none)."""
+        sdl = self.sdl
+        if self._overlay_texture:
+            sdl.SDL_DestroyTexture(self._overlay_texture)
+            self._overlay_texture = None
+        self._overlay_inset = int(inset)
+        if image is not None:
+            image = image.convert("RGBA")
+            texture = sdl.SDL_CreateTexture(self.renderer, sdl.SDL_PIXELFORMAT_RGBA32,
+                                            sdl.SDL_TEXTUREACCESS_STATIC, *image.size)
+            if not texture:
+                raise VideoRendererError(self._error())
+            pixels = image.tobytes()
+            pointer = ctypes.cast(ctypes.c_char_p(pixels), ctypes.c_void_p)
+            self._check(sdl.SDL_UpdateTexture(texture, None, pointer, image.width * 4))
+            self._check(sdl.SDL_SetTextureBlendMode(texture, sdl.SDL_BLENDMODE_BLEND))
+            self._overlay_texture, self._overlay_size = texture, image.size
+        self._schedule_redraw(None)
+
+    def _draw_overlay(self):
+        rect, (w, h), inset = self.draw_rect, self._overlay_size, self._overlay_inset
+        if not self._overlay_texture or w + 2 * inset > rect.w or h + 2 * inset > rect.h:
+            return
+        dst = self.sdl.SDL_Rect(rect.x + rect.w - inset - w, rect.y + inset, w, h)
+        self._check(self.sdl.SDL_RenderCopy(self.renderer, self._overlay_texture, None, ctypes.byref(dst)))
+
+    def _draw_corners(self):
+        sdl, rect = self.sdl, self.draw_rect
+        r = min(self._corner_radius, rect.w // 2, rect.h // 2)
+        if not self._corner_texture or r <= 0:
+            return
+        right, bottom = rect.x + rect.w - r, rect.y + rect.h - r
+        for x, y, flip in ((rect.x, rect.y, sdl.SDL_FLIP_NONE),
+                           (right, rect.y, sdl.SDL_FLIP_HORIZONTAL),
+                           (rect.x, bottom, sdl.SDL_FLIP_VERTICAL),
+                           (right, bottom, sdl.SDL_FLIP_HORIZONTAL | sdl.SDL_FLIP_VERTICAL)):
+            self._check(sdl.SDL_RenderCopyEx(self.renderer, self._corner_texture, None,
+                                             ctypes.byref(sdl.SDL_Rect(x, y, r, r)), 0.0, None, flip))
+
+    def _draw(self, corners=True):
         sdl = self.sdl
         width, height = ctypes.c_int(), ctypes.c_int()
         self._check(sdl.SDL_GetRendererOutputSize(
@@ -99,6 +188,9 @@ class GpuVideoSurface:
         self._check(sdl.SDL_RenderClear(self.renderer))
         self._check(sdl.SDL_RenderCopy(self.renderer, self.texture, None,
                                        ctypes.byref(self.draw_rect)))
+        if corners:
+            self._draw_overlay()
+            self._draw_corners()
 
     def show(self, image, downscale=1.0):
         if self._closed:
@@ -144,8 +236,8 @@ class GpuVideoSurface:
             self.on_failure(error)
 
     def capture_frame(self):
-        """Read rendered frame pixels for acceptance tests, excluding letterboxing."""
-        self._draw()
+        """Read rendered frame pixels for acceptance tests, excluding letterboxing and corners."""
+        self._draw(corners=False)
         rect = self.draw_rect
         pixels = ctypes.create_string_buffer(rect.w * rect.h * 3)
         self._check(self.sdl.SDL_RenderReadPixels(
@@ -169,6 +261,12 @@ class GpuVideoSurface:
         if self.texture:
             self.sdl.SDL_DestroyTexture(self.texture)
             self.texture = None
+        if self._corner_texture:
+            self.sdl.SDL_DestroyTexture(self._corner_texture)
+            self._corner_texture = None
+        if self._overlay_texture:
+            self.sdl.SDL_DestroyTexture(self._overlay_texture)
+            self._overlay_texture = None
         if self.renderer:
             self.sdl.SDL_DestroyRenderer(self.renderer)
             self.renderer = None

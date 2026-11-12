@@ -26,8 +26,8 @@ def _assert_controls_match_current_frame(app):
     assert app.frame_counter_label.cget('text') == f'{frame} / {app.video.total_frames}'
     assert app._get_note_entry_text() == f'Note on frame {frame}'
     state = 'ON' if frame % 2 == 0 else 'OFF'
-    assert app.par1_btn.cget('style') == ('StateOn.TButton' if state == 'ON' else 'StateOff.TButton')
-    assert app.limb_par1_btn.cget('style') == ('StateOff.TButton' if state == 'ON' else 'StateOn.TButton')
+    assert app.par1_btn.state == state
+    assert app.limb_par1_btn.state == ('OFF' if state == 'ON' else 'ON')
 
 
 def test_stop_boundary_and_arrow_release_synchronize_annotation_controls(loaded_app):

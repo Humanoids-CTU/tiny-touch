@@ -274,7 +274,8 @@ def test_async_video_repaint_keeps_both_timeline_cursors_synchronized_on_stop(ap
     app._start_playback(1)
     tick(app)
     assert app.displayed_frame == 2
-    assert app.timelines[-1] == app.timelines2[-1] == 1
+    # The playheads move with every played frame (only other controls are throttled).
+    assert app.timelines[-1] == app.timelines2[-1] == 2
     # A resize or renderer fallback replaces the image for the same frame.
     app._displayed_image = None
     app._display_pump()

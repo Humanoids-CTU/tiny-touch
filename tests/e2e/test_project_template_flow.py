@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import labeling_app
+from gui import app_dialogs
 from PIL import Image, ImageChops, ImageTk
 
 from gui.resource_utils import asset_path
@@ -46,7 +47,7 @@ def test_special_zones_displays_selected_template_and_permanently_locks_it(
     click(app, "Special Zones")
     pump(app)
     window = find_toplevel(app, "Special Zones")
-    canvas = find_widget(window, cls=tk.Canvas)
+    canvas = app._special_zones_app.canvas2  # the diagram (cards are canvases too)
     # Inspect the image sent to Tk, rather than just its configured file path.
     rendered = ImageTk.getimage(app._special_zones_app.photo2).convert("RGB")
     with Image.open(asset_path(f"icons/{folder}/LINE.png")) as outline:
@@ -69,7 +70,7 @@ def test_special_zones_displays_selected_template_and_permanently_locks_it(
     click(app, "Special Zones")
     pump(app)
     window = find_toplevel(app, "Special Zones")
-    click_canvas(find_widget(window, cls=tk.Canvas), "<Button-2>", *point)
+    click_canvas(app._special_zones_app.canvas2, "<Button-2>", *point)
     app._special_zones_app.on_close()
     assert _metadata(paths)["template_locked"] == "1"
     save(app)
@@ -94,7 +95,7 @@ def test_special_zones_note_locks_template_exports_and_reopens(app, workspace):
     # The preparation lock remains; a note alone does not light the button.
     assert _metadata(paths)["template_locked"] == "1"
     assert _metadata(paths)["special_zones_note"] == "diaper and socks"
-    assert str(app.special_zones_btn.cget("style")) == "StateNeutral.TButton"
+    assert "StateOn" not in str(app.special_zones_btn.cget("style"))  # a note alone does not light it
 
     save(app)
     meta = json.loads(Path(paths.export_metadata).read_text(encoding="utf-8"))
@@ -173,7 +174,7 @@ def test_switching_templates_updates_annotation_masks(app, workspace, tmp_path):
 
 
 @pytest.mark.skipif(
-    not labeling_app.SETTINGS_SHOW_PROJECT_TEMPLATE,
+    not app_dialogs.SETTINGS_SHOW_PROJECT_TEMPLATE,
     reason="Project template controls are hidden from Settings",
 )
 def test_empty_prepared_project_cannot_change_template_through_settings(loaded_app, workspace):
@@ -212,7 +213,7 @@ def test_general_channels_annotate_all_squares_and_restore_across_diagrams(app, 
 
     click(app, "Settings")
     settings = find_toplevel(app, "Settings")
-    assert (find_widget(settings, text="Channel Parameter 1") is not None) == labeling_app.SETTINGS_SHOW_PARAMETER_LABELS
+    assert (find_widget(settings, text="Channel Parameter 1") is not None) == app_dialogs.SETTINGS_SHOW_PARAMETER_LABELS
     assert find_widget(settings, text="Limb Parameter 1") is None
     settings.destroy()
 

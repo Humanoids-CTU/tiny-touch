@@ -27,7 +27,7 @@ import tkinter as tk
 
 import pytest
 
-from gui_driver import click_canvas, close, find_button, pump, select_radio, walk
+from gui_driver import click_canvas, close, find_button, pump, select_radio, walk, find_segment
 
 pytestmark = pytest.mark.gui
 
@@ -39,7 +39,7 @@ _REQUIRED_ATTRIBUTES = (
     "note_entry", "load_video_btn", "analysis_btn", "special_zones_btn",
     "par1_btn", "par2_btn", "par3_btn",
     "limb_par1_btn", "limb_par2_btn", "limb_par3_btn",
-    "select_frame_button", "frame_counter_label", "time_counter_label", "name_label",
+    "frame_nav", "frame_counter_label", "time_counter_label", "name_label",
     "mode_label", "loading_label", "jump_label",
 )
 
@@ -71,8 +71,9 @@ def _assert_every_button_is_wired(app):
 
 
 def _assert_expected_buttons_exist(app):
+    # Navigation and Play/Stop are segments of drawn controls, the rest buttons.
     for label in _EXPECTED_BUTTON_LABELS:
-        assert find_button(app, label) is not None
+        assert find_segment(app, label) is not None or find_button(app, label) is not None
 
 
 def _assert_top_buttons_are_ordered(app):
@@ -104,16 +105,18 @@ def test_app_builds_wires_and_closes_cleanly(app, capfd):
     # Analysis / Special Zones stay disabled until a video is loaded.
     assert str(app.analysis_btn.cget("state")) == "disabled"
     assert str(app.special_zones_btn.cget("state")) == "disabled"
-    assert str(app.select_frame_button.cget("state")) == "disabled"
+    assert "select" in app.frame_nav._disabled
 
     # With no video loaded (the state the app starts in) the diagram stays
     # empty, idle and through a limb switch.
     pump(app, 0.7)
     assert isinstance(app.diagram_canvas, tk.Canvas)
-    assert not app.diagram_canvas.find_all()
+    assert not [item for item in app.diagram_canvas.find_all()
+                if "resize_grip" not in app.diagram_canvas.gettags(item)]  # only the grip
     select_radio(app, "Left Hand")
     pump(app, 0.35)
-    assert not app.diagram_canvas.find_all()
+    assert not [item for item in app.diagram_canvas.find_all()
+                if "resize_grip" not in app.diagram_canvas.gettags(item)]  # only the grip
     app.focus_force()
     app.event_generate("<KeyPress-d>", when="now")
     app.event_generate("<KeyRelease-d>", when="now")

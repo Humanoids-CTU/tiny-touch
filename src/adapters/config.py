@@ -111,6 +111,9 @@ def load_display_limits():
     return max_w, max_h
 
 
+MIN_VIDEO_DOWNSCALE = 1.0   # smallest video downscale factor (1 = full resolution)
+
+
 def load_video_downscale():
     config = load_config()
     raw = config.get('video_downscale', CONFIG_DEFAULTS['video_downscale'])
@@ -118,8 +121,8 @@ def load_video_downscale():
         scale = float(raw)
     except Exception:
         scale = 1.0
-    if scale <= 0:
-        scale = 1.0
+    if scale < MIN_VIDEO_DOWNSCALE:   # 1 = full resolution; upscaling is not offered
+        scale = MIN_VIDEO_DOWNSCALE
     return scale
 
 
@@ -225,9 +228,9 @@ def load_app_config() -> AppConfig:
         minimal_touch_length=config.get('minimal_touch_length', CONFIG_DEFAULTS['minimal_touch_length']),
         diagram_scale=_float_or(config.get('diagram_scale', 1.0), 1.0),
         dot_size=_float_or(config.get('dot_size', 10), 10.0),
-        video_downscale=_float_or(
+        video_downscale=max(MIN_VIDEO_DOWNSCALE, _float_or(
             config.get('video_downscale', CONFIG_DEFAULTS['video_downscale']), 1.0, positive_only=True
-        ),
+        )),
         jump_seconds=_float_or(
             config.get('jump_seconds', CONFIG_DEFAULTS['jump_seconds']), 1.0, positive_only=True
         ),

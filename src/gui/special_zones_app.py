@@ -9,9 +9,14 @@ from domain.touch import NO_ZONE
 from domain.zone_display import ZoneDisplaySettings
 from gui.diagram_highlight import DiagramHighlighter
 from gui.zone_labels import draw_zone_labels
+from gui.widgets import RoundedCard
 
 DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE = 1.0
 DEFAULT_SPECIAL_ZONES_DOT_RADIUS = 7
+WINDOW_PAD = 16       # design px around the card
+CARD_PAD = 12         # design px inside the note card
+DIAGRAM_CARD_INSET = 4  # design px of white rim around the diagram
+CARD_GAP = 12         # design px between the diagram and note cards
 annotation_logger = logging.getLogger("annot")
 
 
@@ -39,7 +44,7 @@ class SpecialZonesApp:
         # behind (the Special Zones button is disabled while it is open, which
         # used to leave no way to bring it back).
         self.top_level.transient(master)
-        theme.bind_colors(self.top_level, bg="SURFACE")
+        theme.bind_colors(self.top_level, bg="WIN")
         self.on_save_callback = on_save_callback
         self.on_close_callback = on_close_callback
         self.diagram_scale = float(diagram_scale)
@@ -47,7 +52,7 @@ class SpecialZonesApp:
         self.on_first_mark = on_first_mark
         self.zone_display = zone_display or ZoneDisplaySettings()
 
-        self.content = ttk.Frame(self.top_level, padding=16)
+        self.content = ttk.Frame(self.top_level, padding=theme.px(WINDOW_PAD))
         self.content.grid(row=0, column=0, sticky="nsew")
         self.top_level.columnconfigure(0, weight=1)
         self.top_level.rowconfigure(0, weight=1)
@@ -64,28 +69,34 @@ class SpecialZonesApp:
             (int(self.img.width * self.diagram_scale), int(self.img.height * self.diagram_scale)),
             Image.LANCZOS,
         )
-        self.photo2 = ImageTk.PhotoImage(self.img)
-        # 1 px frame so the white diagram has a visible edge in light mode.
-        self.canvas2_border = tk.Frame(self.f, bd=0, highlightthickness=0)
-        self.canvas2_border.pack(padx=10, pady=10)
-        theme.bind_colors(self.canvas2_border, bg="BORDER")
+        self.photo2 = ImageTk.PhotoImage(self.img, master=self.top_level)
+        # As in the main window: the diagram fills a white card with a thin rim
+        # (white in dark mode too), and the note has its own card below.
+        # The canvas keeps the diagram's own pixel size: the saved dot
+        # coordinates depend on it.
+        self.canvas2_border = RoundedCard(self.f, fill="DIAGRAM", shadow="card",
+                                          pad=theme.px(DIAGRAM_CARD_INSET))
+        self.canvas2_border.pack(fill="x")
         self.canvas2 = tk.Canvas(
-            self.canvas2_border,
+            self.canvas2_border.inner,
             width=self.img.width,
             height=self.img.height,
-            bg=theme.SURFACE,
             bd=0,
             highlightthickness=0,
         )
 
-        self.canvas2.pack(padx=1, pady=1)
-        theme.bind_colors(self.canvas2, bg="DIAGRAM_BG")
+        self.canvas2.pack()
+        theme.bind_colors(self.canvas2, bg="DIAGRAM")
 
         # Project-wide description of what the marked zones mean.
+        # fit_width=False: the note card takes the diagram card's width.
+        self.note_card = RoundedCard(self.f, pad=theme.px(CARD_PAD), fit_width=False)
+        self.note_card.pack(fill="x", pady=(theme.px(CARD_GAP), 0))
+        card = self.note_card.inner
         self.note_var = tk.StringVar(value=initial_note or "")
-        ttk.Label(self.f, text="Note").pack(anchor="w", padx=10)
-        self.note_entry = ttk.Entry(self.f, textvariable=self.note_var)
-        self.note_entry.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Label(card, text="Note", style="CardHead.TLabel").pack(anchor="w", pady=(0, theme.px(6)))
+        self.note_entry = ttk.Entry(card, textvariable=self.note_var, style="Card.TEntry")
+        self.note_entry.pack(fill="x")
 
         self.canvas2.create_image(0, 0, anchor="nw", image=self.photo2, tags=("diagram",))
         self.set_zone_display(self.zone_display, zone_positions or {})
@@ -110,10 +121,19 @@ class SpecialZonesApp:
             for x, y in initial_points:
                 self._create_dot(x, y)
 
+        # The card sizes itself to its content only once that content has a
+        # size, so lay out, fit the card, and lay out again before measuring.
+        self.top_level.update_idletasks()
+        self.canvas2_border.fit()
+        self.note_card.fit()
         self.top_level.update_idletasks()
         win_w = self.content.winfo_reqwidth()
         win_h = self.content.winfo_reqheight()
         self.top_level.geometry(f"{win_w}x{win_h}")
+        # Centred over the main window, like every other dialog.
+        x = master.winfo_rootx() + (master.winfo_width() - win_w) // 2
+        y = master.winfo_rooty() + (master.winfo_height() - win_h) // 2
+        self.top_level.geometry(f"{win_w}x{win_h}+{max(0, x)}+{max(0, y)}")
         try:
             self.top_level.grab_set()
         except tk.TclError:  # not viewable yet on this window manager: usable, just not modal
