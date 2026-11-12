@@ -17,6 +17,8 @@ WINDOW_PAD = 16       # design px around the card
 CARD_PAD = 12         # design px inside the note card
 DIAGRAM_CARD_INSET = 4  # design px of white rim around the diagram
 CARD_GAP = 12         # design px between the diagram and note cards
+SCREEN_BOTTOM_MARGIN = 48   # design px kept free at the bottom (taskbar)
+TITLE_BAR_ALLOWANCE = 32    # design px for the title bar above the content
 annotation_logger = logging.getLogger("annot")
 
 
@@ -127,17 +129,43 @@ class SpecialZonesApp:
         self.canvas2_border.fit()
         self.note_card.fit()
         self.top_level.update_idletasks()
-        win_w = self.content.winfo_reqwidth()
-        win_h = self.content.winfo_reqheight()
-        self.top_level.geometry(f"{win_w}x{win_h}")
-        # Centred over the main window, like every other dialog.
-        x = master.winfo_rootx() + (master.winfo_width() - win_w) // 2
-        y = master.winfo_rooty() + (master.winfo_height() - win_h) // 2
-        self.top_level.geometry(f"{win_w}x{win_h}+{max(0, x)}+{max(0, y)}")
+        self._fit_window(master, center=True)
+        # Card sizes can still settle once the window is shown (fonts, styled
+        # entry): measure again then, before the window fades in, so the note
+        # card is never cut off.
+        self.top_level.after_idle(lambda: self._fit_window(master))
         try:
             self.top_level.grab_set()
         except tk.TclError:  # not viewable yet on this window manager: usable, just not modal
             logging.getLogger(__name__).warning("Special Zones window could not take the grab", exc_info=True)
+
+    def _fit_window(self, master, center=False):
+        """Size the window to its content; centred over `master` on first fit.
+
+        The bottom stays above the screen's lower edge (minus the taskbar's
+        room), moving the window up when needed.
+        """
+        try:
+            if not self.top_level.winfo_exists():
+                return
+            self.canvas2_border.fit()
+            self.note_card.fit()
+            self.top_level.update_idletasks()
+        except tk.TclError:
+            return
+        win_w = self.content.winfo_reqwidth()
+        win_h = self.content.winfo_reqheight()
+        if center:
+            x = master.winfo_rootx() + (master.winfo_width() - win_w) // 2
+            y = master.winfo_rooty() + (master.winfo_height() - win_h) // 2
+        else:
+            if (self.top_level.winfo_width(), self.top_level.winfo_height()) == (win_w, win_h):
+                return
+            # "WxH+X+Y": the same frame coordinates the geometry call takes.
+            x, y = (int(v) for v in self.top_level.geometry().split("+")[1:3])
+        bottom_limit = self.top_level.winfo_screenheight() - theme.px(SCREEN_BOTTOM_MARGIN)
+        y = min(y, bottom_limit - win_h - theme.px(TITLE_BAR_ALLOWANCE))
+        self.top_level.geometry(f"{win_w}x{win_h}+{max(0, x)}+{max(0, y)}")
 
     def set_zone_display(self, settings, positions):
         self.zone_display = settings
