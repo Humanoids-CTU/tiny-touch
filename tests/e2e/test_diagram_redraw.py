@@ -11,6 +11,7 @@ highlight, would otherwise be wiped).
 import pytest
 
 from conftest import ZONE_I_CANVAS_XY
+from gui import theme
 from gui_driver import click_canvas, goto_frame, pump, select_radio
 
 pytestmark = pytest.mark.gui
@@ -31,9 +32,16 @@ def test_dots_follow_frames_limbs_and_edits_without_a_timer(loaded_app):
     click_canvas(app.diagram_canvas, "<Button-1>", *ZONE_I_CANVAS_XY)
     # The onset frame shows the filled dot plus the open-onset ghost on it.
     assert len(_dots(app)) == 2, "the onset dot should appear at once"
-    assert app._timeline_dirty is False and app._timeline2_dirty is False, (
-        "an edit should redraw both timelines right away"
-    )
+    assert any(
+        app.timeline_canvas.type(item) == "rectangle"
+        and app.timeline_canvas.itemcget(item, "fill") == theme.TL_ON
+        for item in app.timeline_canvas.find_all()
+    ), "an edit should show its onset cell in the detail timeline right away"
+    assert any(
+        app.timeline2_canvas.type(item) == "line"
+        and app.timeline2_canvas.itemcget(item, "fill") == theme.TL_ONSET_MARK
+        for item in app.timeline2_canvas.find_all()
+    ), "an edit should show its onset marker in the overview right away"
 
     goto_frame(app, 3)
     assert len(_dots(app)) == 1, "the open onset shows as a ghost on later frames"

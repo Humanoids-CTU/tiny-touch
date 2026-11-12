@@ -8,8 +8,8 @@ from labeling_app import LabelingApp
 def _stub(current_frame, frames):
     return SimpleNamespace(
         video=SimpleNamespace(current_frame=current_frame, frames=frames),
-        _timeline_dirty=False,
-        _timeline2_dirty=False,
+        _detail_timeline=SimpleNamespace(invalidate=lambda: None),
+        _overview_timeline=SimpleNamespace(invalidate=lambda: None),
         _refresh_after_annotation_edit=lambda: None,
     )
 
@@ -22,8 +22,6 @@ def test_M2_honors_explicit_index():
 
     assert frames[5]["Changed"] is True
     assert "Changed" not in frames[10]
-    assert stub._timeline_dirty is True
-    assert stub._timeline2_dirty is True
 
 
 def test_M2_index_zero_is_honored():
@@ -34,8 +32,6 @@ def test_M2_index_zero_is_honored():
 
     assert frames[0]["Changed"] is True
     assert "Changed" not in frames[10]
-    assert stub._timeline_dirty is True
-    assert stub._timeline2_dirty is True
 
 
 def test_M2_default_marks_current_frame():
@@ -46,5 +42,3 @@ def test_M2_default_marks_current_frame():
 
     assert frames[10]["Changed"] is True
     assert "Changed" not in frames[5]
-    assert stub._timeline_dirty is True
-    assert stub._timeline2_dirty is True

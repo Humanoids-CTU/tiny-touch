@@ -10,7 +10,7 @@ from threading import Thread, Event, get_ident, current_thread
 import keyboard
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-from PIL import Image, ImageDraw, ImageTk
+from PIL import Image, ImageTk
 
 from adapters import config
 from adapters import video_probe
@@ -22,6 +22,8 @@ from adapters.timer_resolution import PreciseTimers
 from adapters.channel_diagram import render_channel_diagram
 from adapters.zone_masks import load_zone_masks, editable_zone_names, zone_label_positions
 from domain.playback import compute_play_step
+from gui.timeline_geometry import timeline_click_frame
+from gui import timeline
 from domain.model import (
     LIMBS,
     FrameRecord,
@@ -102,66 +104,6 @@ PLAYBACK_MAX_LAG_S = 0.25
 # <Configure> events of a window-edge drag (~16 ms) and the perf scenario's
 # 50 ms resize steps; every extra millisecond delays the sharp frame.
 RESIZE_SETTLE_MS = 100
-# Timeline playhead (design px): cap width / height, corner rounding, stem width.
-PLAYHEAD_CAP_W, PLAYHEAD_CAP_H = 10, 7
-PLAYHEAD_CAP_ROUND = 1.5
-PLAYHEAD_STEM_W = 2
-PLAYHEAD_SUPERSAMPLE = 8
-
-
-def _playhead_photo(canvas, height):
-    """Antialiased playhead image `height` px tall, cached on the canvas."""
-    color = theme.PLAYHEAD
-    key = (height, color, theme.SCALE)
-    cache = canvas.__dict__.setdefault("_playhead_photos", {})
-    if key not in cache:
-        s, px = PLAYHEAD_SUPERSAMPLE, theme.px
-        # Even width with an even stem: the stem's centre is the image's centre.
-        w = px(PLAYHEAD_CAP_W) // 2 * 2
-        stem = max(2, px(PLAYHEAD_STEM_W) // 2 * 2)
-        cap_h = min(height, px(PLAYHEAD_CAP_H))
-        r = PLAYHEAD_CAP_ROUND * theme.SCALE * s
-        big = Image.new("RGBA", (w * s, height * s), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(big)
-        mid = w * s / 2
-        draw.rectangle([mid - stem * s / 2, cap_h * s / 2, mid + stem * s / 2 - 1, height * s - 1], fill=color)
-        # Downward triangle with rounded corners: an inset triangle stroked
-        # with a round-joined line of the rounding radius.
-        tri = [(r, r), (w * s - r, r), (mid, cap_h * s - r)]
-        draw.polygon(tri, fill=color)
-        draw.line(tri + [tri[0]], fill=color, width=round(2 * r), joint="curve")
-        for cx, cy in tri:
-            draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color)
-        cache[key] = ImageTk.PhotoImage(big.resize((w, height), Image.Resampling.LANCZOS), master=canvas)
-    return cache[key]
-
-
-TIMELINE_CORNER_RADIUS = 6       # design px: rounded ends of the timeline tracks
-
-
-def _round_track_corners(canvas, left, top, right, bottom):
-    """Card-coloured corner masks over a timeline track's four corners.
-
-    Drawn last in a full redraw (the playhead is raised above them), so the
-    track reads as a rounded bar without changing how anything else is drawn.
-    """
-    r = min(theme.px(TIMELINE_CORNER_RADIUS), (right - left) // 2, (bottom - top) // 2)
-    if r <= 0:
-        return
-    key = (r, theme.CARD)
-    cache = canvas.__dict__.setdefault("_corner_photos", {})
-    if key not in cache:
-        corner = Image.new("RGBA", (r, r), theme.CARD)
-        corner.putalpha(rounded_corner_mask(r))
-        flips = (None, Image.Transpose.FLIP_LEFT_RIGHT, Image.Transpose.FLIP_TOP_BOTTOM,
-                 Image.Transpose.ROTATE_180)
-        cache[key] = [ImageTk.PhotoImage(corner if f is None else corner.transpose(f), master=canvas)
-                      for f in flips]
-    for (x, y), photo in zip(((left, top), (right - r, top), (left, bottom - r), (right - r, bottom - r)),
-                             cache[key]):
-        canvas.create_image(x, y, image=photo, anchor="nw", tags="track_corner")
-
-
 def format_counter_time(ms, total_ms):
     """`ms` as S.mmm, M:SS.mmm or H:MM:SS.mmm, chosen by the video's length `total_ms`."""
     hours, remainder = divmod(ms, 3600000)
@@ -473,16 +415,8 @@ class LabelingApp(tk.Tk):
         # Diagram init
         self.init_diagram()
         # Timeline draw cache
-        self._timeline_dirty = True
-        self._timeline2_dirty = True
-        self._timeline_last_zone = None
-        self._timeline_last_limb = None
-        self._timeline2_last_limb = None
-        self._timeline2_last_limb = None
-        self._timeline_canvas_size = (0, 0)
-        self._timeline2_canvas_size = (0, 0)
-        self._timeline_playhead_id = None
-        self._timeline2_playhead_id = None
+        self._detail_timeline = timeline.TouchTimelineView(self.timeline_canvas)
+        self._overview_timeline = timeline.TouchTimelineView(self.timeline2_canvas)
         # Synchronize the note to the stopped frame before the user edits it.
         self.note_entry.bind("<FocusIn>", lambda event: self.stop_video(), add="+")
 
@@ -584,8 +518,8 @@ class LabelingApp(tk.Tk):
         b = self.video.frames.get(idx)
         if isinstance(b, dict):
             b["Changed"] = True
-            self._timeline_dirty = True
-            self._timeline2_dirty = True
+            self._detail_timeline.invalidate()
+            self._overview_timeline.invalidate()
             if hasattr(self, "notify_bundle_changed"):
                 self.notify_bundle_changed(idx)
         self._refresh_after_annotation_edit()
@@ -1373,7 +1307,7 @@ class LabelingApp(tk.Tk):
             self.stop_video()
             click_position = event.x
             canvas_width = self.timeline_canvas.winfo_width()
-            frame_number = int(click_position / canvas_width * self.video.number_frames_in_zone)
+            frame_number = timeline_click_frame(click_position, canvas_width, self.video.number_frames_in_zone)
             if self.video.total_frames >= frame_number + self.video.number_frames_in_zone * self.video.current_frame_zone:
                 self.video.current_frame = frame_number + self.video.number_frames_in_zone * self.video.current_frame_zone
                 self.display_first_frame()
@@ -1390,7 +1324,7 @@ class LabelingApp(tk.Tk):
             self.stop_video()
             click_position = event.x
             canvas_width = self.timeline2_canvas.winfo_width()
-            new_frame = int((click_position / canvas_width) * self.video.total_frames)
+            new_frame = timeline_click_frame(click_position, canvas_width, self.video.total_frames)
             self.video.current_frame = new_frame
             self.video.current_frame_zone = new_frame // self.video.number_frames_in_zone
             logger.debug("jumping to exact frame: %s", new_frame)
@@ -1399,24 +1333,6 @@ class LabelingApp(tk.Tk):
             # changed, so repaint the zone timeline and move both playheads.
             self.draw_timeline()
             self.draw_timeline2()
-
-    def parameter_color_at_frame(self, frame):
-        b = self.video.frames.get(frame, {}) if self.video else {}
-        params = (b.get("Params") or {})
-        # If any param ON => green; else if any OFF => red; else None
-        if any(v == "ON" for v in params.values()): return theme.TL_PARAM_ON_MARK
-        if any(v == "OFF" for v in params.values()): return theme.TL_PARAM_OFF_MARK
-        return None
-
-    @staticmethod
-    def _draw_param_tick(canvas, x, top, bottom, color):
-        """Parameter marks are secondary to onset/offset edges: thin and dashed."""
-        return canvas.create_line(
-            x, top, x, bottom,
-            fill=color,
-            width=theme.TL_PARAM_MARK_WIDTH,
-            dash=theme.TL_PARAM_MARK_DASH,
-        )
 
     def _open_timeline_note(self, event):
         """Resolve note clicks before the canvas's approximate frame jump."""
@@ -1435,302 +1351,39 @@ class LabelingApp(tk.Tk):
                 return True
         return False
 
-    @staticmethod
-    def _draw_note_marker(canvas, frame, x, bottom):
-        """Keep frame notes distinct from full-height touch/parameter ticks."""
-        canvas.create_polygon(
-            x, bottom - 9, x + 4, bottom - 5,
-            x, bottom - 1, x - 4, bottom - 5,
-            fill=theme.TL_NOTE_MARK, outline="",
-            tags=("note_marker", f"note_frame:{frame}"),
-        )
-
-    @staticmethod
-    def _update_timeline_playhead(canvas, item_id, x, top, bottom):
-        """Create or move the shared playhead: a rounded cap on a 2 px stem.
-
-        It is one antialiased image (cached per height and colour), so cap and
-        stem never snap apart, and the stem's centre sits exactly on `x`.
-        """
-        photo = _playhead_photo(canvas, max(1, int(bottom - top)))
-        left = int(round(x)) - photo.width() // 2
-        if item_id is None:
-            return canvas.create_image(left, top, image=photo, anchor="nw")
-        canvas.coords(item_id, left, top)
-        if canvas.itemcget(item_id, "image") != str(photo):
-            canvas.itemconfigure(item_id, image=photo)
-        canvas.tag_raise(item_id)
-        return item_id
-
     def draw_timeline(self):
         self._assert_ui_thread()
         with self.perf.time("draw_timeline"):
             if not (self.video and self.video.total_frames > 0):
                 return
-            canvas_width = self.timeline_canvas.winfo_width()
-            canvas_height = self.timeline_canvas.winfo_height()
-            limb = self.option_var_1.get()
-            # From the current frame: during playback the playhead moves every
-            # frame, before the (throttled) frame counter updates the zone.
-            per_zone = self.video.number_frames_in_zone
-            zone = self.video.current_frame // per_zone if per_zone else self.video.current_frame_zone
-            self.video.current_frame_zone = zone
-            needs_full = (
-                self._timeline_dirty
-                or self._timeline_last_zone != zone
-                or self._timeline_last_limb != limb
-                or self._timeline_canvas_size != (canvas_width, canvas_height)
+            video = self.video
+            count = video.number_frames_in_zone
+            zone = video.current_frame // count if count else video.current_frame_zone
+            video.current_frame_zone = zone
+            projection = self._detail_timeline.draw_detail(
+                video.frames, self.option_var_1.get(), video.total_frames, zone, count,
+                False if zone == 0 else video.touch_to_next_zone[zone],
+                self.color_during, video.current_frame,
             )
-
-            left_edge = 1
-            right_edge = max(left_edge + 1, canvas_width - 2)
-            top = 1
-            bottom = max(top + 1, canvas_height - 2)
-            drawable_width = right_edge - left_edge
-            sector_width = drawable_width / self.video.number_frames_in_zone if self.video.number_frames_in_zone else 1
-            offset = self.video.number_frames_in_zone * zone
-
-            if needs_full:
-                self.timeline_canvas.delete("all")
-                data_source = {
-                    'RH': self.video.dataRH, 'LH': self.video.dataLH, 'RL': self.video.dataRL, 'LL': self.video.dataLL
-                }
-                data = data_source.get(limb, {})
-                self.is_touch_timeline = False if zone == 0 else self.video.touch_to_next_zone[zone]
-
-                def get_color(frame_idx, data):
-                    if frame_idx > self.video.total_frames: return theme.TL_UNAVAILABLE
-                    details = data.get(frame_idx, {})
-                    xs = details.get('X', [])
-                    if not xs:
-                        return self.color_during if self.is_touch_timeline else theme.TL_EMPTY
-                    if len(xs) >= 1 and xs[0] is not None:
-                        if details.get('Onset') == 'ON':
-                            self.is_touch_timeline = True; return theme.TL_ON
-                        else:
-                            self.is_touch_timeline = False; return theme.TL_OFF
-                    return self.color_during if self.is_touch_timeline else theme.TL_EMPTY
-
-                for frame in range(self.video.number_frames_in_zone):
-                    left = left_edge + frame * sector_width
-                    right = left + sector_width
-                    frame_offset = frame + offset
-                    color = get_color(frame_offset, data)
-                    self.timeline_canvas.create_rectangle(
-                        left, top, right, bottom, fill=color, outline=""
-                    )
-                    if color == theme.TL_UNAVAILABLE:
-                        self.timeline_canvas.create_line(
-                            left + 2,
-                            bottom - 2,
-                            right - 2,
-                            top + 2,
-                            fill=theme.TL_UNAVAILABLE_MARK,
-                            width=1,
-                        )
-                    param_color = self.parameter_color_at_frame(frame_offset)
-                    if param_color is not None:
-                        mid_x = (left + right) / 2
-                        self._draw_param_tick(self.timeline_canvas, mid_x, top, bottom, param_color)
-
-                    # NEW: per-limb ticks for Param1..3 on this frame
-                    colors = self.limb_parameter_colors_at_frame(frame_offset)
-                    mid_x = (left + right) / 2
-                    offsets = (-2, 0, 2)
-                    for col, dx in zip(colors, offsets):
-                        if col:
-                            self._draw_param_tick(self.timeline_canvas, mid_x + dx, top, bottom, col)
-
-                    if frame == self.video.number_frames_in_zone - 1:
-                        if self.video.current_frame_zone + 1 < len(self.video.touch_to_next_zone):
-                            self.video.touch_to_next_zone[self.video.current_frame_zone + 1] = (color == self.color_during)
-                        elif self.video.current_frame_zone + 1 == len(self.video.touch_to_next_zone):
-                            self.video.touch_to_next_zone.append(color == self.color_during)
-
-                # keep the original extra ticks behavior
-                colors = self.limb_parameter_colors_at_frame(frame_offset)
-                mid_x = (left + right) / 2
-                offsets = (-2, 0, 2)  # horizontal pixel offsets for Param1..3
-                for col, dx in zip(colors, offsets):
-                    if col:
-                        self._draw_param_tick(self.timeline_canvas, mid_x + dx, top, bottom, col)
-
-                # Draw one shared grid over borderless fills; shared edges stay 1 px.
-                self.timeline_canvas.create_rectangle(
-                    left_edge,
-                    top,
-                    right_edge,
-                    bottom,
-                    fill="",
-                    outline=theme.TL_OUTLINE,
-                )
-                for frame in range(1, self.video.number_frames_in_zone):
-                    x = left_edge + frame * sector_width
-                    self.timeline_canvas.create_line(
-                        x,
-                        top,
-                        x,
-                        bottom,
-                        fill=theme.TL_OUTLINE,
-                        width=1,
-                    )
-
-                for frame in range(self.video.number_frames_in_zone):
-                    frame_idx = offset + frame
-                    if (self.video.frames.get(frame_idx, {}).get("Note") or "").strip():
-                        x = left_edge + (frame + 0.5) * sector_width
-                        x = min(max(x, left_edge + 4), right_edge - 4)
-                        LabelingApp._draw_note_marker(self.timeline_canvas, frame_idx, x, bottom)
-
-                _round_track_corners(self.timeline_canvas, 0, 0, canvas_width, canvas_height)
-                self._timeline_dirty = False
-                self._timeline_last_zone = zone
-                self._timeline_last_limb = limb
-                self._timeline_canvas_size = (canvas_width, canvas_height)
-                self._timeline_playhead_id = None
-
-            # Update playhead only
-            frame_in_zone = self.video.current_frame - offset
-            if 0 <= frame_in_zone < self.video.number_frames_in_zone:
-                current_pos = left_edge + (frame_in_zone + 0.5) * sector_width
-                current_pos = min(max(current_pos, left_edge + 4), right_edge - 4)
-                self._timeline_playhead_id = self._update_timeline_playhead(
-                    self.timeline_canvas,
-                    self._timeline_playhead_id,
-                    current_pos,
-                    top,
-                    bottom,
-                )
+            if projection is not None:
+                self.is_touch_timeline = projection.active
+                # Retain the historical cross-zone cache independently of drawing.
+                if count:
+                    if zone + 1 < len(video.touch_to_next_zone):
+                        video.touch_to_next_zone[zone + 1] = projection.carry
+                    elif zone + 1 == len(video.touch_to_next_zone):
+                        video.touch_to_next_zone.append(projection.carry)
 
     def draw_timeline2(self):
         self._assert_ui_thread()
         with self.perf.time("draw_timeline2"):
             if not (self.video and self.video.total_frames > 0):
                 return
-
-            canvas_width  = self.timeline2_canvas.winfo_width()
-            canvas_height = self.timeline2_canvas.winfo_height()
-            left_edge = 1
-            right_edge = max(left_edge + 1, canvas_width - 2)
-            top = 1
-            bottom = max(top + 1, canvas_height - 2)
-            drawable_width = right_edge - left_edge
-            limb = self.option_var_1.get()  # currently selected limb ("LH","RH","LL","RL")
-            needs_full = (
-                self._timeline2_dirty
-                or self._timeline2_last_limb != limb
-                or self._timeline2_canvas_size != (canvas_width, canvas_height)
+            self._overview_timeline.draw_overview(
+                self.video.frames, self.option_var_1.get(), self.video.total_frames,
+                self.video.current_frame,
             )
 
-            if needs_full:
-                self.timeline2_canvas.delete("all")
-                self.timeline2_canvas.create_rectangle(
-                    left_edge,
-                    top,
-                    right_edge,
-                    bottom,
-                    fill=theme.TL_EMPTY,
-                    outline=theme.TL_OUTLINE,
-                )
-                # --- First pass: collect touch intervals and all lines to draw later ---
-                on_lines   = []      # x positions of On (green)
-                off_lines  = []      # x positions of Off (red)
-                intervals  = []      # [(x_on, x_off), ...]
-                param_lines = []     # [(x, color)] from GLOBAL parameter_color_at_frame
-                limb_param_lines = []  # [(x+dx, color)] from limb_parameter_colors_at_frame
-                active_on_x = None
-
-                # Deterministic left->right scan across frames that exist in memory
-                for frame in sorted(self.video.frames.keys()):
-                    bundle = self.video.frames.get(frame, {})
-                    details = bundle.get(limb, {}) if isinstance(bundle, dict) else {}
-
-                    x = left_edge + (frame / self.video.total_frames) * drawable_width
-
-                    # --- Onset/Offset collection for intervals + edge markers (SELECTED LIMB ONLY) ---
-                    onset_val = details.get('Onset')
-                    if onset_val == 'ON':
-                        on_lines.append(x)
-                        if active_on_x is None:
-                            active_on_x = x
-                    elif onset_val == 'OFF':
-                        off_lines.append(x)
-                        if active_on_x is not None:
-                            x1, x2 = (active_on_x, x) if active_on_x <= x else (x, active_on_x)
-                            if abs(x2 - x1) >= 1:
-                                intervals.append((x1, x2))
-                            active_on_x = None
-
-                    # --- GLOBAL Parameter markers (non-limb) â€” always visible ---
-                    col = self.parameter_color_at_frame(frame)
-                    if col is not None:
-                        param_lines.append((x, col))
-
-                    # --- Limb-specific parameter ticks (only when a limb is selected) ---
-                    #      small +/-2px offsets so the three limb-params can be distinguished
-                    if limb in ("LH", "RH", "LL", "RL") and hasattr(self, "limb_parameter_colors_at_frame"):
-                        colors = self.limb_parameter_colors_at_frame(frame)  # returns up to 3 colors or None
-                        for dx, c in zip((-2, 0, 2), colors):
-                            if c:
-                                limb_param_lines.append((x + dx, c))
-
-                # --- Draw order: 1) fills, 2) global & limb param lines, 3) On/Off edges, 4) playhead ---
-                # 1) Pale-green touch interval fills
-                for x1, x2 in intervals:
-                    # Leave a visible gap between the fill and semantic edge ticks.
-                    if x2 - x1 > 6:
-                        self.timeline2_canvas.create_rectangle(
-                            x1 + 3,
-                            top + 1,
-                            x2 - 3,
-                            bottom - 1,
-                            fill=theme.TL_DURING,
-                            outline="",
-                        )
-
-                # 2) Global parameter lines
-                for x, c in param_lines:
-                    self._draw_param_tick(self.timeline2_canvas, x, top, bottom, c)
-
-                #    Limb-specific parameter ticks for the selected limb
-                for x, c in limb_param_lines:
-                    self._draw_param_tick(self.timeline2_canvas, x, top, bottom, c)
-
-                # 3) On/Off edge markers
-                for x in on_lines:
-                    self.timeline2_canvas.create_line(
-                        x, top, x, bottom, fill=theme.TL_ONSET_MARK, width=2
-                    )
-                for x in off_lines:
-                    self.timeline2_canvas.create_line(
-                        x, top, x, bottom, fill=theme.TL_OFFSET_MARK, width=2
-                    )
-
-                for frame, bundle in self.video.frames.items():
-                    if (bundle.get("Note") or "").strip():
-                        x = left_edge + (frame / self.video.total_frames) * drawable_width
-                        x = min(max(x, left_edge + 4), right_edge - 4)
-                        LabelingApp._draw_note_marker(self.timeline2_canvas, frame, x, bottom)
-
-                _round_track_corners(self.timeline2_canvas, 0, 0, canvas_width, canvas_height)
-                self._timeline2_dirty = False
-                self._timeline2_last_limb = limb
-                self._timeline2_canvas_size = (canvas_width, canvas_height)
-                self._timeline2_playhead_id = None
-
-            # Current frame indicator only
-            current_pos = left_edge + (
-                self.video.current_frame / self.video.total_frames
-            ) * drawable_width
-            current_pos = min(max(current_pos, left_edge + 4), right_edge - 4)
-            self._timeline2_playhead_id = self._update_timeline_playhead(
-                self.timeline2_canvas,
-                self._timeline2_playhead_id,
-                current_pos,
-                top,
-                bottom,
-            )
-    
     def update_frame_counter(self):
         # Runs on every control refresh (25 Hz in playback): each call below is
         # a no-op when nothing changed, and the counters have a fixed width.
@@ -2377,25 +2030,6 @@ class LabelingApp(tk.Tk):
             state = limb_params.get(key)
             theme.set_button_state(btn, state)
     
-    def limb_parameter_colors_at_frame(self, frame):
-        """Return Param1..3 colors for the SELECTED limb at a given frame."""
-        limb = self.option_var_1.get()
-        b = self.video.frames.get(frame, {})
-        rec = b.get(limb, {}) if isinstance(b, dict) else {}
-        limb_params = rec.get("LimbParams", {}) if isinstance(rec, dict) else {}
-
-        colors = []
-        for i in (1, 2, 3):
-            key = self._limb_param_key_for_index(i)
-            val = limb_params.get(key)
-            if val == "ON":
-                colors.append(theme.TL_PARAM_ON_MARK)
-            elif val == "OFF":
-                colors.append(theme.TL_PARAM_OFF_MARK)
-            else:
-                colors.append(None)
-        return colors
-
     # === Notes & Frame Selection ===============================================
     def _get_note_entry_text(self):
         return self.note_entry.get("1.0", "end-1c")
@@ -3067,15 +2701,8 @@ class LabelingApp(tk.Tk):
         self._apply_active_template(self.state_repo.load_template().template)
         self._refresh_jump_label()
 
-        self._timeline_dirty = True
-        self._timeline2_dirty = True
-        self._timeline_last_zone = None
-        self._timeline_last_limb = None
-        self._timeline2_last_limb = None
-        self._timeline_canvas_size = (0, 0)
-        self._timeline2_canvas_size = (0, 0)
-        self._timeline_playhead_id = None
-        self._timeline2_playhead_id = None
+        self._detail_timeline.reset()
+        self._overview_timeline.reset()
 
         self.restore_last_position()
 
@@ -3370,8 +2997,8 @@ class LabelingApp(tk.Tk):
             self.color_start = theme.TOUCH_START
             self.color_during = theme.TL_DURING
             self.color_end = theme.TOUCH_END
-            self._timeline_dirty = True
-            self._timeline2_dirty = True
+            self._detail_timeline.invalidate()
+            self._overview_timeline.invalidate()
             self.draw_timeline()
             self.draw_timeline2()
 
@@ -3449,10 +3076,8 @@ class LabelingApp(tk.Tk):
 
         # Flush buffer so new resolution takes effect immediately.
         self._buffer_reset()
-        self._timeline_dirty = True
-        self._timeline2_dirty = True
-        self._timeline_playhead_id = None
-        self._timeline2_playhead_id = None
+        self._detail_timeline.reset()
+        self._overview_timeline.reset()
         if getattr(self, "video", None):
             self.display_first_frame()
             self._set_note_entry_text(note_draft)

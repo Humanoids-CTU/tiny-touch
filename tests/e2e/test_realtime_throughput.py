@@ -45,7 +45,8 @@ def test_realtime_play_and_arrow_holds(app_factory, workspace):
             bundle[limb].update(X=[100], Y=[100], Zones=[['I']],
                                 Onset='ON' if frame % 100 == 0 else 'OFF')
         app.video.frames[frame] = bundle
-    app._timeline_dirty = app._timeline2_dirty = True
+    app._detail_timeline.invalidate()
+    app._overview_timeline.invalidate()
     app.display_first_frame()
     results = []
     modes = os.environ.get('TINYTOUCH_REALTIME_MODES', 'play,hold_forward,hold_backward').split(',')

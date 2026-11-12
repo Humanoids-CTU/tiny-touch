@@ -200,9 +200,9 @@ costs one rebuild instead of one per event. The old frame stays on screen meanwh
   and the next `PLAYBACK_BUFFER_AHEAD = 3` frames in the play direction are buffered; until
   then it re-checks every `PLAYBACK_STALL_POLL_MS = 20` ms, so playback stalls briefly
   rather than stutters. Every write to `current_frame` is therefore on the Tk thread.
-  Video presentation runs at source FPS while annotation controls and both timelines
-  refresh at most 25 times per second. The timelines retain their existing cached static
-  content and move their cursor between rebuilds. Unchanged semantic button styles do
+  Video presentation and timeline playheads follow source FPS while annotation controls
+  refresh at most 25 times per second. The timelines retain their cached static
+  content and move their playheads between rebuilds. Unchanged semantic button styles do
   not request another widget repaint. Stop, release, boundaries, exact navigation and
   annotation actions synchronize deferred controls immediately. Focusing Notes pauses
   before editing. `displayed_frame` still advances only after successful video painting;
@@ -354,6 +354,19 @@ remain stable; names belong in metadata and presentation only.
 - Track infant gaze and up to 3 global + 3 per-channel parameters. Each button is a three-state toggle (`unset → ON → OFF → unset`, `domain.touch.cycle_param_state`); gaze can use global `Par1` by study convention. Button labels come from the frozen project coding setup and are included in export metadata.
 - Six "boxes" on the diagram act as catch-all zones (ground, prop, etc).
 - Two timelines visualize all touch events; the upper, slimmer one is the global scrub bar and the taller one is the 100-frame detail view for the selected limb.
+
+Timeline display rules live in `domain/touch_timeline.py`: pure projections of
+Touch cells, closed overview intervals, edge events, parameter states and notes.
+`gui/timeline.py` renders these projections from explicit inputs and owns shared
+canvas decorations. `gui/timeline_geometry.py` supplies pure drawing coordinates
+and canvas-wide click mapping, reusable by a future annotation type. No Pose
+model or display is implemented. `gui.timeline.TouchTimelineView` owns each
+canvas's invalidation, cache keys and playhead IDs. `LabelingApp` passes explicit
+data and requests invalidation/reset
+on annotation edits, appearance changes and project loads; navigation/session
+orchestration remains in the controller. Cached playback updates move the
+playhead without rebuilding the projections. The extraction preserves existing
+detail/overview differences and historical zone carry behavior.
 
 The annotator-facing version of all of this is [docs/ANNOTATION_GUIDE.md](docs/ANNOTATION_GUIDE.md).
 
