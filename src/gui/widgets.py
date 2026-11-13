@@ -169,6 +169,8 @@ class RoundedCard(tk.Canvas):
         key = (w, h, theme.current_appearance(), theme.color(self.fill), theme.color(self.outer))
         if key == self._painted:
             return
+        if w < 2 * self._corner_size() or h < 2 * self._corner_size():
+            return   # not laid out yet (1x1 before mapping): nothing to paint, and no 0-px crops
         self._painted = key
         self.configure(bg=theme.color(self.outer))
         tmpl, k, spec = self._template()

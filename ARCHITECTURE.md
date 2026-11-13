@@ -70,7 +70,9 @@ tiny-touch/
 │   │   ├── diagram_highlight.py  # Hover highlight, zone tag and click flash on the diagram
 │   │   ├── diagram_resize.py     # Corner grip: drag to rescale the diagram (aspect kept)
 │   │   ├── theme.py              # Colors / fonts / widget styling
-│   │   ├── native_title_bar.py   # Windows title-bar colors; no-op on Linux
+│   │   ├── native_title_bar.py   # Windows title-bar colors and DWM cloak; no-op on Linux
+│   │   ├── window_reveal.py      # Every window appears once, settled and placed
+│   │   ├── content_swap.py       # Rebuild a visible window behind a still cover
 │   │   ├── special_zones_app.py  # Special-zone selector + note dialog (Toplevel)
 │   │   └── resource_utils.py     # PyInstaller-aware asset path resolution
 │   └── resources/                # RUNTIME assets -- everything here ships in the exe
@@ -272,6 +274,35 @@ into the buffer alone does not authorize an annotation. Switching renderers
 preserves an unsaved note through the asynchronous repaint. The SQLite/CSV and
 diagram-coordinate contracts are unchanged. See [manual acceptance](docs/VIDEO_RENDERING.md).
 
+### Window reveal and content swaps
+
+No half-built frame reaches the screen ([plan](docs/plans/2026-11-12_flicker_free_ui.md)).
+`gui.window_reveal`, installed by `theme.init_style`, creates every `tk.Toplevel` at alpha 0.
+On its `<Map>` one idle callback settles it (`settle`: window events and idle callbacks until
+neither has work, capped), runs its `place_on_reveal` callbacks (centring), settles again and
+sets alpha 1, then runs its `on_reveal` callbacks. Dialogs therefore never withdraw, centre and
+deiconify themselves; they call `place_on_reveal` and `modal_grab` (a grab deferred until the
+window is viewable when Tk refuses it). Unmapping re-arms a window; borderless dropdowns appear at
+once; a watchdog shows any window whose reveal stalls. On X11 without a compositor the window
+waits off-screen instead of at alpha 0. The main window uses the same reveal
+(`hide_root_until_settled`): on Windows it is built withdrawn and DWM-cloaked, `main.py` maps it
+zoomed directly, and the diagram is fitted once through `place_on_reveal` before it appears
+(the `RESIZE_FIT_MS` debounce remains for user resizes). During `LabelingApp.__init__` the root
+is therefore unmapped.
+
+`gui.content_swap.swap_content(widget, build)` rebuilds content inside a visible window (wizard
+steps, library search): on Windows a click-through snapshot of the client area covers the window
+while `build` runs and settles, then is removed in one compositor frame. Elsewhere, or if a Win32
+call fails, it rebuilds and settles without a cover. An optional `ready` predicate keeps the
+cover until asynchronous work (a frame painted from a timer) has finished, up to a timeout; a
+thread-local activation hook drops the cover as soon as any other window (a dialog, a message box)
+activates, so it never hides the window behind a modal. A video load uses it for the step after
+its last dialog: `_publish_loaded_video` runs inside the swap, lifts `_suspend_frame_workers`
+once the session is fully published, and the cover stays until the first frame is painted
+(`LOAD_FIRST_FRAME_TIMEOUT_MS`).
+`window_reveal.REVEAL_WHEN_SETTLED` and `content_swap.SWAP_COVER` turn the mechanisms off; the
+e2e suite turns the reveal off because it hides every window itself.
+
 ## Labeling Modes
 
 ### Video library and frozen coding setups
@@ -306,7 +337,11 @@ notes, Special Zones marks and visibility preferences remain editable.
 Supported older databases without a snapshot can adopt their recorded template,
 zone aliases and export parameter labels. Missing historical label provenance
 requires review; mutable global preferences are not historical evidence. A new
-Reliability pass inherits the full prepared setup, with separate annotations.
+Reliability pass has an independent setup and separate annotations; it never
+requires a local Normal project. A prepared local Normal snapshot can seed the
+setup wizard, where users may import a configuration or choose manually.
+Template selection and locking apply only to the current pass; cross-pass
+compatibility is the researcher's responsibility.
 This adoption does not restore retired pre-SQLite project formats.
 
 ### Diagram registry and compatibility
@@ -626,7 +661,7 @@ the mouse wheel scrolls the page; zooming is an explicit drag-select.
 ## Testing
 
 Coding setup tests cover portable-file validation, full project snapshots,
-preparation locking, legacy label adoption and Reliability inheritance. Export
+preparation locking, legacy label adoption and independent Reliability setup. Export
 tests cover the versioned Channel1–4 schema, aligned paired coordinates and zone
 groups, multiple points/multiple zones, timestamp rounding, and reading historical
 exports for analysis. GUI tests must isolate both the project roots and the

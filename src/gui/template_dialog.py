@@ -5,7 +5,7 @@ from PIL import Image, ImageTk
 
 from domain.templates import TEMPLATE_LABELS, get_template, validate_template
 from gui.resource_utils import asset_path
-from gui import theme
+from gui import theme, window_reveal
 from gui.widgets import RoundedCard
 
 # Design px (scaled with theme.px at build time).
@@ -48,8 +48,7 @@ def add_custom_template_placeholder(parent, selection, column):
 def choose_template(parent, initial, *, center=None):
     px = theme.px
     validate_template(initial)
-    win = tk.Toplevel(parent)
-    win.withdraw()
+    win = tk.Toplevel(parent)   # hidden until settled and centred
     theme.bind_colors(win, bg="WIN")
     win.title("Template for new projects")
     win.transient(parent)
@@ -57,7 +56,7 @@ def choose_template(parent, initial, *, center=None):
     content.pack(fill="both", expand=True)
     explanation = (
         "Choose the diagram for a new project.\n"
-        "Existing projects restore their saved template; Reliability inherits the original."
+        "Existing projects restore their saved template. Each pass has its own setup."
     )
     ttk.Label(content, text=explanation, justify="left", wraplength=px(EXPLANATION_WRAP)).pack(pady=(0, px(12)))
     options = ttk.Frame(content)
@@ -98,9 +97,8 @@ def choose_template(parent, initial, *, center=None):
     proceed = ttk.Button(controls, text="Continue", command=confirm, style="Primary.TButton")
     proceed.pack(side="left", padx=px(8))
     if center:
-        center(win, parent)
-    win.deiconify()
-    win.grab_set()
+        window_reveal.place_on_reveal(win, lambda: center(win, parent))
+    window_reveal.modal_grab(win)
     try:
         win.wait_window()
     finally:

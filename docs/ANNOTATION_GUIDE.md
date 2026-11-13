@@ -90,8 +90,8 @@ amber in Reliability mode. Your choice is remembered as the default for next tim
 Cancelling the library or setup leaves the current project intact. Failed or
 interrupted preparation must be retried before coding. An existing prepared
 project restores its own settings; it does not reread the shared configuration.
-Reliability inherits a complete copy of the original setup. Conflicting existing
-passes cannot be linked silently.
+Reliability uses its own setup wizard and does not require a local Normal
+project. Import a shared configuration or choose the settings manually.
 
 The diagram and zone/channel/parameter names are fixed after preparation.
 Deleting annotations does not unlock them. Use the same configuration to prepare
@@ -295,8 +295,9 @@ diagram and in **Special Zones**. This visibility preference remains editable;
 the names themselves are frozen when preparation succeeds.
 
 Labels are saved with each project. Hover shows the label, or the fixed ID if
-no label was supplied. The exported diagram shows both; CSV rows retain IDs. A new Reliability pass inherits the
-original pass's coding setup. CSV zone IDs and mask
+no label was supplied. The exported diagram shows both; CSV rows retain IDs. A new Reliability pass can import a configuration or use manual setup;
+a local Normal project is optional. A prepared local Normal setup is offered
+as an editable starting point. Researchers must choose compatible setups for comparison. CSV zone IDs and mask
 files stay unchanged; the export metadata's **Coding Setup.zone_labels** maps IDs to custom names.
 
 ## 8. Gaze and parameters

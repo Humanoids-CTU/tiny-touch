@@ -2,7 +2,7 @@
 import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageDraw, ImageTk
-from gui import theme
+from gui import content_swap, theme, window_reveal
 from gui.widgets import RoundedCard
 from gui.template_dialog import template_diagram
 from domain.templates import TEMPLATE_LABELS
@@ -37,7 +37,7 @@ def _rounded(image, radius, rim=0):
 def choose_existing_video(parent, name, copy_name, *, center=None):
     """Return resume/copy, or None on cancellation, before any project writes."""
     px = theme.px
-    win = tk.Toplevel(parent)
+    win = tk.Toplevel(parent)   # hidden until settled and centred
     win.title("Video already added")
     win.transient(parent)
     theme.bind_colors(win, bg="WIN")
@@ -65,14 +65,14 @@ def choose_existing_video(parent, name, copy_name, *, center=None):
                    command=lambda value=value: finish(value)).pack(side="left", padx=(0, theme.toolbar_padx()))
     win.bind("<Escape>", lambda event: finish(None))
     if center:
-        center(win, parent)
-    win.grab_set()
+        window_reveal.place_on_reveal(win, lambda: center(win, parent))
+    window_reveal.modal_grab(win)
     win.wait_window()
     return result
 
 def choose_video(parent, entries, *, center=None):
     px = theme.px
-    win = tk.Toplevel(parent)
+    win = tk.Toplevel(parent)   # hidden until settled and centred
     win.title("Video library")
     win.transient(parent)
     theme.bind_colors(win, bg="WIN")
@@ -119,47 +119,56 @@ def choose_video(parent, entries, *, center=None):
             return value
         except (OSError, ValueError, TypeError):
             return None
-    def render(*args):
-        for child in rows.winfo_children():
-            child.destroy()
-        photos.clear()
-        shown = [entry for entry in entries if search.get().casefold() in entry.title.casefold()]
-        if not shown:
-            ttk.Label(rows, text="No videos yet. Select Load new video to begin.", style="Muted.TLabel").pack(pady=px(40))
-        for entry in shown:
-            card = RoundedCard(rows, pad=px(ROW_CARD_PAD))
+    def build_row(entry):
+        card = RoundedCard(rows, pad=px(ROW_CARD_PAD))
+        row = card.inner
+        preview = photo(entry.thumbnail, (px(THUMBNAIL_SIZE[0]), px(THUMBNAIL_SIZE[1])),
+                        radius=px(THUMBNAIL_RADIUS))
+        ttk.Label(row, image=preview, text="No thumbnail" if preview is None else "", width=22,
+                  style="Card.TLabel" if preview is not None else "CardMuted.TLabel").pack(side="left", padx=(0, px(16)))
+        info = ttk.Frame(row, style="Card.TFrame")
+        info.pack(side="left", fill="x", expand=True)
+        ttk.Label(info, text=entry.title, style="Card.TLabel", font=theme.FONT_MEDIUM).pack(anchor="w")
+        state = {"ready": "Ready", "preparing": "Resume frame generation",
+                 "draft": "Setup saved / resume preparation"}.get(
+                     entry.preparation_state, "Setup / preparation required")
+        ttk.Label(info, text=f"{TEMPLATE_LABELS.get(entry.template, entry.template)} / {state}" + (f" / {entry.setup_name}" if entry.setup_name else ""), style="CardMuted.TLabel", wraplength=px(ROW_TEXT_WRAP)).pack(anchor="w", pady=px(5))
+        if not entry.source:
+            ttk.Label(info, text="Source unavailable — select the source again with Load new video.", style="Card.TLabel", wraplength=px(ROW_TEXT_WRAP)).pack(anchor="w")
+        diagram = photo(template_diagram(entry.template), (px(ROW_DIAGRAM_SIZE[0]), px(ROW_DIAGRAM_SIZE[1])),
+                        radius=px(DIAGRAM_RADIUS), rim=px(DIAGRAM_RIM))
+        ttk.Label(row, image=diagram, style="Card.TLabel").pack(side="left", padx=px(14))
+        ttk.Button(row, text="Resume", style="Card.Tool.TButton", command=lambda value=entry: finish(value), state="normal" if entry.source else "disabled").pack(side="right")
+        return card
+    # Every row is built once; a search only shows or hides rows.
+    cards = [(entry, build_row(entry)) for entry in entries]
+    empty = ttk.Label(rows, text="No videos yet. Select Load new video to begin.", style="Muted.TLabel")
+    def bind_scroll(widget):
+        for event in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            widget.bind(event, lambda e: canvas.yview_scroll(-1 if getattr(e, "num", None) == 4 or getattr(e, "delta", 0) > 0 else 1, "units"))
+        for child in widget.winfo_children():
+            bind_scroll(child)
+    bind_scroll(rows)
+    def filter_rows():
+        text = search.get().casefold()
+        shown = [card for entry, card in cards if text in entry.title.casefold()]
+        for _, card in cards:
+            card.pack_forget()
+        empty.pack_forget()
+        for card in shown:
             card.pack(fill="x")
-            row = card.inner
-            preview = photo(entry.thumbnail, (px(THUMBNAIL_SIZE[0]), px(THUMBNAIL_SIZE[1])),
-                            radius=px(THUMBNAIL_RADIUS))
-            ttk.Label(row, image=preview, text="No thumbnail" if preview is None else "", width=22,
-                      style="Card.TLabel" if preview is not None else "CardMuted.TLabel").pack(side="left", padx=(0, px(16)))
-            info = ttk.Frame(row, style="Card.TFrame")
-            info.pack(side="left", fill="x", expand=True)
-            ttk.Label(info, text=entry.title, style="Card.TLabel", font=theme.FONT_MEDIUM).pack(anchor="w")
-            state = {"ready": "Ready", "preparing": "Resume frame generation",
-                     "draft": "Setup saved / resume preparation"}.get(
-                         entry.preparation_state, "Setup / preparation required")
-            ttk.Label(info, text=f"{TEMPLATE_LABELS.get(entry.template, entry.template)} / {state}" + (f" / {entry.setup_name}" if entry.setup_name else ""), style="CardMuted.TLabel", wraplength=px(ROW_TEXT_WRAP)).pack(anchor="w", pady=px(5))
-            if not entry.source:
-                ttk.Label(info, text="Source unavailable — select the source again with Load new video.", style="Card.TLabel", wraplength=px(ROW_TEXT_WRAP)).pack(anchor="w")
-            diagram = photo(template_diagram(entry.template), (px(ROW_DIAGRAM_SIZE[0]), px(ROW_DIAGRAM_SIZE[1])),
-                            radius=px(DIAGRAM_RADIUS), rim=px(DIAGRAM_RIM))
-            ttk.Label(row, image=diagram, style="Card.TLabel").pack(side="left", padx=px(14))
-            ttk.Button(row, text="Resume", style="Card.Tool.TButton", command=lambda value=entry: finish(value), state="normal" if entry.source else "disabled").pack(side="right")
-        def bind_scroll(widget):
-            for event in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-                widget.bind(event, lambda e: canvas.yview_scroll(-1 if getattr(e, "num", None) == 4 or getattr(e, "delta", 0) > 0 else 1, "units"))
-            for child in widget.winfo_children():
-                bind_scroll(child)
-        bind_scroll(rows)
+        if not shown:
+            empty.pack(pady=px(40))
+        canvas.yview_moveto(0)
+    def render(*args):
+        content_swap.swap_content(win, filter_rows)
     search_trace = search.trace_add("write", render)
     render()
     ttk.Button(body, text="Cancel", command=win.destroy, style="Tool.TButton").pack(anchor="e")
     win.bind("<Escape>", lambda e: win.destroy())
     if center:
-        center(win, parent)
-    win.grab_set()
+        window_reveal.place_on_reveal(win, lambda: center(win, parent))
+    window_reveal.modal_grab(win)
     try:
         win.wait_window()
     finally:

@@ -12,6 +12,7 @@ import sys
 from domain.templates import get_template
 from gui import theme
 from gui import widgets
+from gui import window_reveal
 from gui.video_overlay import VideoBadge
 from gui.diagram_resize import DiagramCanvas, DiagramResizeGrip, clamp_scale
 
@@ -24,7 +25,7 @@ DIAGRAM_SCREEN_MARGIN_PX = 160
 # Window caption plus taskbar, kept free when the diagram's maximum is
 # computed from the right column's real contents (design px).
 SCREEN_CHROME = 90
-RESIZE_FIT_MS = 150               # window resize settles before the diagram re-fits
+RESIZE_FIT_MS = 150               # a user resize settles before the diagram re-fits
 
 # Layout (design px, scaled with theme.px at build time).
 WINDOW_SIZE = (1200, 1000)        # initial size before main.py maximizes
@@ -144,7 +145,16 @@ def _watch_window_height(app):
             app.after_cancel(state["after"])
         state["after"] = app.after(RESIZE_FIT_MS, settle)
 
+    def fit_now():
+        if state["after"] is not None:
+            app.after_cancel(state["after"])
+        settle()
+
     app.bind("<Configure>", on_configure, add="+")
+    # The first fit, at the real (maximized) height, runs before the window
+    # appears, so the diagram never visibly jumps RESIZE_FIT_MS after it.
+    if window_reveal.is_pending(app):
+        window_reveal.place_on_reveal(app, fit_now)
 
 
 def draw_startup_diagram(app, scale):

@@ -36,6 +36,8 @@ from domain.templates import DEFAULT_TEMPLATE, get_template
 from domain.zone_display import ZoneDisplaySettings
 from gui import theme
 from gui import widgets
+from gui import window_reveal
+from gui import content_swap
 from gui import app_dialogs
 from gui.app_dialogs import center_over_parent, custom_confirm_close
 from gui.video_surface import GpuVideoSurface, VideoRendererError, rounded_corner_mask
@@ -88,6 +90,9 @@ WHEEL_BUFFER_POLL_MS = 50
 # how background decodes reach the screen; 10 ms is below one video frame.
 DISPLAY_PUMP_MS = 10
 FRAME_PREPARATION_POLL_MS = 50
+# A video load swaps the main window's content behind a cover (gui.content_swap)
+# until the new video's first frame is painted, but never longer than this.
+LOAD_FIRST_FRAME_TIMEOUT_MS = 1500
 # Playback runs on the Tk thread (LabelingApp._play_tick), paced against a
 # running deadline like the wheel. When the next PLAYBACK_BUFFER_AHEAD frames
 # are not decoded yet it re-checks every PLAYBACK_STALL_POLL_MS: a cheap
@@ -127,11 +132,11 @@ DIAGRAM_DOT_TAG = "dot"
 DEBUG_ASSERT_UI_THREAD = False
 # Progress / export windows (design px, scaled with theme.px).
 PROGRESS_WINDOW_W = 520
-PROGRESS_WINDOW_H = 180
+PROGRESS_WINDOW_H = 150
 EXPORT_WINDOW_H = 160
 PROGRESS_BAR_LENGTH = 460
-PROGRESS_COUNT_WIDTH = 9
-
+EXPORT_STATUS_SLACK_CHARS = 4  # room for a longer elapsed time (h:mm:ss) without a resize
+PROGRESS_TIME_WIDTH = 5  # characters reserved for "m:ss"/"mm:ss"; hours just grow it
 
 # =============================================================================
 # Standalone helpers
@@ -298,6 +303,8 @@ class LabelingApp(tk.Tk):
         super().__init__()
         self.config = config.load_app_config()
         self.style = theme.init_style(self, self.config.appearance)
+        # Built hidden; shown once laid out (see main.py for the zoomed map).
+        window_reveal.hide_root_until_settled(self)
 
         # Core state (was previously in __init__)
         self.video = None
@@ -392,11 +399,12 @@ class LabelingApp(tk.Tk):
         self._display_pump_id = None          # after() id of _display_pump
 
         # While True, _buffer_context returns None so the buffering thread
-        # idles and the display pump paints nothing. Held for the whole
-        # load_video swap: neither may observe (or repaint from) a
-        # half-published video, and their first tick for a new video only
-        # happens after load_video returned — the same ordering the very
-        # first load has by construction.
+        # idles and the display pump paints nothing. Held during load_video
+        # until the new video is fully published: neither may observe (or
+        # repaint from) a half-published video, and their first tick for a
+        # new video only happens after _publish_loaded_video finished. It is
+        # lifted there (still inside the content swap, which waits for the
+        # first frame) and again, harmlessly, when load_video returns.
         self._suspend_frame_workers = False
 
         # Frame buffer (adapters.frame_buffer): owns the buffer lock and
@@ -665,7 +673,7 @@ class LabelingApp(tk.Tk):
         if self.video is not None and getattr(self, "frame_rate", None):
             text = f"Jump: {self.jump_frame_count} frames ({self.jump_seconds}s)"
         else:
-            text = f"Jump: {self.jump_seconds}s (load video to see frames)"
+            text = f"Jump: {self.jump_seconds}s"
         label.config(text=text)
 
     def update_last_mouse_position(self, event):
@@ -1426,54 +1434,63 @@ class LabelingApp(tk.Tk):
         return self._open_progress_window("Loading Data", "Loading labeled data...")
 
     def _open_progress_window(self, title, heading, *, frame_job=None):
-        win = tk.Toplevel(self)
-        win.withdraw()  # stay hidden until centered, or Windows maps it at +0+0
+        win = tk.Toplevel(self)   # hidden until settled and centred (gui.window_reveal)
         win.title(title)
         win.geometry(f"{theme.px(PROGRESS_WINDOW_W)}x{theme.px(PROGRESS_WINDOW_H)}")
         win.resizable(False, False)
         win.transient(self)
         theme.bind_colors(win, bg="WIN")
 
-        content = ttk.Frame(win, padding=theme.px(16))
+        # Layout: one shared left/right edge for every row.
+        #   Heading
+        #   Stage ......................... percent
+        #   [=============== bar ===============]
+        #   count / total ...... Elapsed m:ss   Remaining m:ss
+        # Nothing may wiggle while values change. Numbers use the theme's
+        # numeric font (equal-width digits) and are anchored so they only ever
+        # grow away from their neighbours: percent and Remaining from the right
+        # edge leftwards, the count leftwards from the "/".
+        content = ttk.Frame(win, padding=(theme.px(20), theme.px(16)))
         content.pack(fill="both", expand=True)
-        ttk.Label(content, text=heading, font=theme.FONT_TITLE).pack(pady=(0, 6))
-        status = ttk.Label(content, text="Starting...", font=theme.FONT_BASE, anchor="w")
-        status.pack(fill="x")
-        # Keep each changing value in its own reserved field. A single centered
-        # sentence shifts all its text whenever a count or duration gains a digit.
-        progress_fields = ttk.Frame(content)
-        progress_fields.pack(fill="x")
-        count_label = ttk.Label(progress_fields, text="0", font=theme.FONT_BASE,
-                                width=PROGRESS_COUNT_WIDTH, anchor="e")
-        count_label.pack(side="left")
-        ttk.Label(progress_fields, text=" / ", font=theme.FONT_BASE,
-                  width=3, anchor="center").pack(side="left")
-        total_label = ttk.Label(progress_fields, text="--", font=theme.FONT_BASE,
-                                width=PROGRESS_COUNT_WIDTH, anchor="w")
-        total_label.pack(side="left")
-        percent_label = ttk.Label(progress_fields, text="0.0%", font=theme.FONT_BASE,
-                                  width=8, anchor="e")
+        ttk.Label(content, text=heading, font=theme.FONT_TITLE,
+                  anchor="w").pack(fill="x", pady=(0, theme.px(10)))
+
+        stage_row = ttk.Frame(content)
+        stage_row.pack(fill="x")
+        percent_label = ttk.Label(stage_row, text="0.0%", font=theme.FONT_NUMERIC_MEDIUM,
+                                  anchor="e")
         percent_label.pack(side="right")
+        status = ttk.Label(stage_row, text="Starting...", font=theme.FONT_BASE, anchor="w")
+        status.pack(side="left", fill="x", expand=True)
+
         bar = ttk.Progressbar(
             content,
             mode="determinate",
             length=theme.px(PROGRESS_BAR_LENGTH),
         )
-        bar.pack(pady=8)
-        time_fields = ttk.Frame(content)
-        time_fields.pack(fill="x")
-        ttk.Label(time_fields, text="Elapsed:", font=theme.FONT_SMALL,
-                  width=9, anchor="w").pack(side="left")
-        elapsed_label = ttk.Label(time_fields, text="0:00", font=theme.FONT_SMALL,
-                                  width=12, anchor="w")
-        elapsed_label.pack(side="left")
-        ttk.Label(time_fields, text="ETA:", font=theme.FONT_SMALL,
-                  width=6, anchor="w").pack(side="left")
-        eta_label = ttk.Label(time_fields, text="--:--", font=theme.FONT_SMALL,
-                              width=12, anchor="w")
-        eta_label.pack(side="left")
-        center_over_parent(win, self)
-        win.deiconify()
+        bar.pack(fill="x", pady=(theme.px(6), theme.px(8)))
+
+        detail_row = ttk.Frame(content)
+        detail_row.pack(fill="x")
+        count_label = ttk.Label(detail_row, text="0", font=theme.FONT_NUMERIC_SMALL, anchor="e")
+        count_label.pack(side="left")
+        total_label = ttk.Label(detail_row, text=" / --", font=theme.FONT_NUMERIC_SMALL,
+                                anchor="w")
+        total_label.pack(side="left")
+
+        eta_label = ttk.Label(detail_row, text="--:--", font=theme.FONT_NUMERIC_SMALL,
+                              width=PROGRESS_TIME_WIDTH, anchor="e")
+        eta_label.pack(side="right")
+        ttk.Label(detail_row, text="Remaining", font=theme.FONT_SMALL,
+                  style="Muted.TLabel").pack(side="right")
+        elapsed_label = ttk.Label(detail_row, text="0:00", font=theme.FONT_NUMERIC_SMALL,
+                                  width=PROGRESS_TIME_WIDTH, anchor="w")
+        elapsed_label.pack(side="right", padx=(0, theme.px(16)))
+        ttk.Label(detail_row, text="Elapsed ", font=theme.FONT_SMALL,
+                  style="Muted.TLabel").pack(side="right")
+        window_reveal.place_on_reveal(win, lambda: center_over_parent(win, self))
+
+        stage_starts = {}  # stage -> (count, elapsed_s) at its first report
 
         def update(count, total, stage, elapsed_s):
             try:
@@ -1485,12 +1502,20 @@ class LabelingApp(tk.Tk):
                 bar["value"] = count
                 pct = (count / total) * 100 if total else 0
                 status.config(text=stage)
-                count_label.config(text=str(count))
-                total_label.config(text=str(total))
+                total_text = f"{total:,}"
+                # Reserve the total's width so the count fills in right-aligned.
+                count_label.config(text=f"{count:,}", width=len(total_text))
+                total_label.config(text=f" / {total_text}")
                 percent_label.config(text=f"{pct:.1f}%")
+                # Measure speed only over work done since this stage's first
+                # report. A resumed run starts counting at the first missing
+                # frame, so count / elapsed would credit the frames that were
+                # already there to this run and report far too little time.
+                start_count, start_s = stage_starts.setdefault(stage, (count, elapsed_s))
+                done = count - start_count
                 eta_s = None
-                if count > 0:
-                    rate = elapsed_s / count
+                if done > 0 and elapsed_s > start_s:
+                    rate = (elapsed_s - start_s) / done
                     eta_s = max(0.0, (total - count) * rate)
                 elapsed_label.config(text=self._format_duration(elapsed_s))
                 eta_label.config(text=self._format_duration(eta_s))
@@ -1523,7 +1548,7 @@ class LabelingApp(tk.Tk):
                 win.after(FRAME_PREPARATION_POLL_MS, poll)
 
             win.protocol("WM_DELETE_WINDOW", cancel)
-            win.grab_set()
+            window_reveal.modal_grab(win)
             frame_job.start()
             win.after(FRAME_PREPARATION_POLL_MS, poll)
             # Tk continues handling input while the Python load flow waits.
@@ -1548,8 +1573,7 @@ class LabelingApp(tk.Tk):
     def _run_export_with_progress(self, export_fn):
         """Run a full export off the Tk thread while a modal stays responsive."""
         self._assert_ui_thread()
-        win = tk.Toplevel(self)
-        win.withdraw()  # stay hidden until centered, or Windows maps it at +0+0
+        win = tk.Toplevel(self)   # hidden until settled and centred (gui.window_reveal)
         win.title("Saving Data")
         win.geometry(f"{theme.px(PROGRESS_WINDOW_W)}x{theme.px(EXPORT_WINDOW_H)}")
         win.resizable(False, False)
@@ -1562,7 +1586,11 @@ class LabelingApp(tk.Tk):
         ttk.Label(content, text="Building full export...", font=theme.FONT_TITLE).pack(
             pady=(2, 8)
         )
-        status = ttk.Label(content, text="Writing export snapshot", font=theme.FONT_BASE)
+        # A fixed character width: the elapsed digits are proportional in the UI
+        # font, so the label would otherwise resize (and re-centre) every second.
+        status_text = f"Writing export snapshot - elapsed {self._format_duration(0)}"
+        status = ttk.Label(content, text=status_text, font=theme.FONT_BASE,
+                           width=len(status_text) + EXPORT_STATUS_SLACK_CHARS, anchor="center")
         status.pack()
         bar = ttk.Progressbar(
             content,
@@ -1571,9 +1599,8 @@ class LabelingApp(tk.Tk):
         )
         bar.pack(pady=10)
         bar.start(12)
-        center_over_parent(win, self)
-        win.deiconify()
-        win.grab_set()  # after deiconify so the grab never hits an unmapped window (Linux)
+        window_reveal.place_on_reveal(win, lambda: center_over_parent(win, self))
+        window_reveal.modal_grab(win)
 
         started = time.perf_counter()
         result = {}
@@ -2495,10 +2522,12 @@ class LabelingApp(tk.Tk):
         self._set_mode_button_states()
 
     def load_video(self):
-        """Load Video button. Suspends the buffer/playback workers for the
-        whole swap so they can never observe a half-published video, then
-        wakes them once the load fully finished (successfully or not — an
-        aborted load ends with video=None, which keeps them idle anyway)."""
+        """Load Video button. Suspends the buffer/playback workers until the
+        new video is fully published so they can never observe a
+        half-published one (_publish_loaded_video wakes them itself, so the
+        first frame can be painted while the content swap still covers the
+        window), and wakes them once the load finished (successfully or not —
+        an aborted load ends with video=None, which keeps them idle anyway)."""
         self._suspend_frame_workers = True
         try:
             self._load_video_flow()
@@ -2537,16 +2566,16 @@ class LabelingApp(tk.Tk):
             candidate_paths = choice.paths
             mode = "Reliability" if candidate_paths.is_reliability else "Normal"
         try:
-            setup, ready, inherited = project_service.inspect_coding_setup(candidate_paths)
+            setup, ready = project_service.inspect_coding_setup(candidate_paths)
             state = SqliteRepository.inspect_template(candidate_paths.state_db)
-            if not ready and not inherited and not project_service.can_resume_preparation(candidate_paths):
+            if not ready and not project_service.can_resume_preparation(candidate_paths):
                 if os.path.exists(candidate_paths.state_db):
                     messagebox.showinfo("Review coding setup", project_service.coding_setup_warning(candidate_paths), parent=self)
                 setup = configure_video(self, setup, center=center_over_parent, locked_template=bool(state and state.locked))
                 if setup is None:
                     return
             if setup is None:
-                raise ValueError("Review and prepare the original project's coding setup first.")
+                raise ValueError("Review and prepare this video's coding setup first.")
             template_plan = project_service.plan_project_template(candidate_paths, setup.template)
             project_service.validate_source_association(candidate_paths, video_path)
         except (ValueError, RuntimeError, OSError, sqlite3.Error) as exc:
@@ -2647,14 +2676,6 @@ class LabelingApp(tk.Tk):
         finally:
             data_progress_close()
 
-        # Names for parameters (update button text)
-        load_parameter_names_into(
-            video,
-            {1: self.par1_btn, 2: self.par2_btn, 3: self.par3_btn},
-            {1: self.limb_par1_btn, 2: self.limb_par2_btn, 3: self.limb_par3_btn},
-            setup=getattr(self, "coding_setup", None),
-        )
-
         # Frames generation/check
         logger.debug("checking frames folder: %s", paths.frames_dir)
         if not ready or not project_service.frames_ready(paths, video.total_frames):
@@ -2692,9 +2713,37 @@ class LabelingApp(tk.Tk):
             self._abort_load_to_clean_state()
             return
 
-        # 5) COMMIT POINT: the state DB is open, the frames exist on disk.
-        #    Publish the new session to the rest of the app — the worker
-        #    threads start seeing this video from this line on.
+        # 5) COMMIT POINT: the state DB is open, the frames exist on disk, and
+        #    every dialog of the load (library, wizard, progress windows) is
+        #    closed. Rebuild the main window for the new video behind a cover
+        #    that stays until its first frame is painted, so the window
+        #    switches from the old picture to the finished one in one step.
+        #    The cover drops at the timeout if the frame is late, if the
+        #    publish raises, or if a dialog or message box activates meanwhile.
+        content_swap.swap_content(
+            self, lambda: self._publish_loaded_video(video, video_name),
+            ready=lambda: self._first_frame_shown(video),
+            timeout_ms=LOAD_FIRST_FRAME_TIMEOUT_MS,
+        )
+
+    def _first_frame_shown(self, video):
+        """The load's swap may end: `video`'s current frame is on screen, or
+        `video` is no longer the published one (closed or replaced)."""
+        return self.video is not video or self.displayed_frame == video.current_frame
+
+    def _publish_loaded_video(self, video, video_name):
+        """Publish the loaded session to the app and rebuild the window for it.
+
+        Runs inside the load's content swap. The frame workers stay suspended
+        until the last lines, so they never see a half-published session.
+        """
+        # Names for parameters (update button text)
+        load_parameter_names_into(
+            video,
+            {1: self.par1_btn, 2: self.par2_btn, 3: self.par3_btn},
+            {1: self.limb_par1_btn, 2: self.limb_par2_btn, 3: self.limb_par3_btn},
+            setup=getattr(self, "coding_setup", None),
+        )
         self.video = video
         self.video_name = video_name
         self._prepare_video_renderer()
@@ -2749,6 +2798,10 @@ class LabelingApp(tk.Tk):
             self.frame_rate,
             video.current_frame,
         )
+        # Fully published: let the workers decode and paint the first frame
+        # now; the swap's cover waits for that paint.
+        self._suspend_frame_workers = False
+        self.frame_buffer.poke()
 
     # === Special Zones Side Window =============================================
     def open_special_zones_app(self):

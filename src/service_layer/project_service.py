@@ -136,7 +136,6 @@ def copy_file_with_progress(src_path, dest_path, progress_cb, chunk_size=8 * 102
 @dataclass(frozen=True)
 class TemplatePlan:
     template: str
-    linked_project: ProjectPaths | None
 
 
 def _existing_template(paths: ProjectPaths) -> TemplateState | None:
@@ -152,35 +151,15 @@ def _existing_template(paths: ProjectPaths) -> TemplateState | None:
 
 
 def plan_project_template(paths: ProjectPaths, selected: str) -> TemplatePlan:
-    """Restore or inherit a current project's template without writing state."""
+    """Restore this pass's template or accept its explicit selection."""
     validate_template(selected)
-    twin = paths.original if paths.is_reliability else ProjectPaths.for_video(
-        paths.video_name, reliability=True, base_dir=paths.base_dir)
     own = _existing_template(paths)
-    other = _existing_template(twin)
-    if own and other and own.template != other.template:
-        raise ValueError("Normal and Reliability projects use different body templates. "
-                         "They cannot be linked; keep the projects separate and resolve their provenance first.")
-    chosen = own.template if own else other.template if other else selected
-    return TemplatePlan(chosen, twin if other else None)
+    return TemplatePlan(own.template if own else selected)
 
 
 def apply_project_template(repo: SqliteRepository, plan: TemplatePlan) -> None:
-    """Persist the selection and lock both projects when linking a pair."""
-    is_new = repo.load_template().template is None
-    selected = repo.load_template().choose(plan.template)
-    if not plan.linked_project:
-        repo.save_template(selected)
-        return
-    linked = SqliteRepository(plan.linked_project.state_db)
-    try:
-        inherited = linked.load_zone_display(plan.template) if is_new else None
-        # Selection and inherited names commit together, so a failed write
-        # cannot leave a half-initialized project that skips inheritance later.
-        repo.save_template(selected.lock(), zone_display=inherited)
-        linked.save_template(linked.load_template().choose(plan.template).lock())
-    finally:
-        linked.close()
+    """Persist only this pass's selection; preparation locks its setup later."""
+    repo.save_template(repo.load_template().choose(plan.template))
 
 
 def prepare_project(raw_video_name: str, labeling_mode: str) -> ProjectPaths:
@@ -322,31 +301,21 @@ def inspect_coding_setup(paths):
         return review.setup, not review.needs_review
     own, ready = read(paths)
     if own:
-        if paths.is_reliability:
-            original, original_ready = read(paths.original)
-            if original is None or not original_ready:
-                raise ValueError("Prepare the original coding setup before opening Reliability.")
-            if original != own:
-                raise ValueError("Normal and Reliability coding setups conflict. Resolve their provenance before opening them.")
-        else:
-            twin = ProjectPaths.for_video(paths.video_name, reliability=True, base_dir=paths.base_dir)
-            other, _ = read(twin)
-            if other is not None and other != own:
-                raise ValueError("Normal and Reliability coding setups conflict. Resolve their provenance before opening them.")
-        return own, ready, False
+        return own, ready
     if paths.is_reliability:
+        # A complete local Normal setup is only a wizard starting point.
+        # Missing or unfinished Normal projects never prevent a separate pass.
         original, original_ready = read(paths.original)
-        if not original_ready:
-            raise ValueError("Review and prepare the original video's coding setup before Reliability.")
-        return original, False, True
-    return default_coding_setup(), False, False
+        if original_ready:
+            return original, False
+    return default_coding_setup(), False
 
 
 def can_resume_preparation(paths):
     """A saved, accepted setup can resume without declaring its frames ready.
 
     Legacy projects and snapshots explicitly awaiting review still use the
-    wizard. Reliability eligibility continues to depend on actual readiness.
+    wizard. Each pass tracks preparation independently.
     """
     if not os.path.isfile(paths.state_db):
         return False

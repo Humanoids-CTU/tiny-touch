@@ -34,6 +34,8 @@ def main() -> None:
 
     enable_dpi_awareness()
     app = LabelingApp()
+    # On Windows the root is still withdrawn (gui.window_reveal): it now maps
+    # maximized directly, without a restore step or the maximize animation.
     # X11 uses a window attribute for the same maximized state as Windows.
     if app.tk.call("tk", "windowingsystem") == "x11":
         app.attributes("-zoomed", True)

@@ -10,7 +10,7 @@ offset by hand; "Skip and analyze" runs the analysis with the touch left out.
 import tkinter as tk
 from tkinter import ttk
 
-from gui import theme
+from gui import theme, window_reveal
 from gui.widgets import RoundedCard
 
 GO_TO_ONSET = "goto"
@@ -35,8 +35,7 @@ class OpenTouchesDialog:
     def __init__(self, parent, touches, channel_label, *, closing=False):
         self.result = None
         self.touches = list(touches)
-        win = self.win = tk.Toplevel(parent)
-        win.withdraw()
+        win = self.win = tk.Toplevel(parent)   # hidden until settled and centred
         win.title("Open touches")
         win.resizable(False, False)
         win.transient(parent)
@@ -98,12 +97,8 @@ class OpenTouchesDialog:
         win.bind("<Escape>", lambda _e: self._finish(None))
         win.protocol("WM_DELETE_WINDOW", lambda: self._finish(None))
 
-        win.update_idletasks()
-        field.fit()
-        win.update_idletasks()
-        _center_over(win, parent)
-        win.deiconify()
-        win.grab_set()
+        window_reveal.place_on_reveal(win, lambda: _center_over(win, parent))
+        window_reveal.modal_grab(win)
         self.listbox.focus_set()
         win.wait_window()
 

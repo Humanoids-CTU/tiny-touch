@@ -36,10 +36,10 @@ def test_catalog_and_resume_restore_setup_without_machine_preferences(tmp_path):
     assert entry.title == "clip"
     assert entry.source == str(source)
     assert entry.template == "general"
-    assert inspect_coding_setup(paths) == (setup, True, False)
+    assert inspect_coding_setup(paths) == (setup, True)
 
 
-def test_reliability_inherits_full_setup(tmp_path):
+def test_reliability_offers_local_setup_for_review(tmp_path):
     from dataclasses import replace
     normal = ProjectPaths("clip", str(tmp_path))
     Path(normal.state_dir).mkdir(parents=True)
@@ -49,7 +49,57 @@ def test_reliability_inherits_full_setup(tmp_path):
     repo.mark_prepared()
     repo.close()
     reliability = ProjectPaths.for_video("clip", reliability=True, base_dir=str(tmp_path))
-    assert inspect_coding_setup(reliability) == (setup, False, True)
+    assert inspect_coding_setup(reliability) == (setup, False)
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_reliability_without_normal_can_prepare_and_resume(tmp_path, prepared):
+    paths = ProjectPaths.for_video("clip", reliability=True, base_dir=str(tmp_path))
+    setup = default_coding_setup("general") if prepared else default_coding_setup()
+    if prepared:
+        repo = SqliteRepository(paths.state_db)
+        repo.save_coding_setup(setup)
+        repo.mark_prepared()
+        repo.close()
+    assert inspect_coding_setup(paths) == (setup, prepared)
+    assert not Path(paths.original.video_dir).exists()
+
+
+@pytest.mark.parametrize("local_normal", [False, True])
+def test_reliability_load_reviews_setup_before_copying(tmp_path, monkeypatch, local_normal):
+    """The load flow offers manual/import setup even when Normal is available."""
+    from types import SimpleNamespace
+    import labeling_app
+
+    paths = ProjectPaths.for_video("clip", reliability=True, base_dir=str(tmp_path))
+    if local_normal:
+        repo = SqliteRepository(paths.original.state_db)
+        repo.save_coding_setup(default_coding_setup())
+        repo.mark_prepared()
+        repo.close()
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*.db")}
+    entry = SimpleNamespace(source=str(tmp_path / "clip.mp4"), paths=paths)
+    monkeypatch.setattr(labeling_app, "list_projects", lambda: [entry])
+    monkeypatch.setattr(labeling_app, "choose_video", lambda *a, **kw: entry)
+    reviewed = []
+
+    def configure(parent, initial, **kwargs):
+        reviewed.append(initial)
+        # A manually chosen or imported template may differ from local Normal.
+        return default_coding_setup("general")
+
+    monkeypatch.setattr(labeling_app, "configure_video", configure)
+    monkeypatch.setattr(labeling_app.project_service, "DEFAULT_VIDEOS_DIR", str(tmp_path / "videos"))
+    errors = []
+    monkeypatch.setattr(labeling_app.messagebox, "showerror", lambda *a, **kw: errors.append(a))
+    copied = []
+    app = SimpleNamespace(_prepare_video_copy=lambda source: copied.append(source))
+    labeling_app.LabelingApp._load_video_flow(app)
+    assert reviewed == [default_coding_setup()]
+    assert copied == [entry.source]
+    assert errors == []
+    assert not Path(paths.video_dir).exists()
+    assert all(p.read_bytes() == content for p, content in before.items())
 
 
 def test_draft_setup_is_retryable_and_inspection_does_not_write(tmp_path):
@@ -60,7 +110,7 @@ def test_draft_setup_is_retryable_and_inspection_does_not_write(tmp_path):
     repo.save_coding_setup(setup)
     repo.close()
     before = Path(paths.state_db).read_bytes()
-    assert inspect_coding_setup(paths) == (setup, False, False)
+    assert inspect_coding_setup(paths) == (setup, False)
     assert Path(paths.state_db).read_bytes() == before
 
 
@@ -80,7 +130,7 @@ def test_source_overwritten_in_place_is_rejected(tmp_path):
 
 
 @pytest.mark.parametrize("opening_reliability", [False, True])
-def test_reliability_conflicting_snapshot_rejected(tmp_path, opening_reliability):
+def test_each_pass_restores_its_own_snapshot(tmp_path, opening_reliability):
     from dataclasses import replace
     for reliability in (False, True):
         paths = ProjectPaths.for_video("clip", reliability=reliability, base_dir=str(tmp_path))
@@ -92,8 +142,10 @@ def test_reliability_conflicting_snapshot_rejected(tmp_path, opening_reliability
         repo.save_coding_setup(setup)
         repo.mark_prepared()
         repo.close()
-    with pytest.raises(ValueError, match="conflict"):
-        inspect_coding_setup(ProjectPaths.for_video("clip", reliability=opening_reliability, base_dir=str(tmp_path)))
+        if reliability == opening_reliability:
+            expected = setup
+    assert inspect_coding_setup(ProjectPaths.for_video(
+        "clip", reliability=opening_reliability, base_dir=str(tmp_path))) == (expected, True)
 
 
 def test_catalog_corrupt_template_is_unavailable(tmp_path):

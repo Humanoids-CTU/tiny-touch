@@ -1,6 +1,5 @@
 """Zone aliases preserve annotation identities and stay local to each project/template."""
 import json
-import sqlite3
 from dataclasses import replace
 from pathlib import Path
 
@@ -68,7 +67,7 @@ def test_corrupt_saved_names_are_reported(tmp_path):
 
 
 @pytest.mark.parametrize("template,zone", [("default", "I"), ("alternate", "G"), ("general", "1")])
-def test_reliability_inherits_names_once_then_keeps_its_own_settings(tmp_path, template, zone):
+def test_reliability_keeps_its_own_zone_names(tmp_path, template, zone):
     original = ProjectPaths("video", base_dir=str(tmp_path))
     reliability = ProjectPaths("video_reliability", base_dir=str(tmp_path))
     source = SqliteRepository(original.state_db)
@@ -77,11 +76,11 @@ def test_reliability_inherits_names_once_then_keeps_its_own_settings(tmp_path, t
         source.save_zone_display(template, ZoneDisplaySettings({zone: "Source"}, True))
     finally:
         source.close()
-    plan = plan_project_template(reliability, "default")
+    plan = plan_project_template(reliability, template)
     repo = SqliteRepository(reliability.state_db)
     try:
         apply_project_template(repo, plan)
-        assert repo.load_zone_display(template) == ZoneDisplaySettings({zone: "Source"}, True)
+        assert repo.load_zone_display(template) == ZoneDisplaySettings()
         repo.save_zone_display(template, ZoneDisplaySettings({zone: "Second pass"}, False))
         apply_project_template(repo, plan_project_template(reliability, "default"))
         assert repo.load_zone_display(template).label(zone) == "Second pass"
@@ -112,7 +111,7 @@ def test_save_service_exports_aliases_without_changing_csv(tmp_path, template, z
     assert "Zone Labels" not in exported
 
 
-def test_failed_inheritance_does_not_leave_a_partly_initialized_project(tmp_path, monkeypatch):
+def test_reliability_preparation_does_not_modify_original_labels(tmp_path):
     original = ProjectPaths("video", base_dir=str(tmp_path))
     reliability = ProjectPaths("video_reliability", base_dir=str(tmp_path))
     source = SqliteRepository(original.state_db)
@@ -121,24 +120,13 @@ def test_failed_inheritance_does_not_leave_a_partly_initialized_project(tmp_path
         source.save_zone_display("general", ZoneDisplaySettings({"1": "Light on"}, True))
     finally:
         source.close()
-    plan = plan_project_template(reliability, "default")
+    before = Path(original.state_db).read_bytes()
+    plan = plan_project_template(reliability, "alternate")
     repo = SqliteRepository(reliability.state_db)
-    original_write = repo._set_meta_unlocked
-
-    def fail_on_names(key, value):
-        if key == "zone_display:general":
-            raise sqlite3.OperationalError("disk full")
-        original_write(key, value)
-
     try:
-        with monkeypatch.context() as patch:
-            patch.setattr(repo, "_set_meta_unlocked", fail_on_names)
-            with pytest.raises(sqlite3.OperationalError, match="disk full"):
-                apply_project_template(repo, plan)
-        assert repo.load_template() == TemplateState()
-        assert repo.load_zone_display("general") == ZoneDisplaySettings()
         apply_project_template(repo, plan)
-        assert repo.load_template() == TemplateState("general", True)
-        assert repo.load_zone_display("general").label("1") == "Light on"
+        assert repo.load_template() == TemplateState("alternate")
+        assert repo.load_zone_display("alternate") == ZoneDisplaySettings()
     finally:
         repo.close()
+    assert Path(original.state_db).read_bytes() == before

@@ -25,10 +25,9 @@ def test_accepted_setup_resumes_without_becoming_ready(tmp_path, state):
     finally:
         repo.close()
     assert project_service.can_resume_preparation(paths)
-    assert project_service.inspect_coding_setup(paths) == (setup, False, False)
+    assert project_service.inspect_coding_setup(paths) == (setup, False)
     reliability = ProjectPaths.for_video("clip", reliability=True, base_dir=str(tmp_path))
-    with pytest.raises(ValueError, match="original"):
-        project_service.inspect_coding_setup(reliability)
+    assert project_service.inspect_coding_setup(reliability) == (default_coding_setup(), False)
 
 
 def test_missing_frame_is_never_ready_even_with_matching_count(tmp_path):

@@ -4,7 +4,7 @@ from tkinter import ttk
 from PIL import Image, ImageTk
 
 from gui.resource_utils import asset_path
-from gui import theme
+from gui import theme, window_reveal
 from domain.touch import NO_ZONE
 from domain.zone_display import ZoneDisplaySettings
 from gui.diagram_highlight import DiagramHighlighter
@@ -123,20 +123,12 @@ class SpecialZonesApp:
             for x, y in initial_points:
                 self._create_dot(x, y)
 
-        # The card sizes itself to its content only once that content has a
-        # size, so lay out, fit the card, and lay out again before measuring.
-        self.top_level.update_idletasks()
-        self.canvas2_border.fit()
-        self.note_card.fit()
-        self.top_level.update_idletasks()
-        self._fit_window(master, center=True)
-        # Card sizes can still settle once the window is shown (fonts, styled
-        # entry): measure again then, before the window fades in, so the note
-        # card is never cut off.
-        self.top_level.after_idle(lambda: self._fit_window(master))
+        # Sized and centred on its settled content, before it is shown (window
+        # reveal), so the note card is never cut off.
+        window_reveal.place_on_reveal(self.top_level, lambda: self._fit_window(master, center=True))
         try:
-            self.top_level.grab_set()
-        except tk.TclError:  # not viewable yet on this window manager: usable, just not modal
+            window_reveal.modal_grab(self.top_level)
+        except tk.TclError:  # not viewable on this window manager: usable, just not modal
             logging.getLogger(__name__).warning("Special Zones window could not take the grab", exc_info=True)
 
     def _fit_window(self, master, center=False):

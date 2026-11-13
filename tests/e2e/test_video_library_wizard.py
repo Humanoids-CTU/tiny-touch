@@ -110,16 +110,26 @@ def test_library_missing_thumbnail_and_search(app):
         if window is None:
             app.after(20, inspect)
             return
-        assert find_widget(window, cls=ttk.Label, text="No thumbnail") is not None
-        search = next(widget for widget in walk(window) if isinstance(widget, ttk.Entry))
-        search.insert(0, "unmatched")
-        pump(app)
-        assert find_widget(window, cls=ttk.Label, text="No videos yet. Select Load new video to begin.") is not None
-        observed.append(True)
-        click(window, "Cancel")
+        try:   # always close: a failed check must not leave choose_video waiting
+            pump(app)
+            thumbnail = find_widget(window, cls=ttk.Label, text="No thumbnail")
+            empty = find_widget(window, cls=ttk.Label, text="No videos yet. Select Load new video to begin.")
+            observed.append(("start", thumbnail is not None and thumbnail.winfo_ismapped(),
+                             empty.winfo_ismapped()))
+            search = next(widget for widget in walk(window) if isinstance(widget, ttk.Entry))
+            search.insert(0, "unmatched")
+            pump(app)
+            # Rows are hidden, not rebuilt: the row is still there, just not shown.
+            observed.append(("unmatched", thumbnail.winfo_ismapped(), empty.winfo_ismapped()))
+            search.delete(0, "end")
+            pump(app)
+            observed.append(("cleared", thumbnail.winfo_ismapped(), empty.winfo_ismapped()))
+        finally:
+            click(window, "Cancel")
     app.after(20, inspect)
     assert choose_video(app, [entry]) is None
-    assert observed
+    # (stage, row shown, "No videos yet" shown)
+    assert observed == [("start", True, False), ("unmatched", False, True), ("cleared", True, False)]
 
 
 def test_general_zone_review_lists_channel_boxes_as_editable_zones(app):

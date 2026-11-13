@@ -13,7 +13,7 @@ from adapters import config
 from adapters.config import MIN_VIDEO_DOWNSCALE
 from domain.templates import TEMPLATE_LABELS
 from domain.zone_display import ZoneDisplaySettings
-from gui import theme
+from gui import theme, window_reveal
 from gui.widgets import GroupedList, SegmentedControl, Switch
 
 annotation_logger = logging.getLogger("annot")
@@ -46,10 +46,23 @@ TOGGLE_MIN_SEG = 84              # two-option toggles: roomy segments, like the 
 
 
 def center_over_parent(window, parent) -> None:
-    """Place a realized dialog in the center of its parent window."""
+    """Place a realized dialog in the center of its parent window.
+
+    A dialog larger than its parent (e.g. the video library at high display
+    scaling) is centered on the screen instead: centered over the parent it
+    would start off-screen and be clamped into the top-left corner.
+    """
     window.update_idletasks()
-    x = parent.winfo_rootx() + (parent.winfo_width() - window.winfo_width()) // 2
-    y = parent.winfo_rooty() + (parent.winfo_height() - window.winfo_height()) // 2
+    win_w, win_h = window.winfo_width(), window.winfo_height()
+    screen_w, screen_h = window.winfo_screenwidth(), window.winfo_screenheight()
+    parent_w, parent_h = parent.winfo_width(), parent.winfo_height()
+    if win_w > parent_w or win_h > parent_h:
+        x, y = (screen_w - win_w) // 2, (screen_h - win_h) // 2
+    else:
+        x = parent.winfo_rootx() + (parent_w - win_w) // 2
+        y = parent.winfo_rooty() + (parent_h - win_h) // 2
+    x = min(x, screen_w - win_w)
+    y = min(y, screen_h - win_h)
     window.geometry(f"+{max(0, x)}+{max(0, y)}")
 
 
@@ -69,8 +82,7 @@ def _footer(content, top_gap=FOOTER_GAP):
 
 def custom_confirm_close(root) -> bool:
     px = theme.px
-    win = tk.Toplevel(root)
-    win.withdraw()
+    win = tk.Toplevel(root)   # hidden until settled and centred (gui.window_reveal)
     win.title("Close Application")
     win.resizable(False, False)
     win.transient(root)
@@ -96,9 +108,8 @@ def custom_confirm_close(root) -> bool:
     ttk.Button(foot, text="Cancel", command=win.destroy, style="Tool.TButton", takefocus=0).pack(
         side="right", padx=(0, px(BUTTON_GAP)))
     win.protocol("WM_DELETE_WINDOW", win.destroy)
-    center_over_parent(win, root)
-    win.deiconify()
-    win.grab_set()  # modal; after deiconify so the grab never hits an unmapped window (Linux)
+    window_reveal.place_on_reveal(win, lambda: center_over_parent(win, root))
+    window_reveal.modal_grab(win)
     win.wait_window()
     return confirmed
 
@@ -115,7 +126,6 @@ def ask_labeling_mode(app):
     """
     px = theme.px
     mode_window = tk.Toplevel(app)
-    mode_window.withdraw()
     mode_window.title("Select Mode")
     mode_window.resizable(False, False)
     mode_window.transient(app)
@@ -143,9 +153,8 @@ def ask_labeling_mode(app):
 
     foot = _footer(content, top_gap=18)
     ttk.Button(foot, text="Continue", command=set_mode, style="Primary.TButton", takefocus=0).pack(side="right")
-    center_over_parent(mode_window, app)
-    mode_window.deiconify()
-    mode_window.grab_set()
+    window_reveal.place_on_reveal(mode_window, lambda: center_over_parent(mode_window, app))
+    window_reveal.modal_grab(mode_window)
     mode_window.wait_window()
     return chosen["mode"]
 
@@ -175,7 +184,6 @@ def open_settings(app):
     px = theme.px
     cfg = config.load_config()
     win = tk.Toplevel(app)
-    win.withdraw()   # shown centred once built
     win.title("Settings")
     win.resizable(False, False)
     win.transient(app)
@@ -367,9 +375,7 @@ def open_settings(app):
     logs_link.bind("<Button-1>", lambda _event: app._open_logs_folder())
     ttk.Button(foot, text="Save", command=lambda: apply_settings(close=True),
                style="Primary.TButton", takefocus=0).pack(side="right")
-    center_over_parent(win, app)
-    win.deiconify()
+    window_reveal.place_on_reveal(win, lambda: center_over_parent(win, app))
     # Shown after being built hidden: take the keyboard focus explicitly, or
     # typing keeps going to the main window.
-    win.lift()
-    win.focus_force()
+    window_reveal.on_reveal(win, lambda: (win.lift(), win.focus_force()))

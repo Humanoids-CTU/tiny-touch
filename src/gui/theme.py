@@ -20,6 +20,7 @@ from tkinter import TclError, ttk
 
 from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
+from gui import window_reveal
 from gui.native_title_bar import apply_title_bar, round_popup
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,9 @@ IMAGE_CACHE_SIZE = 512
 
 FONT_FAMILY_CANDIDATES = ("Segoe UI Variable Text", "Segoe UI")                   # else TkDefaultFont's family
 FONT_MEDIUM_CANDIDATES = ("Segoe UI Variable Text Semibold", "Segoe UI Semibold")  # else family + "bold"
+# Live counters need equal-width (tabular) digits or they wiggle as they change.
+# Segoe UI Variable's digits are proportional; classic Segoe UI's are not.
+FONT_NUMERIC_CANDIDATES = ("Segoe UI", "Arial", "DejaVu Sans")                    # else FONT_FAMILY
 
 # Kept for timelines: parameter ticks are 1 px and dashed so a parameter OFF
 # can never be mistaken for a touch OFF.
@@ -129,6 +133,9 @@ FONT_BOLD = FONT_MEDIUM
 FONT_LINK = FONT_BASE
 FONT_SUBTITLE = FONT_SMALL
 FONT_DIALOG_TITLE = FONT_TITLE
+FONT_NUMERIC_FAMILY = FONT_FAMILY
+FONT_NUMERIC_SMALL = (FONT_NUMERIC_FAMILY, 9)
+FONT_NUMERIC_MEDIUM = (FONT_NUMERIC_FAMILY, 10, "bold")
 
 _root = None
 _generation = 0
@@ -172,9 +179,13 @@ def _resolve_fonts(root):
     global FONT_FAMILY, FONT_MEDIUM_FAMILY, FONT_BASE, FONT_SMALL, FONT_MEDIUM
     global FONT_SMALL_MEDIUM, FONT_SECTION, FONT_TITLE, FONT_BOLD, FONT_LINK
     global FONT_SUBTITLE, FONT_DIALOG_TITLE
+    global FONT_NUMERIC_FAMILY, FONT_NUMERIC_SMALL, FONT_NUMERIC_MEDIUM
     families = set(tkfont.families(root))
     default_family = tkfont.nametofont("TkDefaultFont", root=root).actual("family")
     FONT_FAMILY = next((f for f in FONT_FAMILY_CANDIDATES if f in families), default_family)
+    FONT_NUMERIC_FAMILY = next((f for f in FONT_NUMERIC_CANDIDATES if f in families), FONT_FAMILY)
+    FONT_NUMERIC_SMALL = (FONT_NUMERIC_FAMILY, 9)
+    FONT_NUMERIC_MEDIUM = (FONT_NUMERIC_FAMILY, 10, "bold")
     FONT_MEDIUM_FAMILY = next((f for f in FONT_MEDIUM_CANDIDATES if f in families), None)
     FONT_BASE, FONT_SMALL = ui_font(10), ui_font(9)
     FONT_MEDIUM, FONT_SMALL_MEDIUM = ui_font(10, True), ui_font(9, True)
@@ -505,6 +516,7 @@ def init_style(root, appearance="light"):
     except Exception:
         logger.debug("app icon unavailable", exc_info=True)
     root.bind_all("<Map>", _on_window_map, add="+")
+    window_reveal.install(root)   # every Toplevel appears once, settled
     apply_appearance(root, style, appearance)
     return style
 

@@ -50,18 +50,19 @@ def test_saved_project_overrides_new_project_preference(tmp_path, template):
 
 @pytest.mark.parametrize("template", [ALTERNATE_TEMPLATE, GENERAL_TEMPLATE])
 @pytest.mark.parametrize("first_mode", ["Normal", "Reliability"])
-def test_reliability_inherits_and_locks_both_passes(tmp_path, template, first_mode):
+def test_each_pass_uses_explicit_selection_without_changing_other_pass(tmp_path, template, first_mode):
     normal = project(tmp_path)
     reliability = project(tmp_path, "baby_reliability")
     first, paths = (normal, reliability) if first_mode == "Normal" else (reliability, normal)
     create(first, template)
+    before = Path(first.state_db).read_bytes()
     plan = plan_project_template(paths, DEFAULT_TEMPLATE)
-    assert plan.template == template
+    assert plan.template == DEFAULT_TEMPLATE
     repo = SqliteRepository(paths.state_db)
     apply_project_template(repo, plan)
     repo.close()
-    for candidate in (normal, reliability):
-        assert SqliteRepository.inspect_template(candidate.state_db) == TemplateState(template, True)
+    assert SqliteRepository.inspect_template(paths.state_db) == TemplateState(DEFAULT_TEMPLATE)
+    assert Path(first.state_db).read_bytes() == before
 
 
 @pytest.mark.parametrize("template", [ALTERNATE_TEMPLATE, GENERAL_TEMPLATE])
@@ -69,17 +70,15 @@ def test_reliability_without_original_uses_explicit_selection(tmp_path, template
     paths = project(tmp_path, "baby_reliability")
     plan = plan_project_template(paths, template)
     assert plan.template == template
-    assert plan.linked_project is None
 
 
 @pytest.mark.parametrize("template", [ALTERNATE_TEMPLATE, GENERAL_TEMPLATE])
-def test_conflicting_passes_are_rejected_without_changes(tmp_path, template):
+def test_different_templates_can_resume_without_changes(tmp_path, template):
     paths = project(tmp_path, "baby_reliability")
     create(paths)
     create(paths.original, template)
     before = {p.state_db: open(p.state_db, "rb").read() for p in (paths, paths.original)}
-    with pytest.raises(ValueError, match="different body templates"):
-        plan_project_template(paths, DEFAULT_TEMPLATE)
+    assert plan_project_template(paths, DEFAULT_TEMPLATE).template == DEFAULT_TEMPLATE
     assert all(open(path, "rb").read() == contents for path, contents in before.items())
 
 

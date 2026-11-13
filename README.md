@@ -153,7 +153,10 @@ Open `master_infant_042.html` to view it again, or share the whole `plots/` fold
 ## Reliability between two coders
 
 For a second coder's pass, load the same video and choose **Reliability**.
-The new pass inherits the original's complete coding setup.
+The Normal project does not need to be on the same computer. Import a shared
+coding configuration or choose the setup manually. If a prepared Normal project
+is available locally, its setup is offered as an editable starting point.
+Researchers are responsible for choosing compatible setups for comparison.
 TinyTouch adds `_reliability` to the project and output names, keeping the two
 coders' labels separate. Compare the two exports in your own analysis to measure
 agreement between coders. TinyTouch does not calculate reliability itself.

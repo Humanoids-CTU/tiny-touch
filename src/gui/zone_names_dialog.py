@@ -3,7 +3,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from domain.zone_display import ZoneDisplaySettings
-from gui import theme
+from gui import theme, window_reveal
 from gui.widgets import RoundedCard
 
 # Design px (scaled with theme.px at build time).
@@ -15,8 +15,7 @@ TEXT_WRAP = 400
 
 
 def edit_zone_names(parent, zone_ids, settings, on_apply, *, center=None):
-    win = tk.Toplevel(parent)
-    win.withdraw()
+    win = tk.Toplevel(parent)   # hidden until settled and centred
     win.title("Zone names")
     win.transient(parent)
     px = theme.px
@@ -86,7 +85,6 @@ def edit_zone_names(parent, zone_ids, settings, on_apply, *, center=None):
     ttk.Button(buttons, text="Apply", command=apply, style="Primary.TButton").pack(side="right", padx=theme.toolbar_padx())
     win.bind("<Escape>", lambda event: win.destroy())
     if center:
-        center(win, parent)
-    win.deiconify()
-    win.grab_set()
+        window_reveal.place_on_reveal(win, lambda: center(win, parent))
+    window_reveal.modal_grab(win)
     win.wait_window()

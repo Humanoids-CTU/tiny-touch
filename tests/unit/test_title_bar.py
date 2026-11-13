@@ -93,3 +93,37 @@ def test_unsupported_windows_attributes_leave_app_usable(monkeypatch, caplog):
             background="#24282f", foreground="#e4e8ef",
         )
     assert "title bar" in caplog.text.lower()
+
+
+@pytest.mark.parametrize("cloaked", (True, False))
+def test_cloak_sets_the_dwm_cloak_attribute_on_the_native_frame(monkeypatch, cloaked):
+    from gui import native_title_bar
+
+    calls = []
+
+    def set_attribute(hwnd, attribute, pointer, size):
+        calls.append((hwnd, attribute, ctypes.cast(pointer, ctypes.POINTER(ctypes.c_uint32)).contents.value))
+        return 0
+
+    monkeypatch.setattr(native_title_bar.sys, "platform", "win32")
+    monkeypatch.setattr(native_title_bar, "_windows_api", lambda: (lambda hwnd, flag: 0x123456789, set_attribute))
+    assert native_title_bar.set_cloaked(SimpleNamespace(winfo_id=lambda: 42), cloaked)
+    assert calls == [(0x123456789, native_title_bar.DWMWA_CLOAK, int(cloaked))]
+
+
+def test_cloak_needs_the_native_frame(monkeypatch):
+    """Before the first map Tk's client window is its own root: nothing to cloak yet."""
+    from gui import native_title_bar
+
+    monkeypatch.setattr(native_title_bar.sys, "platform", "win32")
+    monkeypatch.setattr(native_title_bar, "_windows_api", lambda: (
+        lambda hwnd, flag: hwnd, lambda *a: pytest.fail("cloaked Tk's client window")))
+    assert not native_title_bar.set_cloaked(SimpleNamespace(winfo_id=lambda: 42), True)
+
+
+def test_cloak_is_a_no_op_off_windows(monkeypatch):
+    from gui import native_title_bar
+
+    monkeypatch.setattr(native_title_bar.sys, "platform", "linux")
+    monkeypatch.setattr(native_title_bar, "_windows_api", lambda: pytest.fail("Windows DLL loaded on Linux"))
+    assert not native_title_bar.set_cloaked(None, True)

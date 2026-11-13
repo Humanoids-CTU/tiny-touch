@@ -21,6 +21,8 @@ Files containing both keys must give identical labels.
 
 Preparing a video stores an independent copy in its project database and locks
 it after successful frame extraction. Editing a file afterwards affects future
-videos. Reliability projects inherit the source video's entire coding setup.
+videos. Reliability projects can import a configuration or use manual setup,
+without a local Normal project. A prepared local Normal setup is offered only
+as an editable starting point.
 Old projects recover labels from their saved zone aliases and export metadata;
 missing historical parameter labels require explicit review.

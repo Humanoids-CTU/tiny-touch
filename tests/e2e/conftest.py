@@ -92,6 +92,11 @@ import pytest
 sys.path.insert(0, os.path.dirname(__file__))  # make `gui_driver` importable
 
 from gui_driver import pump  # noqa: E402
+from gui import window_reveal  # noqa: E402
+
+# Windows are hidden for the whole run (see hide_window); the app's reveal
+# (alpha 1 once settled) would make them visible again.
+window_reveal.REVEAL_WHEN_SETTLED = False
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 

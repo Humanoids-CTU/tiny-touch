@@ -44,6 +44,12 @@ class _Window:
     def winfo_rooty(self):
         return self.y
 
+    def winfo_screenwidth(self):
+        return 1920
+
+    def winfo_screenheight(self):
+        return 1080
+
     def geometry(self, value):
         self.geometry_value = value
 
@@ -55,6 +61,15 @@ def test_close_confirmation_is_centered_over_its_parent():
     labeling_app.center_over_parent(dialog, root)
 
     assert dialog.geometry_value == "+490+360"
+
+
+def test_dialog_larger_than_parent_is_centered_on_screen():
+    root = _Window(width=1200, height=800, x=0, y=0)
+    library = _Window(width=1290, height=975)
+
+    labeling_app.center_over_parent(library, root)
+
+    assert library.geometry_value == "+315+52"
 
 
 def test_video_picker_is_owned_by_main_window(monkeypatch):

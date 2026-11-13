@@ -1,5 +1,6 @@
 """Draft-only, reversible coding setup; no project is changed before confirmation."""
 from dataclasses import replace
+from functools import lru_cache
 from pathlib import Path
 from adapters import config
 import tkinter as tk
@@ -11,7 +12,7 @@ from domain.templates import TEMPLATE_LABELS
 from domain.zone_display import ZoneDisplaySettings
 from adapters.zone_masks import editable_zone_names, load_zone_masks, zone_label_positions, zones_dir
 from adapters.coding_configs import CodingConfigStore, validate_coding_setup
-from gui import theme
+from gui import content_swap, theme, window_reveal
 from gui.resource_utils import asset_path
 from gui.zone_labels import draw_zone_labels
 from domain.templates import get_template
@@ -38,6 +39,22 @@ def _scaled(size):
     return tuple(theme.px(value) for value in size)
 
 
+@lru_cache(maxsize=None)
+def _cached_zone_masks(template, zone_layout):
+    """Zone masks per template and layout, read once (reading takes ~100 ms)."""
+    masks = load_zone_masks(zones_dir(template), coding_setup=_LayoutOnly(zone_layout))
+    for _, pixels in masks:
+        pixels.flags.writeable = False   # shared between calls
+    return tuple(masks)
+
+
+class _LayoutOnly:
+    """The one coding-setup field ``load_zone_masks`` reads."""
+
+    def __init__(self, zone_layout):
+        self.zone_layout = zone_layout
+
+
 class CodingSetupWizard:
     def __init__(self, parent, initial=None, *, center=None, locked_template=False):
         self.parent = parent
@@ -46,7 +63,7 @@ class CodingSetupWizard:
         self.step = 0
         self.locked_template = locked_template
         self.store = CodingConfigStore(Path(config.get_config_path()).parent / "config")
-        self.win = tk.Toplevel(parent)
+        self.win = tk.Toplevel(parent)   # hidden until settled and centred
         self.win.title("Prepare video")
         self.win.transient(parent)
         theme.bind_colors(self.win, bg="WIN")
@@ -71,10 +88,10 @@ class CodingSetupWizard:
         self.win.bind("<Escape>", lambda e: self.win.destroy())
         self.render()
         if center:
-            center(self.win, parent)
+            window_reveal.place_on_reveal(self.win, lambda: center(self.win, parent))
 
     def run(self):
-        self.win.grab_set()
+        window_reveal.modal_grab(self.win)
         try:
             self.win.wait_window()
         finally:
@@ -113,7 +130,14 @@ class CodingSetupWizard:
     def _description(self, text):
         ttk.Label(self.content, text=text, wraplength=theme.px(DESCRIPTION_WRAP)).pack(anchor="w", pady=(0, theme.px(12)))
 
+    def zone_masks(self):
+        return _cached_zone_masks(self.setup.template, self.setup.zone_layout)
+
     def render(self):
+        # On screen, the old step stays visible until the new one is drawn.
+        content_swap.swap_content(self.win, self._render_step)
+
+    def _render_step(self):
         for child in self.content.winfo_children():
             child.destroy()
         self.error.configure(text="")
@@ -246,7 +270,7 @@ class CodingSetupWizard:
     def highlight_zone(self, zone):
         image = self._preview_image()
         if zone:
-            pixels = dict(load_zone_masks(zones_dir(self.setup.template), coding_setup=self.setup))[zone]
+            pixels = dict(self.zone_masks())[zone]
             mask = Image.fromarray(pixels).point(lambda value: 110 if value == 0 else 0)
             tint = Image.new("RGBA", image.size, theme.color("ACCENT"))
             image = Image.composite(tint, image, mask)
@@ -264,7 +288,7 @@ class CodingSetupWizard:
         canvas = tk.Canvas(parent, width=image.width, height=image.height, highlightthickness=0)
         theme.bind_colors(canvas, bg="DIAGRAM")
         canvas.create_image(0, 0, image=self.review_photo, anchor="nw", tags=("diagram",))
-        positions = zone_label_positions(load_zone_masks(zones_dir(self.setup.template), coding_setup=self.setup))
+        positions = zone_label_positions(self.zone_masks())
         draw_zone_labels(canvas, ZoneDisplaySettings(self.setup.zone_labels, show_names=True), positions, scale)
         return canvas
 
@@ -274,7 +298,7 @@ class CodingSetupWizard:
         image.thumbnail(_scaled(CHANNEL_PREVIEW_SIZE))
         selected = set(self.setup.channel_zones.get(channel, ()))
         combined = Image.new("L", image.size, 0)
-        for zone, pixels in load_zone_masks(zones_dir(self.setup.template), coding_setup=self.setup):
+        for zone, pixels in self.zone_masks():
             if zone in selected:
                 mask = Image.fromarray((pixels == 0).astype("uint8") * 255)
                 mask = mask.resize(image.size, Image.Resampling.NEAREST)

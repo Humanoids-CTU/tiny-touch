@@ -1,4 +1,4 @@
-"""Apply app colors to Windows-owned title bars; a no-op on other platforms."""
+"""Style and cloak Windows-owned window frames (DWM); a no-op on other platforms."""
 
 import ctypes
 from functools import cache
@@ -15,6 +15,7 @@ DWMWA_CAPTION_COLOR = 35
 DWMWA_TEXT_COLOR = 36
 DWMWA_BORDER_COLOR = 34
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
+DWMWA_CLOAK = 13                # hide from the compositor; the window stays mapped
 DWMWCP_ROUNDSMALL = 3           # Windows 11 menu-style rounded corners
 
 
@@ -53,6 +54,30 @@ def round_popup(window_id, border):
         return True
     except OSError as exc:
         logger.debug("Popup corner rounding unavailable: %s", exc)
+        return False
+
+
+def set_cloaked(window, cloaked):
+    """Hide (or show again) a Tk window in the compositor only (Windows 8+).
+
+    A cloaked window stays mapped, laid out, painted and focusable; DWM just
+    does not draw it, so neither half-built content nor the open/maximize
+    animations reach the screen. Unlike ``-alpha`` it never makes the window
+    a layered window. Returns False when unsupported (other platforms, or
+    the native frame does not exist yet).
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        ancestor, set_attribute = _windows_api()
+        client = window.winfo_id()
+        hwnd = ancestor(client, GA_ROOT)
+        if not hwnd or hwnd == client:   # Tk creates the native frame at the first map
+            return False
+        value = ctypes.c_uint32(1 if cloaked else 0)
+        return set_attribute(hwnd, DWMWA_CLOAK, ctypes.byref(value), ctypes.sizeof(value)) >= 0
+    except (OSError, TclError) as exc:
+        logger.debug("Window cloaking unavailable: %s", exc)
         return False
 
 
