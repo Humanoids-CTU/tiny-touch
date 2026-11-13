@@ -472,6 +472,7 @@ def _build_diagram_panel(app, scale):
         min_scale=lambda: min_diagram_scale(app),
         on_preview=app.preview_diagram_scale,
         on_commit=app.commit_diagram_scale,
+        card=app.diagram_card,
     )
 
     # Bind clicks on the diagram (these call back into the controller)

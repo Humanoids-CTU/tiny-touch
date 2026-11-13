@@ -48,8 +48,9 @@ def covers(root, monkeypatch):
     """Every swap gets a FakeCover; the list collects them."""
     made, log = [], []
 
-    def over(window):
+    def over(window, from_screen=False):
         made.append(FakeCover(log))
+        made[-1].from_screen = from_screen
         return made[-1]
     monkeypatch.setattr(content_swap, "IS_WINDOWS", True)
     monkeypatch.setattr(content_swap, "_opaque", lambda window: True)
@@ -150,8 +151,8 @@ def real_cover(root, monkeypatch):
     made = []
     real_over = content_swap._Cover.over
 
-    def over(window):
-        made.append(real_over(window))
+    def over(window, from_screen=False):
+        made.append(real_over(window, from_screen))
         return made[-1]
     monkeypatch.setattr(content_swap, "_opaque", lambda window: True)
     monkeypatch.setattr(content_swap._Cover, "over", staticmethod(over))
@@ -188,3 +189,9 @@ def test_real_cover_is_hidden_when_a_dialog_activates(root, real_cover):
     content_swap.swap_content(root, build, ready=lambda: False, timeout_ms=5000)
     assert seen == {"showing": False, "visible": False}
     assert time.perf_counter() - started < 5000 / 1000 / 2, "kept waiting after the cover was dropped"
+
+
+def test_from_screen_reaches_the_cover(root, covers):
+    content_swap.swap_content(root, lambda: None, from_screen=True)
+    content_swap.swap_content(root, lambda: None)
+    assert [cover.from_screen for cover in covers.made] == [True, False]

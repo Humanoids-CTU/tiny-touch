@@ -211,6 +211,37 @@ class RoundedCard(tk.Canvas):
         self._painted = None
         self.repaint()
 
+    def render(self, w, h):
+        """The card's background at ``w`` x ``h`` as an RGBA PIL image (no content).
+
+        The same nine-slice as ``repaint``, but transparent outside the card
+        (the shadow fades out over whatever lies below); used for previews
+        drawn outside Tk.
+        """
+        _, k, spec = self._template()
+        size, radius, fill, border, depth, margin = spec[:6]
+        tmpl = theme.rounded_image(size, size, radius, fill, border, depth, margin)
+        k = max(1, min(k, w // 2, h // 2))
+        image = Image.new("RGBA", (w, h), fill)
+        t = tmpl.width
+        mid = t // 2
+
+        def put(x, y, box, size=None):
+            part = tmpl.crop(box)
+            image.paste(part.resize(size, Image.Resampling.NEAREST) if size else part, (x, y))
+
+        put(0, 0, (0, 0, k, k))
+        put(w - k, 0, (t - k, 0, t, k))
+        put(0, h - k, (0, t - k, k, t))
+        put(w - k, h - k, (t - k, t - k, t, t))
+        if w - 2 * k > 0:
+            put(k, 0, (mid, 0, mid + 1, k), (w - 2 * k, k))
+            put(k, h - k, (mid, t - k, mid + 1, t), (w - 2 * k, k))
+        if h - 2 * k > 0:
+            put(0, k, (0, mid, k, mid + 1), (k, h - 2 * k))
+            put(w - k, k, (t - k, mid, t, mid + 1), (k, h - 2 * k))
+        return image
+
 
 # --- SegmentedControl ------------------------------------------------------------
 class SegmentedControl(tk.Canvas):

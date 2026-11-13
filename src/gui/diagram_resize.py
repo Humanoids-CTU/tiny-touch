@@ -4,18 +4,29 @@ The grip is a small rounded corner bracket drawn *on* the diagram canvas, in
 its bottom-left corner, as a transparent image: only the bracket shows, the
 diagram stays visible around it. It owns only the pointer handling: it turns
 a drag into a scale factor and hands that to the controller, which draws the
-diagram (`on_preview` during the drag, `on_commit` on release). Every stored
-coordinate stays in native diagram pixels, so the scale is purely a display
-choice.
+diagram (`on_commit` on release). Every stored coordinate stays in native
+diagram pixels, so the scale is purely a display choice.
+
+The diagram's width sets the width of the whole right column, so resizing the
+real canvas re-lays out the entire window (hundreds of ms per step). During
+the drag the window therefore stays as it is and a picture of the diagram card
+at the dragged size floats over it (`gui.floating_image`); on release the real
+layout changes once, behind a still picture of that preview
+(`content_swap.swap_content`), so the screen goes from the preview straight to
+the finished layout. Where the floating picture is unavailable (off Windows),
+`on_preview` redraws the real canvas during the drag instead.
 """
 
+import logging
 import sys
 import tkinter as tk
 from tkinter import TclError
 
 from PIL import Image, ImageDraw, ImageTk
 
-from gui import theme
+from gui import content_swap, floating_image, theme
+
+logger = logging.getLogger(__name__)
 
 GRIP_SIZE_PX = 16           # square bracket in the diagram's bottom-left corner
 GRIP_INSET_PX = 3           # gap between the bracket and the diagram's corner
@@ -27,6 +38,8 @@ GRIP_REST_COLOR_ROLE = "DIAGRAM_LINE"  # faint on the white diagram in both them
 GRIP_HOVER_COLOR_ROLE = "ACCENT"  # lit while the pointer is over it or dragging
 GRIP_TAG = "resize_grip"
 PREVIEW_INTERVAL_MS = 30    # drag motion is coalesced into one preview per interval
+FLOATING_PREVIEW = True     # False: resize the real canvas during the drag (slow relayout)
+FLOATING_PREVIEW_INTERVAL_MS = 8   # the floating picture is cheap: follow the pointer closely
 MIN_DIAGRAM_SCALE = 0.25
 MAX_DIAGRAM_SCALE = 3.0
 
@@ -79,7 +92,7 @@ class DiagramResizeGrip:
     """
 
     def __init__(self, canvas, *, native_size, get_scale, max_scale, on_preview, on_commit,
-                 min_scale=None):
+                 min_scale=None, card=None):
         self.canvas = canvas
         self._native_size = native_size
         self._get_scale = get_scale
@@ -87,6 +100,8 @@ class DiagramResizeGrip:
         self._min_scale = min_scale
         self._on_preview = on_preview
         self._on_commit = on_commit
+        self._card = card           # the RoundedCard around the canvas (floating preview)
+        self._preview = None        # _FloatingPreview while dragging, if available
         self._drag = None           # (x_root, y_root, scale) at button press
         self._pending = None        # latest scale not previewed yet
         self._preview_id = None
@@ -112,18 +127,21 @@ class DiagramResizeGrip:
         color = theme.color(role)
         key = (color, self._size)
         if key not in self._photos:
-            s, n = GRIP_SUPERSAMPLE, self._size
-            stroke = max(1.0, GRIP_STROKE_PX * theme.SCALE) * s
-            radius = theme.px(GRIP_CORNER_RADIUS_PX) * s
-            # An "L" with a rounded bend: the bottom-left corner of one rounded
-            # rectangle outline (twice the grip's size), so lines and arc share
-            # one stroke and join without a step. Transparent elsewhere.
-            big = Image.new("RGBA", (2 * n * s, 2 * n * s), (0, 0, 0, 0))
-            ImageDraw.Draw(big).rounded_rectangle(
-                [0, 0, 2 * n * s - 1, 2 * n * s - 1], radius=radius, outline=color, width=round(stroke))
-            img = big.crop((0, n * s, n * s, 2 * n * s)).resize((n, n), Image.Resampling.LANCZOS)
-            self._photos[key] = ImageTk.PhotoImage(img, master=self.canvas)
+            self._photos[key] = ImageTk.PhotoImage(self._image(color), master=self.canvas)
         return self._photos[key]
+
+    def _image(self, color):
+        """The bracket in ``color`` as an RGBA PIL image, transparent around it."""
+        s, n = GRIP_SUPERSAMPLE, self._size
+        stroke = max(1.0, GRIP_STROKE_PX * theme.SCALE) * s
+        radius = theme.px(GRIP_CORNER_RADIUS_PX) * s
+        # An "L" with a rounded bend: the bottom-left corner of one rounded
+        # rectangle outline (twice the grip's size), so lines and arc share
+        # one stroke and join without a step. Transparent elsewhere.
+        big = Image.new("RGBA", (2 * n * s, 2 * n * s), (0, 0, 0, 0))
+        ImageDraw.Draw(big).rounded_rectangle(
+            [0, 0, 2 * n * s - 1, 2 * n * s - 1], radius=radius, outline=color, width=round(stroke))
+        return big.crop((0, n * s, n * s, 2 * n * s)).resize((n, n), Image.Resampling.LANCZOS)
 
     def _origin(self):
         """Top-left of the grip image in canvas coordinates."""
@@ -198,13 +216,38 @@ class DiagramResizeGrip:
             return
         self._pending = self._scale_for(event)
         if self._preview_id is None:
-            self._preview_id = self.canvas.after(PREVIEW_INTERVAL_MS, self._flush_preview)
+            floating = self._preview is not None or self._floating_wanted()
+            interval = FLOATING_PREVIEW_INTERVAL_MS if floating else PREVIEW_INTERVAL_MS
+            self._preview_id = self.canvas.after(interval, self._flush_preview)
+
+    def _floating_wanted(self):
+        return FLOATING_PREVIEW and self._card is not None and floating_image.available()
+
+    def _display_size(self, scale):
+        base_w, base_h = self._native_size()
+        return int(base_w * scale), int(base_h * scale)
 
     def _flush_preview(self):
         self._preview_id = None
         scale, self._pending = self._pending, None
-        if scale is not None and self._drag is not None:
-            self._on_preview(scale)
+        if scale is None or self._drag is None:
+            return
+        if self._preview is None and self._floating_wanted():
+            try:
+                grip = self._image(theme.color(GRIP_HOVER_COLOR_ROLE))
+                self._preview = _FloatingPreview(self.canvas, self._card, grip, self._origin())
+            except (OSError, TclError, ValueError):
+                logger.debug("floating diagram preview unavailable; resizing in place", exc_info=True)
+                self._card = None   # do not retry on every motion
+        if self._preview is not None:
+            try:
+                self._preview.update(*self._display_size(scale))
+                return
+            except (OSError, TclError, ValueError):
+                logger.debug("floating diagram preview failed; resizing in place", exc_info=True)
+                self._preview.close()
+                self._preview, self._card = None, None
+        self._on_preview(scale)
 
     def _on_release(self, event):
         if self._drag is None:
@@ -215,8 +258,83 @@ class DiagramResizeGrip:
         self._pending = None
         scale = self._scale_for(event)
         self._drag = None
+        preview, self._preview = self._preview, None
+        if preview is None:
+            self._commit(scale, event)
+            return
+        try:
+            preview.update(*self._display_size(scale))   # the released size, not the last coalesced one
+        except (OSError, TclError, ValueError):
+            logger.debug("floating diagram preview failed on release", exc_info=True)
+
+        def build():
+            preview.close()
+            self._commit(scale, event)
+
+        # One step from the preview to the finished layout: the cover is a copy
+        # of the screen (the preview and the GPU-drawn video included) while
+        # the window re-lays out underneath.
+        content_swap.swap_content(self.canvas, build, from_screen=True)
+
+    def _commit(self, scale, event):
         self._hover = self.hit(event)
         if not self._hover:
             self._set_cursor("")
         self._on_commit(scale)
         self._place()
+
+
+class _FloatingPreview:
+    """The diagram card at a dragged size, floating over its top-right corner.
+
+    The right column is anchored at its top-right, so that corner of the card
+    stays put whatever the scale. The picture covers the old card too (in the
+    window colour where the smaller new card does not reach), so the real card
+    never shows beside it. The diagram is a snapshot taken at the press,
+    scaled (labels and dots included); the grip is redrawn crisp at its corner.
+    """
+
+    def __init__(self, canvas, card, grip_image, grip_origin):
+        self.canvas, self.card = canvas, card
+        canvas.itemconfigure(GRIP_TAG, state="hidden")   # redrawn crisp on the picture
+        canvas.update_idletasks()
+        try:
+            self.diagram = floating_image.grab(canvas)
+            self.window = floating_image.FloatingImage(canvas)
+        except BaseException:
+            canvas.itemconfigure(GRIP_TAG, state="normal")
+            raise
+        card_x, card_y = card.winfo_rootx(), card.winfo_rooty()
+        self.old_w, self.old_h = card.winfo_width(), card.winfo_height()
+        self.right, self.top = card_x + self.old_w, card_y
+        self.pad_left = canvas.winfo_rootx() - card_x
+        self.pad_top = canvas.winfo_rooty() - card_y
+        self.pad_right = self.right - canvas.winfo_rootx() - canvas.winfo_width()
+        self.pad_bottom = card_y + self.old_h - canvas.winfo_rooty() - canvas.winfo_height()
+        self.grip = grip_image
+        self.grip_inset = grip_origin[0]
+        self.background = theme.color(card.outer)
+        
+    def update(self, width, height):
+        """Show the card with a ``width`` x ``height`` diagram."""
+        card_w = width + self.pad_left + self.pad_right
+        card_h = height + self.pad_top + self.pad_bottom
+        full_w, full_h = max(card_w, self.old_w), max(card_h, self.old_h)
+        # Transparent except the old card's area (window colour: the real card
+        # must not show beside a smaller preview) and the new card, whose
+        # shadow fades out over whatever lies below (the video when growing).
+        image = Image.new("RGBA", (full_w, full_h), (0, 0, 0, 0))
+        image.paste(self.background, (full_w - self.old_w, 0, full_w, self.old_h))
+        image.alpha_composite(self.card.render(card_w, card_h), (full_w - card_w, 0))
+        left = full_w - card_w + self.pad_left
+        image.paste(self.diagram.resize((width, height), Image.Resampling.BILINEAR), (left, self.pad_top))
+        grip_y = self.pad_top + height - self.grip_inset - self.grip.height
+        image.paste(self.grip, (left + self.grip_inset, grip_y), self.grip)
+        self.window.show(image, self.right - full_w, self.top)
+
+    def close(self):
+        self.window.close()
+        try:
+            self.canvas.itemconfigure(GRIP_TAG, state="normal")
+        except TclError:
+            pass

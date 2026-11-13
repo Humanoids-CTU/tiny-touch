@@ -46,7 +46,7 @@ IS_WINDOWS = sys.platform == "win32"
 _active = False              # a swap is running (a nested one only rebuilds)
 
 
-def swap_content(widget, build, *, ready=None, timeout_ms=SWAP_READY_TIMEOUT_MS):
+def swap_content(widget, build, *, ready=None, timeout_ms=SWAP_READY_TIMEOUT_MS, from_screen=False):
     """Run ``build()`` so that ``widget``'s window shows only the old or the new content.
 
     ``ready``, if given, is a predicate for work that settling does not wait
@@ -55,13 +55,19 @@ def swap_content(widget, build, *, ready=None, timeout_ms=SWAP_READY_TIMEOUT_MS)
     hold, so it is not waited for), or until the cover was dropped because
     another window was activated. ``build`` and ``ready`` exceptions propagate
     after the cover is removed. Returns what ``build`` returns.
+
+    ``from_screen`` copies the cover from the screen instead of the window's
+    own surface: it then includes GPU-drawn content (the video, which the
+    window surface lacks) and windows floating above (a drag preview that
+    ``build`` closes). Anything else overlapping the window is frozen in too,
+    so use it only for the main window during its own interaction.
     """
     global _active
     window = widget.winfo_toplevel()
     if _active or not window.winfo_viewable() or window_reveal.is_pending(window):
         return build()
     _active = True
-    cover = _Cover.over(window) if SWAP_COVER and IS_WINDOWS and _opaque(window) else None
+    cover = _Cover.over(window, from_screen) if SWAP_COVER and IS_WINDOWS and _opaque(window) else None
     try:
         result = build()
         if window.winfo_exists():
@@ -194,7 +200,7 @@ def _win32():
 class _Cover:
     """A still copy of a window's client area, shown over it until ``close``."""
 
-    def __init__(self, window):
+    def __init__(self, window, from_screen=False):
         user32, gdi32, dwm, instance = _win32()
         client = window.winfo_id()   # Tk's client child: exactly the toplevel's area
         rect = _RECT()
@@ -204,7 +210,11 @@ class _Cover:
             raise OSError("window has no area")
         self.hwnd = self.memdc = self.bitmap = self.old = self.hook = None
         self.showing = False
-        source = user32.GetDC(client)
+        if from_screen:
+            dwm.DwmFlush()   # the latest change (a preview just moved) has been composed
+        source_window = None if from_screen else client   # None: the screen
+        source = user32.GetDC(source_window)
+        x, y = (rect.left, rect.top) if from_screen else (0, 0)
         try:
             self.memdc = gdi32.CreateCompatibleDC(source)
             header = _BITMAPINFOHEADER(ctypes.sizeof(_BITMAPINFOHEADER), width, -height, 1, 32, 0, 0, 0, 0, 0, 0)
@@ -213,10 +223,10 @@ class _Cover:
             if not self.bitmap:
                 raise OSError("CreateDIBSection failed")
             self.old = gdi32.SelectObject(self.memdc, self.bitmap)
-            if not gdi32.BitBlt(self.memdc, 0, 0, width, height, source, 0, 0, _SRCCOPY):
+            if not gdi32.BitBlt(self.memdc, 0, 0, width, height, source, x, y, _SRCCOPY):
                 raise OSError("BitBlt failed")
         finally:
-            user32.ReleaseDC(client, source)
+            user32.ReleaseDC(source_window, source)
         gdi32.GdiFlush()
         # Opaque everywhere (GDI leaves alpha 0) except the bottom corners.
         pixels = np.ctypeslib.as_array(ctypes.cast(bits, ctypes.POINTER(ctypes.c_ubyte)), (height, width, 4))
@@ -262,9 +272,9 @@ class _Cover:
             _win32()[0].ShowWindow(self.hwnd, _SW_HIDE)
 
     @classmethod
-    def over(cls, window):
+    def over(cls, window, from_screen=False):
         try:
-            return cls(window)
+            return cls(window, from_screen)
         except (OSError, AttributeError, ValueError):
             logger.debug("swap cover unavailable; rebuilding in place", exc_info=True)
             return None

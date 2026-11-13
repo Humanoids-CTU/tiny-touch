@@ -325,6 +325,18 @@ activates, so it never hides the window behind a modal. A video load uses it for
 its last dialog: `_publish_loaded_video` runs inside the swap, lifts `_suspend_frame_workers`
 once the session is fully published, and the cover stays until the first frame is painted
 (`LOAD_FIRST_FRAME_TIMEOUT_MS`).
+The client-area snapshot lacks GPU-drawn content (the Direct3D video); `from_screen=True` copies
+the cover from the screen instead, including the video and any window floating above.
+
+The diagram resize grip (`gui.diagram_resize`) never resizes the real canvas during a drag: the
+diagram's width sets the right column's width, so every step would re-lay out the whole window
+(hundreds of ms each). Instead `gui.floating_image` shows a click-through layered picture of the
+diagram card at the dragged size, anchored at the card's top-right corner (one
+`UpdateLayeredWindow` per step, a few ms); `RoundedCard.render` draws the card for it. On release
+`swap_content(..., from_screen=True)` covers the window with a copy of the screen (the preview
+included), closes the preview, commits the scale and re-lays out once. Off Windows the grip
+falls back to redrawing the canvas during the drag (`on_preview`); `FLOATING_PREVIEW` turns the
+floating picture off.
 `window_reveal.REVEAL_WHEN_SETTLED` and `content_swap.SWAP_COVER` turn the mechanisms off; the
 e2e suite turns the reveal off because it hides every window itself.
 
