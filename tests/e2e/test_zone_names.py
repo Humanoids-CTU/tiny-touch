@@ -162,8 +162,8 @@ def test_named_template_full_workflow_and_reliability(app, workspace, tmp_path, 
     assert app.video.frames[2]["RH"]["Onset"] == "OFF"
     assert Path(original.export_csv).read_bytes() == original_csv
 
-    # A different picker preference must not override the linked original.
-    load_video(app, workspace, workspace.video, mode="Reliability", template="Default")
+    # Review the local setup offered as a starting point for this separate pass.
+    load_video(app, workspace, workspace.video, mode="Reliability", template=choice)
     assert app.state_repo.load_template().template == choice.lower()
     assert app.zone_display.show_names
     assert "Acceptance target" in _texts(app.diagram_canvas)

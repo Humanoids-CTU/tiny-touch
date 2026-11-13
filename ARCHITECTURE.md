@@ -682,7 +682,7 @@ default run is headless. The suite is a pyramid:
 | `tests/e2e/` | A real Tk root driven through `tests/e2e/gui_driver.py` — smoke test, annotate/save/export, loading a second video mid-session, close during extraction. Marked `gui` and deselected by default. |
 
 `test_zone_names.py` exercises all three templates through Settings, annotation,
-save, reopen, and Analysis, then checks inherited names and reports in Reliability
+save, reopen, and Analysis, then reviews the offered setup and reports in Reliability
 without changing the original export. The startup smoke test also exercises delete
 input with no video loaded; the shared handler treats this as a no-op.
 
