@@ -155,6 +155,19 @@ Each `FrameRecord` holds aligned `X` / `Y` click lists, `Onset` (`"ON"`/`"OFF"`/
 
 `Video` exposes `dataLH / dataRH / dataLL / dataRL` as lightweight `LimbView` wrappers around the same shared `frames` dict, so legacy code that indexes a single limb still works.
 
+### Pure Pose domain (not yet connected to the application)
+
+`domain/pose.py` is separate from Touch `FrameBundle` and `LimbView`. `PoseLabels`
+stores sparse joint ON/OFF boundaries, independent optional global per-frame
+quality, and body/head scale labels with manual/carried provenance. Reads do not
+infer defaults. Every mutation requires the target frame to match the supplied
+actually painted frame. `PoseScaleSession` owns transient, initially inactive
+body/head carry; only explicit forward step/hold arrivals apply it to the single
+painted destination. Play, backward navigation and jumps only view labels.
+The inactive restart policy is a proposal pending reopen integration. See
+[the behavior specification](docs/plans/2026-11-12_3d_pose_behavior.md) for accepted
+rules and remaining decisions. No Pose setup, storage/export or GUI is wired yet.
+
 ### Background processes
 
 [`adapters.frame_buffer.FrameBuffer`](src/adapters/frame_buffer.py) owns one daemon loop plus
@@ -394,8 +407,8 @@ Timeline display rules live in `domain/touch_timeline.py`: pure projections of
 Touch cells, closed overview intervals, edge events, parameter states and notes.
 `gui/timeline.py` renders these projections from explicit inputs and owns shared
 canvas decorations. `gui/timeline_geometry.py` supplies pure drawing coordinates
-and canvas-wide click mapping, reusable by a future annotation type. No Pose
-model or display is implemented. `gui.timeline.TouchTimelineView` owns each
+and canvas-wide click mapping, reusable by a future annotation type. The pure Pose
+model exists separately; no Pose display is implemented. `gui.timeline.TouchTimelineView` owns each
 canvas's invalidation, cache keys and playhead IDs. `LabelingApp` passes explicit
 data and requests invalidation/reset
 on annotation edits, appearance changes and project loads; navigation/session

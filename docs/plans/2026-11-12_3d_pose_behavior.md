@@ -1,7 +1,12 @@
 # 3D pose mode: intended behavior and acceptance criteria
 
 Date: 2026-11-12
-Status: behavior specification; implementation not started.
+Status: behavior refined 2026-11-13; pure Pose domain/editing rules implemented.
+GUI, project setup, persistence/export, and application integration are pending.
+
+Correction (2026-11-13): quality is one global value per frame, not per joint.
+The initial per-joint implementation was a misunderstanding and has been removed.
+Joint onset/offset annotations remain independent of this frame-wide value.
 
 This document records the user's intended workflow. Use it during implementation
 and review, alongside [the restoration plan](2026-11-11_restore_3d_pose_mode.md).
@@ -33,8 +38,9 @@ not automatically a requirement.
 
 - Provide separate body and head sliders, each with its own reset button.
 - Display size clearly: +20% means a stored size factor of 1.20; neutral is
-  100% size / 0% adjustment. The physical interpretation of that factor still
-  needs confirmation (see open decisions).
+  100% size / 0% adjustment. The requested +/-50% range is adopted: factors
+  0.5 through 1.5 inclusive; neutral is 1.0. UI step size remains undecided.
+  These are user-defined numeric labels; no scientific interpretation is imposed.
 - A manual slider edit records a manual value on the current annotation frame
   and makes it the value to carry forward for that scale.
 - Moving forward to the next eligible frame transfers and records that value,
@@ -72,15 +78,26 @@ during planning. Retain them unless explicitly revised:
 | S7 | Save and reopen records from S1/S2 | Values and manual/carried distinctions survive exactly. |
 | S8 | Refresh controls or redraw the timeline without a user edit/navigation action | No annotation is created or changed. |
 
-### Navigation cases not yet agreed
+### Confirmed navigation rules (2026-11-13)
 
-The old code wrote carry values during paused forward navigation, not playback.
-A jump could label the destination while leaving skipped frames unset. Backward
-navigation did not fill frames, but visiting a saved value could change the
-value subsequently carried. These are historical facts, not accepted edge-case
-requirements. Decide playback, arrow holding with skipped painted frames, seeks,
-backward navigation, and carry initialization after reopening before implementing
-those paths. Do not silently substitute whole-interval filling.
+- Forward single-frame stepping and forward arrow holding apply scale carry on
+  each actually displayed frame. A skipped/unvisited frame is never filled.
+- Ordinary Play, backward navigation, timeline jumps/seeks and refreshes only
+  view recorded labels. They do not write labels or change session carry, even
+  when displaying a manual value different from the current carry.
+- A manual value reached by eligible forward navigation is protected and adopted
+  for that scale. An existing carried value may be overwritten by active carry.
+- A navigation request or decoded image alone does not permit a write: the
+  destination must be the actually painted frame.
+- Example: carry is +20%; jump to a manually labeled -20% frame. The slider
+  displays that saved -20% label, while carry remains +20%. The next eligible
+  forward step records +20% unless its destination has its own manual barrier.
+  Displayed saved value and session carry are distinct.
+- Carry is transient session state, separate from per-frame recorded values.
+  **Restart proposal:** initialize a new session with both carries inactive;
+  viewing saved labels does not initialize them. A new manual edit/reset or an
+  eligible forward arrival at a manual value activates the corresponding carry.
+  This is the pure model's conservative default; reopen integration is pending.
 
 ## 3. Joint annotation and quality
 
@@ -90,20 +107,27 @@ those paths. Do not silently substitute whole-interval filling.
   ankles, plus neck (13 joints). This is the initial restoration baseline.
 - Historical interaction: left click creates ON, right click creates OFF;
   middle click or `d` deletes a nearby current-frame event.
-- The intended baseline is ON starts a joint-problem interval and OFF ends it.
-  Confirm the precise research meaning before finalizing labels/export wording.
-- The quality control must clearly identify which joint it edits. Editing one
-  joint's quality must not modify other joints, body scale, or head scale.
-- Do not infer scale-style carry behavior for quality: its association and
-  carry rules are still open.
+- ON starts an active joint interval; OFF ends it. No scientific meaning is
+  imposed on this state. Intervals include the ON frame and exclude the OFF
+  frame. Repeated ON leaves an already active joint active; unmatched OFF leaves
+  it inactive. These deterministic boundary rules are explicit implementation
+  choices for review, rather than recovered research requirements.
+- Quality is one optional global value per frame from 0 through 1 inclusive.
+  It requires no joint selection and does not modify joint events, body scale,
+  or head scale. A new quality value replaces the previous value on that frame.
+  Its research meaning and direction are user-defined. Unset is distinct from
+  zero and one. There is no automatic default or carry.
+- Quality can exist without ON/OFF. Writing/replacing/deleting an event preserves
+  quality; writing/deleting quality preserves events. Quality does not affect
+  the derived active-joint intervals.
 - Historical quality changed marker opacity for the last-clicked current-frame
   event, including OFF events. This is context, not a settled semantic contract.
 
-Acceptance checks once the remaining semantics are settled:
+Acceptance checks:
 
 - J1: ON and OFF affect only the targeted joint and produce the agreed interval.
 - J2: Quality accepts both endpoints (0 and 1); invalid values cannot enter saved
-  state. The selected joint/value remain understandable even at quality 0.
+  state. The frame quality remains readable even at 0; joints stay visible.
 - J3: Quality can be inspected/edited without accidentally creating an unrelated
   ON/OFF event. Selection and event creation must be deliberately distinguishable.
 - J4: Deletion removes the intended event and updates derived interval displays.
@@ -148,19 +172,47 @@ Acceptance checks once the remaining semantics are settled:
 
 ## 6. Decisions required before dependent implementation
 
-1. Scale range: user proposed +/-50%; historical range was +/-30%. Confirm range
-   and step size (historically 0.01 factor).
-2. Meaning of scale: observed estimated pose size relative to the subject, or
-   correction factor needed to make it fit?
-3. Forward carry during playback, arrow holding, jumps, backward visits, and
-   reopening; treatment of skipped frames and uninitialized carry state.
-4. Quality meaning at 0 and 1, default value, event/frame/interval ownership,
-   treatment of OFF events, and whether it carries at all.
-5. Exact joint-problem semantics and handling of repeated ON, unmatched OFF,
-   and deletion of interval boundaries.
-6. Head/body overlay appearance and joint interval presentation.
-7. Normal/Reliability setup and scope, including source association and exports.
-8. Exact representation/export of unset scale and quality values.
+1. UI scale/quality step size (the domain accepts continuous finite values).
+2. Confirm the inactive-carry restart proposal during reopen integration.
+3. Review the explicit repeated-ON/unmatched-OFF boundary rules above.
+4. Head/body overlay appearance and joint interval presentation.
+5. Normal/Reliability setup and scope, including source association and exports.
+   Review current independent Reliability setup rather than copying the older
+   restoration plan's source-inheritance proposal.
+6. Exact representation/export of unset scale and quality values. Scientific
+   meaning remains a user choice, not an implementation prerequisite.
+
+## 6a. Implemented domain boundary and acceptance coverage (2026-11-13)
+
+`src/domain/pose.py` contains only stdlib code. `PoseLabels` owns independent sparse
+joint events, quality and body/head scale labels. Reads return immutable values;
+unset labels are `None`, never inferred neutral/default labels. `ScaleLabel`
+retains manual/carried provenance. `PoseScaleSession` holds transient independent
+carry values and explicit navigation intent; it never fills an interval.
+All label writes require an explicit target/painted-frame match. The caller is
+responsible for reporting successful painting honestly; no GUI is connected yet.
+
+`PoseLabels.active_joints(frame)` is a reference pure projection that recomputes
+after boundary edits. It is not yet a per-playback-frame rendering strategy.
+
+Focused tests in `tests/unit/test_pose.py` cover S1-S6, S8, forward holding with
+skipped frames, view-only navigation, inactive new-session carry, independent
+quality/event deletion and editing, active-joint boundaries, all 13 IDs, finite
+numeric ranges/types, immutable reads and rejected unpainted mutations.
+J1-J4 have pure domain coverage only: selection, pointer hit testing, deletion
+targeting and visible controls remain GUI work. S7 and J5 remain deferred until
+storage exists. No persistence/export, project type/setup, notes, parameters,
+Special Zones, GUI, Linux or packaged-build acceptance is claimed.
+
+Independent review validation after the frame-quality correction: 96 tests passed
+across `test_pose.py` (42 tests),
+`test_touch_timeline.py`, `test_touch_stats.py`, and
+`test_annotation_frame_ready.py`. A separate interaction check confirmed that
+jumps preserve carry, skipped frames stay unset, event deletion preserves quality,
+and rejected stale-frame edits leave labels and carry unchanged. No GUI was run.
+The frame-wide quality regression failed against the former joint-required API
+before the correction and passed afterward. Replacement/deletion is also checked
+to preserve neighboring frames' quality values.
 
 ## 7. Implementation review checklist
 

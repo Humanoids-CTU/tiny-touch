@@ -8,10 +8,21 @@ Status: proposed; investigation complete; first Touch timeline extraction implem
 See [the intended behavior and acceptance criteria](2026-11-12_3d_pose_behavior.md)
 before implementation. That specification takes precedence where this earlier
 proposal differs: scale labels carry forward as the user labels frames, rather
-than immediately filling all future frames; joint quality and separate body/head
+than immediately filling all future frames; frame quality and separate body/head
 sliders are required; current Special Zones behavior is requested; and historical
 data compatibility/migration is no longer required. Open decisions are explicitly
 listed there. No data deletion is part of this documentation change.
+
+**2026-11-13 refinement and bounded implementation:** the behavior specification
+now records independent optional global per-frame quality with no automatic
+default/carry, and scale carry only during painted forward stepping/arrow holding.
+Play, backward navigation and jumps are view-only and do not change carry.
+The scale-change-point/whole-future-value proposals and event-owned opacity below
+are superseded. A pure `domain/pose.py` model and focused tests implement this
+boundary; no Pose GUI, project setup, persistence/export or lifecycle integration
+is available yet. The milestone ordering below is the earlier broad roadmap,
+not a claim that project type and storage have been implemented. Its Reliability
+inheritance proposal must also be reviewed against the newer independent setup.
 
 ## Implementation progress (2026-11-12)
 
@@ -175,6 +186,10 @@ frontend or version-manager proposal; production remains Tk-based.
 
 ### Proposed pose semantics
 
+**Superseded proposal:** use the 2026-11-12 behavior specification and its
+2026-11-13 confirmed navigation/quality rules instead of the change-point,
+default-neutral and navigation-never-writes assumptions in this historical list.
+
 - Store explicit scale changes. A scale applies from its frame until the next
   explicit change, with 1.0 before the first change.
 - Resolve the same effective values for diagram, timeline, and export.
@@ -288,6 +303,11 @@ without event creation; deletion; invalid types/joints/values; pose export
 consistency; and prevention of cross-type Reliability inheritance.
 
 ## Open decisions for resuming work
+
+This is the historical decision list. Quality ownership/default/carry, requested
+scale range and navigation rules are now settled in the behavior specification;
+the old future-interval proposal was rejected. Review the current decision list
+there, including the inactive-carry restart proposal, before dependent work.
 
 1. What does **quality** measure, which direction is better, and is it attached to
    an event, a frame, or a problem interval? Should OFF events have quality?
