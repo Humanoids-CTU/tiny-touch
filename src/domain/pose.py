@@ -83,6 +83,47 @@ class ScaleLabel:
         _enum(self.source, ScaleSource)
 
 
+@dataclass(frozen=True)
+class PoseSnapshot:
+    """Immutable saved labels; no painted-frame or transient carry state.
+
+    Records are (frame, joint, event), (frame, quality), and
+    (frame, kind, scale label). Duplicate keys are invalid.
+    """
+
+    events: tuple[tuple[int, str, JointEvent], ...] = ()
+    quality: tuple[tuple[int, float], ...] = ()
+    scales: tuple[tuple[int, ScaleKind, ScaleLabel], ...] = ()
+
+    def __post_init__(self):
+        for rows, width in ((self.events, 3), (self.quality, 2), (self.scales, 3)):
+            if type(rows) is not tuple or any(
+                    type(row) is not tuple or len(row) != width for row in rows):
+                raise ValueError("Snapshot records must be immutable tuples")
+        event_keys, quality_keys, scale_keys = set(), set(), set()
+        for frame, joint, event in self.events:
+            _frame(frame)
+            _joint(joint)
+            _enum(event, JointEvent)
+            if (frame, joint) in event_keys:
+                raise ValueError("Duplicate joint event")
+            event_keys.add((frame, joint))
+        for frame, value in self.quality:
+            _frame(frame)
+            _number(value, 0.0, 1.0)
+            if frame in quality_keys:
+                raise ValueError("Duplicate frame quality")
+            quality_keys.add(frame)
+        for frame, kind, label in self.scales:
+            _frame(frame)
+            _enum(kind, ScaleKind)
+            if not isinstance(label, ScaleLabel):
+                raise ValueError("Expected a ScaleLabel")
+            if (frame, kind) in scale_keys:
+                raise ValueError("Duplicate frame scale")
+            scale_keys.add((frame, kind))
+
+
 class PoseLabels:
     """Sparse recorded labels. Reads do not create records or infer defaults.
 
@@ -94,6 +135,33 @@ class PoseLabels:
         self._events: dict[tuple[int, str], JointEvent] = {}
         self._quality: dict[int, float] = {}
         self._scales: dict[tuple[int, ScaleKind], ScaleLabel] = {}
+
+    def snapshot(self) -> PoseSnapshot:
+        """Capture labels independently of the active editing session."""
+        return PoseSnapshot(
+            events=tuple((frame, joint, event) for (frame, joint), event
+                         in sorted(self._events.items())),
+            quality=tuple(sorted(self._quality.items())),
+            scales=tuple((frame, kind, label) for (frame, kind), label
+                         in sorted(self._scales.items(),
+                                   key=lambda item: (item[0][0], item[0][1].value))),
+        )
+
+    @classmethod
+    def from_snapshot(cls, snapshot: PoseSnapshot) -> "PoseLabels":
+        """Rehydrate validated storage without pretending any frame was painted.
+
+        Interactive mutations still require an actually painted target frame.
+        """
+        if not isinstance(snapshot, PoseSnapshot):
+            raise ValueError("Expected a PoseSnapshot")
+        labels = cls()
+        labels._events = {(frame, joint): event
+                          for frame, joint, event in snapshot.events}
+        labels._quality = dict(snapshot.quality)
+        labels._scales = {(frame, kind): label
+                          for frame, kind, label in snapshot.scales}
+        return labels
 
     def event(self, frame: int, joint: str) -> JointEvent | None:
         _frame(frame)

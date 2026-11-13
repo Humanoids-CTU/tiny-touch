@@ -7,7 +7,7 @@ strings (ARCHITECTURE.md "Data Layout on Disk" is the reference).
 Layout:
 
     data/<video_name>/
-    ├── state/      working state: <video_name>.db (SQLite, source of truth)
+    ├── state/      Touch <video_name>.db; independent Pose <video_name>_pose.db
     ├── export/     publication-ready CSV + metadata JSON
     ├── frames/     frame0.jpg … frameN.jpg
     └── plots/      Plotly HTML from Analysis
@@ -98,6 +98,11 @@ class ProjectPaths:
         properties here any more: nothing reads or writes them.
         """
         return os.path.join(self.state_dir, f"{self.video_name}.db")
+
+    @property
+    def pose_state_db(self) -> str:
+        """Separate Pose working state; never reuses the Touch database."""
+        return os.path.join(self.state_dir, f"{self.video_name}_pose.db")
 
     @property
     def export_csv(self) -> str:

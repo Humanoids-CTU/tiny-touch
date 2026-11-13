@@ -19,9 +19,15 @@ default/carry, and scale carry only during painted forward stepping/arrow holdin
 Play, backward navigation and jumps are view-only and do not change carry.
 The scale-change-point/whole-future-value proposals and event-owned opacity below
 are superseded. A pure `domain/pose.py` model and focused tests implement this
-boundary; no Pose GUI, project setup, persistence/export or lifecycle integration
-is available yet. The milestone ordering below is the earlier broad roadmap,
-not a claim that project type and storage have been implemented. Its Reliability
+boundary. Bounded headless saving/reopening now adds a validated `PoseSnapshot`,
+separate versioned `state/<video>_pose.db`, and a small open/save/close service.
+S7/J5 have automated storage coverage for joint events, independent frame quality,
+both scales and manual/carried provenance, including deletion, gaps, rollback,
+reopen and continued carry behavior. Fresh session carry starts inactive.
+See [Pose storage scope](../POSE_STORAGE.md). No Pose GUI, project setup, exports,
+shared notes/parameters/Special Zones or GUI lifecycle integration is available yet.
+The milestone ordering below is the earlier broad roadmap, not a claim that
+complete project type integration has been implemented. Its Reliability
 inheritance proposal must also be reviewed against the newer independent setup.
 
 ## Implementation progress (2026-11-12)

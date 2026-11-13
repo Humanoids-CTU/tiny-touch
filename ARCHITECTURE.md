@@ -164,9 +164,21 @@ infer defaults. Every mutation requires the target frame to match the supplied
 actually painted frame. `PoseScaleSession` owns transient, initially inactive
 body/head carry; only explicit forward step/hold arrivals apply it to the single
 painted destination. Play, backward navigation and jumps only view labels.
-The inactive restart policy is a proposal pending reopen integration. See
+`PoseSnapshot` is an immutable, validated storage boundary; explicit
+`PoseLabels.from_snapshot` restores saved labels without pretending that any
+frame has been painted. `adapters.pose_sqlite_repo.PoseSqliteRepository` stores
+only these labels in the separate, versioned `state/<video>_pose.db` path supplied
+by `ProjectPaths.pose_state_db`. It validates existing files read-only before any
+write configuration, reads a consistent transaction, replaces sparse labels in
+one atomic transaction, and enforces owning-thread access. Touch state and exports
+are unchanged. `service_layer.pose_project_service.PoseProjectSession` provides
+headless open/save/close and initializes fresh inactive carry on every reopen;
+viewing saved labels never activates carry. A failed explicit save retains the
+usable in-memory session. Close only releases storage; GUI lifecycle wiring is
+pending. See [Pose working state](docs/POSE_STORAGE.md) and
 [the behavior specification](docs/plans/2026-11-12_3d_pose_behavior.md) for accepted
-rules and remaining decisions. No Pose setup, storage/export or GUI is wired yet.
+rules and remaining decisions. No Pose setup, export or GUI is wired yet;
+notes, parameters and Special Zones are outside this label-storage stage.
 
 ### Background processes
 

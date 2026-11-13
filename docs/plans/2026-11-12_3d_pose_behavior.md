@@ -1,8 +1,9 @@
 # 3D pose mode: intended behavior and acceptance criteria
 
 Date: 2026-11-12
-Status: behavior refined 2026-11-13; pure Pose domain/editing rules implemented.
-GUI, project setup, persistence/export, and application integration are pending.
+Status: behavior refined 2026-11-13; pure Pose domain/editing rules and bounded
+headless label save/reopen implemented. GUI, project setup, exports, shared
+annotations and application lifecycle integration are pending.
 
 Correction (2026-11-13): quality is one global value per frame, not per joint.
 The initial per-joint implementation was a misunderstanding and has been removed.
@@ -94,10 +95,11 @@ during planning. Retain them unless explicitly revised:
   forward step records +20% unless its destination has its own manual barrier.
   Displayed saved value and session carry are distinct.
 - Carry is transient session state, separate from per-frame recorded values.
-  **Restart proposal:** initialize a new session with both carries inactive;
+  **Current conservative restart policy:** initialize a new session with both carries inactive;
   viewing saved labels does not initialize them. A new manual edit/reset or an
   eligible forward arrival at a manual value activates the corresponding carry.
-  This is the pure model's conservative default; reopen integration is pending.
+  This is implemented in the headless reopen service; user-facing lifecycle
+  integration remains pending and the policy can be reviewed before GUI work.
 
 ## 3. Joint annotation and quality
 
@@ -134,6 +136,9 @@ Acceptance checks:
 - J5: Joint events and quality survive save/reopen with their meaning intact.
 
 ## 4. Diagram and timelines
+
+- Match the current main application's widgets and theme. Prioritize working
+  annotation behavior; artwork polish can follow. No UI is part of the storage stage.
 
 - Redesign the old pose diagram for visual quality and readability; do not treat
   the old artwork as a required appearance.
@@ -173,7 +178,7 @@ Acceptance checks:
 ## 6. Decisions required before dependent implementation
 
 1. UI scale/quality step size (the domain accepts continuous finite values).
-2. Confirm the inactive-carry restart proposal during reopen integration.
+2. Review the conservative inactive-carry restart policy before GUI integration.
 3. Review the explicit repeated-ON/unmatched-OFF boundary rules above.
 4. Head/body overlay appearance and joint interval presentation.
 5. Normal/Reliability setup and scope, including source association and exports.
@@ -200,9 +205,27 @@ skipped frames, view-only navigation, inactive new-session carry, independent
 quality/event deletion and editing, active-joint boundaries, all 13 IDs, finite
 numeric ranges/types, immutable reads and rejected unpainted mutations.
 J1-J4 have pure domain coverage only: selection, pointer hit testing, deletion
-targeting and visible controls remain GUI work. S7 and J5 remain deferred until
-storage exists. No persistence/export, project type/setup, notes, parameters,
-Special Zones, GUI, Linux or packaged-build acceptance is claimed.
+targeting and visible controls remain GUI work.
+
+S7 and J5 now have headless storage coverage in
+`tests/integration/test_pose_persistence.py`. `PoseSnapshot` is an immutable,
+validated restoration boundary; `PoseSqliteRepository` saves/reopens only sparse
+joint events, global frame quality and body/head scale labels with provenance.
+`PoseProjectSession` opens the separate `state/<video>_pose.db` path and constructs
+fresh inactive carry. Tests cover unset versus 0/neutral, independent deletion,
+sparse gaps, continued manual/carried rules, transaction rollback and save retry,
+unsupported-file preservation, corrupt-row rejection, owning-thread checks and
+Touch coexistence. See [the bounded format](../POSE_STORAGE.md).
+No export, project type/setup, notes, parameters, Special Zones, GUI lifecycle,
+Linux or packaged-build acceptance is claimed.
+
+Independent storage-stage review: 168 focused tests passed across
+`test_pose_persistence.py` (32 tests), `test_pose.py`, `test_project_paths.py`,
+`test_sqlite_repo.py`, and `test_touch_stats.py`. Review added checks for a
+competing file during database creation, real Touch/Pose coexistence, and
+repeated saves with multiple joints and both scales. A failed save is checked
+through a separate database connection before retry. `git diff --check` passed;
+no GUI was launched.
 
 Independent review validation after the frame-quality correction: 96 tests passed
 across `test_pose.py` (42 tests),
