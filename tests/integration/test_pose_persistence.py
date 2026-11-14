@@ -8,7 +8,7 @@ import pytest
 
 from adapters.pose_sqlite_repo import PoseSqliteRepository, PoseStorageError
 from domain.pose import (
-    JointEvent, Navigation, PoseLabels, PoseSnapshot, ScaleKind, ScaleLabel, ScaleSource,
+    ZoneEvent, Navigation, PoseLabels, PoseSnapshot, ScaleKind, ScaleLabel, ScaleSource,
 )
 from domain.project import ProjectPaths
 from service_layer.pose_project_service import PoseProjectSession
@@ -16,14 +16,14 @@ from service_layer.pose_project_service import PoseProjectSession
 
 BODY, HEAD = ScaleKind.BODY, ScaleKind.HEAD
 MANUAL, CARRIED = ScaleSource.MANUAL, ScaleSource.CARRIED
-JOINT = "L_WRIST"
+JOINT = "L"
 
 
 def test_s7_j5_save_reopen_preserves_sparse_labels_and_provenance(tmp_path):
     paths = ProjectPaths("video", str(tmp_path))
     session = PoseProjectSession(paths)
-    session.labels.set_event(100, JOINT, JointEvent.ON, displayed_frame=100)
-    session.labels.set_event(104, JOINT, JointEvent.OFF, displayed_frame=104)
+    session.labels.set_event(100, JOINT, ZoneEvent.ON, displayed_frame=100)
+    session.labels.set_event(104, JOINT, ZoneEvent.OFF, displayed_frame=104)
     session.labels.set_quality(100, 0, displayed_frame=100)
     session.labels.set_quality(1000000, 1, displayed_frame=1000000)
     session.scales.edit(100, BODY, 1.2, displayed_frame=100)
@@ -44,8 +44,8 @@ def test_s7_j5_save_reopen_preserves_sparse_labels_and_provenance(tmp_path):
         assert reopened.labels.scale(100, HEAD) == ScaleLabel(1.0, MANUAL)
         assert reopened.labels.scale(101, HEAD) == ScaleLabel(1.0, CARRIED)
         assert reopened.labels.scale(1000000, BODY) is None
-        assert reopened.labels.active_joints(103) == {JOINT}
-        assert reopened.labels.active_joints(104) == set()
+        assert reopened.labels.active_zones(103) == {JOINT}
+        assert reopened.labels.active_zones(104) == set()
         assert reopened.scales.carried_value(BODY) is None
         assert reopened.scales.carried_value(HEAD) is None
         reopened.scales.arrive(103, 104, Navigation.FORWARD_STEP, displayed_frame=104)
@@ -67,7 +67,7 @@ def test_s7_j5_save_reopen_preserves_sparse_labels_and_provenance(tmp_path):
 def test_deletions_are_durable_and_independent(tmp_path):
     repo = PoseSqliteRepository(tmp_path / "pose.db")
     labels = PoseLabels()
-    labels.set_event(3, JOINT, JointEvent.ON, displayed_frame=3)
+    labels.set_event(3, JOINT, ZoneEvent.ON, displayed_frame=3)
     labels.set_quality(3, 0, displayed_frame=3)
     labels.set_scale(3, BODY, ScaleLabel(1, MANUAL), displayed_frame=3)
     repo.save(labels)
@@ -83,11 +83,11 @@ def test_deletions_are_durable_and_independent(tmp_path):
     reopened.close()
 
 
-def test_saving_twice_preserves_multiple_joint_and_scale_keys(tmp_path):
+def test_saving_twice_preserves_multiple_zone_and_scale_keys(tmp_path):
     repo = PoseSqliteRepository(tmp_path / "pose.db")
     labels = PoseLabels()
-    labels.set_event(3, "L_WRIST", JointEvent.ON, displayed_frame=3)
-    labels.set_event(3, "R_WRIST", JointEvent.OFF, displayed_frame=3)
+    labels.set_event(3, "L", ZoneEvent.ON, displayed_frame=3)
+    labels.set_event(3, "K", ZoneEvent.OFF, displayed_frame=3)
     labels.set_scale(3, BODY, ScaleLabel(1.2, MANUAL), displayed_frame=3)
     labels.set_scale(3, HEAD, ScaleLabel(.9, CARRIED), displayed_frame=3)
     repo.save(labels)
@@ -122,7 +122,7 @@ def test_failed_save_rolls_back_prior_data_and_session_can_retry(tmp_path):
     session = PoseProjectSession(ProjectPaths("v", str(tmp_path)))
     session.labels.set_quality(1, .5, displayed_frame=1)
     session.save()
-    session.labels.set_event(2, JOINT, JointEvent.ON, displayed_frame=2)
+    session.labels.set_event(2, JOINT, ZoneEvent.ON, displayed_frame=2)
     # Python frame indices are unbounded; SQLite cannot bind this integer.
     huge_frame = 2 ** 80
     session.labels.set_quality(huge_frame, .8, displayed_frame=huge_frame)
@@ -131,12 +131,12 @@ def test_failed_save_rolls_back_prior_data_and_session_can_retry(tmp_path):
     disk = PoseSqliteRepository(ProjectPaths("v", str(tmp_path)).pose_state_db)
     assert disk.load().snapshot() == PoseSnapshot(quality=((1, .5),))
     disk.close()
-    assert session.labels.event(2, JOINT) is JointEvent.ON
+    assert session.labels.event(2, JOINT) is ZoneEvent.ON
     session.labels.set_quality(huge_frame, None, displayed_frame=huge_frame)
     session.save()
     session.close()
     disk = PoseSqliteRepository(ProjectPaths("v", str(tmp_path)).pose_state_db)
-    assert disk.load().event(2, JOINT) is JointEvent.ON
+    assert disk.load().event(2, JOINT) is ZoneEvent.ON
     disk.close()
 
 
@@ -183,9 +183,9 @@ def test_unsupported_existing_file_is_untouched(tmp_path, kind):
 
 
 @pytest.mark.parametrize("statement", [
-    "INSERT INTO joint_events VALUES(-1, 'L_WRIST', 'ON')",
-    "INSERT INTO joint_events VALUES(1, 'UNKNOWN', 'ON')",
-    "INSERT INTO joint_events VALUES(1, 'L_WRIST', 'INVALID')",
+    "INSERT INTO zone_events VALUES(-1, 'L', 'ON')",
+    "INSERT INTO zone_events VALUES(1, 'UNKNOWN', 'ON')",
+    "INSERT INTO zone_events VALUES(1, 'L', 'INVALID')",
     "INSERT INTO frame_quality VALUES(1, 1.1)",
     "INSERT INTO frame_quality VALUES(1, 'bad')",
     "INSERT INTO scale_labels VALUES(1, 'body', 1, 'bad')",
@@ -234,7 +234,7 @@ def test_snapshot_is_detached_from_both_original_and_restored_labels():
 
 @pytest.mark.parametrize("kwargs", [
     {"events": ((1, JOINT, "ON"),)},
-    {"events": ((1, JOINT, JointEvent.ON), (1, JOINT, JointEvent.OFF))},
+    {"events": ((1, JOINT, ZoneEvent.ON), (1, JOINT, ZoneEvent.OFF))},
     {"quality": ((1, 0), (1, 1))},
     {"quality": ((True, 0),)},
     {"quality": ((1, float('nan')),)},

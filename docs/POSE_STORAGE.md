@@ -1,24 +1,31 @@
-# Pose working state, version 1
+# Pose working state, version 3
 
 This is internal Pose label storage, separate from the frozen Touch export
-contract in `DATA_FORMAT.md`. No Pose export format is defined yet.
+contract in `DATA_FORMAT.md`. Pose setup, controls, timelines and lifecycle are
+wired into the application. Pose CSV/export and Analysis are explicitly deferred.
 
 `ProjectPaths.pose_state_db` resolves to
 `data/<video>/state/<video>_pose.db`, using the existing project/state directories.
 The Touch database remains `state/<video>.db`; neither adapter reads the other's
-database. Reliability path suffix rules remain those of `ProjectPaths` and do
-not establish an implemented Pose Reliability workflow.
+database. Normal and Reliability are independent passes using the existing suffix rules.
+`ProjectPaths.annotation_type` selects the database: Touch retains `<video>.db`,
+Pose uses `<video>_pose.db`. Both may coexist in one video folder and reuse source
+frames. Source association is checked against both types before frame reuse.
+Unknown sibling source identity is rejected. The library lists each type explicitly.
 
 ## Schema and meaning
 
 | Table | Columns and meaning |
 | --- | --- |
-| `pose_meta` | `key`, `value`: exactly `kind=tinytouch.pose` and `schema_version=1` |
-| `joint_events` | `frame`, `joint`, `event`: primary key `(frame, joint)`, one ON/OFF boundary |
+| `pose_meta` | `key`, `value`: exactly `kind=tinytouch.pose` and `schema_version=3` |
+| `project_meta` | `key`, `value`: annotation type, typed coding setup, preparation state, video provenance, timer and resume position |
+| `shared_frames` | `frame` primary key, optional `note`, JSON `params` containing only global Par1/Par2/Par3 states |
+| `special_zone_points` | `dot_id` primary key, `x`, `y`, `zones`; project-wide Special Zones in the saved dialog's display coordinates |
+| `zone_events` | `frame`, `zone`, `event`: primary key `(frame, zone)`, one ON/OFF boundary using an Alternate body/box zone ID |
 | `frame_quality` | `frame` primary key, `value`: global optional frame quality, inclusive 0..1 |
 | `scale_labels` | `frame`, `kind`, `value`, `source`: primary key `(frame, kind)`, body/head factor 0.5..1.5 and manual/carried provenance |
 
-Frames are nonnegative zero-based integers; joint IDs and enum values come from
+Frames are nonnegative zero-based integers; Alternate zone IDs and enum values come from
 `domain.pose`. Missing rows mean unset. Quality zero and scale neutral 1.0 are
 explicit saved values. Deleting one label removes its row without affecting
 another label type. Sparse gaps stay unset; storage never fills skipped frames.
@@ -35,11 +42,17 @@ the painted-frame checks required for subsequent edits.
 kind/version, missing/extra tables, unexpected columns, views and triggers before
 changing pragmas. It then opens existing files with SQLite `mode=rw`, so a missing
 file is not accidentally recreated during reopen. Invalid saved rows fail
-explicitly on load. No migration or historical import is attempted.
+explicitly on load. No migration or historical import is attempted, including from the earlier bounded
+Pose v1 label-only and v2 joint-based formats. Existing unsupported files are
+preserved and rejected; use a fresh project copy for the Alternate zone workflow.
 
-All reads/writes/close run on the creating thread. Load uses one read transaction.
-Save replaces all three sparse label tables in one transaction; failure rolls
-back prior changes. The journal mode is DELETE and synchronous mode FULL, matching
+All reads/writes/close run on the creating thread. Label loading uses one read transaction.
+`save_workspace()` replaces sparse labels, shared frames and Special Zones and
+updates timer, resume position and Special Zones note/scale in one transaction.
+Validation happens before writing; failure rolls back the whole workspace and
+does not clear dirty flags. Typed setup/source metadata is retained. `save()` is
+the explicit labels-only API and preserves shared state. The journal mode is
+DELETE and synchronous mode FULL, matching
 the desktop project's single-writer and synced-folder conventions.
 
 `PoseProjectSession(paths)` opens and loads; `save()` explicitly persists current
@@ -57,7 +70,34 @@ carry, continued manual/carried rules, rollback/retry after a mid-save failure,
 unsupported-file preservation, corrupt rows, thread confinement and detached
 snapshots. These are headless checks, not GUI or packaged-build acceptance.
 
-Notes, global parameters, Special Zones, video/source identity and metadata,
-setup/project switching, user-facing save failure handling, exports and GUI
-integration remain future work. The database kind identifies only this bounded
-Pose label format; it does not establish a complete application project schema.
+`tests/integration/test_pose_workspace.py` covers complete transactions, shared
+annotation deletion, save retry and the controller Save route including an open
+Special Zones dialog. Coordinates are converted through the saved dialog scale
+against the neutral Pose masks; they never become frame-level zone ON/OFF events.
+`tests/integration/test_pose_load_flow.py` exercises the actual load/publish flow
+with real repositories and fake widgets: Pose -> Touch -> Pose, saved labels,
+inactive reopened carry, independent Normal/Reliability and cancellation before
+any active-project change. Frame extraction, real widgets and workers are outside
+that harness. Unit lifecycle tests cover failed close/save retention and rejected
+unpainted shared edits. Actual GUI, Linux and packaged builds remain unverified.
+
+## Typed setup foundations (2026-11-13)
+
+`PoseCodingSetup` stores a name, the sole `alternate` template and global parameter
+labels. It has no Touch channels or channel parameters. Preparation locks the
+accepted setup. The new-video flow chooses Touch/Pose before Normal/Reliability;
+Pose preparation offers Alternate and disables Default/General as Coming soon.
+Read-only library/setup inspection does not create files. Canceling either dialog
+returns before changing the active project. The GUI attaches `PoseProjectSession`
+to its existing Pose connection; it does not open a second database.
+
+Pose panel and timeline rendering use separate adapters. Headless setup tests cover typed
+reopening, immutable global labels, independent Reliability preparation, sibling
+source protection and malformed shared-parameter rejection.
+
+### Pose zone aliases
+
+Pose coding setup includes an optional `zone_labels` mapping from supported
+Alternate zone IDs to display names (40 characters maximum). Missing mappings
+in existing setups default to no aliases. Labels are immutable after preparation;
+annotation IDs and the `zone_events` table are unchanged.

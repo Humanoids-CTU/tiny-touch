@@ -10,9 +10,9 @@ def next_copy_project(paths: ProjectPaths) -> ProjectPaths:
     index = 1
     while True:
         suffix = "_copy" if index == 1 else f"_copy{index}"
-        candidate = ProjectPaths(original.video_name + suffix, original.base_dir)
+        candidate = ProjectPaths(original.video_name + suffix, original.base_dir, original.annotation_type)
         twin = ProjectPaths.for_video(candidate.video_name, reliability=True,
-                                      base_dir=candidate.base_dir)
+                                      base_dir=candidate.base_dir, annotation_type=candidate.annotation_type)
         if not os.path.exists(candidate.video_dir) and not os.path.exists(twin.video_dir):
             return candidate
         index += 1

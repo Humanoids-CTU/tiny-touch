@@ -38,6 +38,7 @@ class SpecialZonesApp:
         zone_positions=None,
         masks=None,
         hover_effects=True,
+        diagram_image=None,
     ):
         self.top_level = tk.Toplevel(master)
         self.top_level.title("Special Zones")
@@ -66,10 +67,11 @@ class SpecialZonesApp:
         self.f.grid(row=0, column=0, sticky="nsew")
 
         self.dots = {}
-        self.img = Image.open(diagram_path or asset_path("icons/diagram.png"))
+        self.img = (diagram_image.copy() if diagram_image is not None
+                    else Image.open(diagram_path or asset_path("icons/diagram.png")))
         self.img = self.img.resize(
             (int(self.img.width * self.diagram_scale), int(self.img.height * self.diagram_scale)),
-            Image.LANCZOS,
+            Image.Resampling.LANCZOS,
         )
         self.photo2 = ImageTk.PhotoImage(self.img, master=self.top_level)
         # As in the main window: the diagram fills a white card with a thin rim
@@ -182,10 +184,12 @@ class SpecialZonesApp:
     def on_close(self):
         # Callback with dots and note on close
         if self.on_close_callback:
-            self.on_close_callback(self.dots, self.diagram_scale, self.note())
+            if self.on_close_callback(self.dots, self.diagram_scale, self.note()) is False:
+                return False
         if self._highlighter is not None:
             self._highlighter.destroy()  # stop its timer before the canvas goes
         self.top_level.destroy()
+        return True
 
     def _create_dot(self, x, y):
         dot_id = self.canvas2.create_image(

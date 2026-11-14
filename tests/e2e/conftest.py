@@ -294,6 +294,11 @@ def workspace(tmp_path, tiny_video, monkeypatch):
 
     space = Workspace(tmp_path, tiny_video)
 
+    # Existing scenarios exercise Touch. Keep their independently driven mode,
+    # duplicate and setup dialogs reachable after adding the type picker.
+    # A future Pose scenario can override this explicit default with monkeypatch.
+    monkeypatch.setattr("labeling_app.choose_annotation_type", lambda *a, **kw: "Touch")
+
     # --- preconditions: if either of these is wrong the suite would write into
     # --- the owner's repo, so fail here rather than discover it in teardown.
     assert os.path.realpath(os.getcwd()) == os.path.realpath(str(tmp_path))

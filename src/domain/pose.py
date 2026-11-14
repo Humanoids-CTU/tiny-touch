@@ -1,25 +1,23 @@
 """Independent Pose labels and painted-frame editing rules; no I/O or GUI.
 
-Quality is one global label per frame, independent of joint ON/OFF events. Scale
+Quality is one global label per frame, independent of zone ON/OFF events. Scale
 carry belongs to a short-lived editing session, never to the saved labels.
 """
 
 from dataclasses import dataclass
 from enum import Enum
 from math import isfinite
+from domain.annotation_channel import active_targets
 
 
-POSE_JOINTS = (
-    "L_ANKLE", "R_ANKLE", "L_KNEE", "R_KNEE", "L_HIP", "R_HIP",
-    "L_WRIST", "R_WRIST", "L_ELBOW", "R_ELBOW",
-    "L_SHOULDER", "R_SHOULDER", "NECK",
-)
+POSE_ZONES = tuple("ABCDEFGHIJKLMNOPQRST") + ("QB", "RB", "SB", "TB") + tuple(
+    f"BOX{i}" for i in range(1, 7))
 SCALE_MIN = 0.5
 SCALE_MAX = 1.5
 SCALE_NEUTRAL = 1.0
 
 
-class JointEvent(Enum):
+class ZoneEvent(Enum):
     ON = "ON"
     OFF = "OFF"
 
@@ -48,9 +46,9 @@ def _frame(frame: int) -> None:
         raise ValueError("Frame must be a non-negative integer")
 
 
-def _joint(joint: str) -> None:
-    if not isinstance(joint, str) or joint not in POSE_JOINTS:
-        raise ValueError(f"Unknown Pose joint: {joint!r}")
+def _zone(zone: str) -> None:
+    if not isinstance(zone, str) or zone not in POSE_ZONES:
+        raise ValueError(f"Unknown Pose zone: {zone!r}")
 
 
 def _enum(value, enum_type) -> None:
@@ -87,11 +85,11 @@ class ScaleLabel:
 class PoseSnapshot:
     """Immutable saved labels; no painted-frame or transient carry state.
 
-    Records are (frame, joint, event), (frame, quality), and
+    Records are (frame, zone, event), (frame, quality), and
     (frame, kind, scale label). Duplicate keys are invalid.
     """
 
-    events: tuple[tuple[int, str, JointEvent], ...] = ()
+    events: tuple[tuple[int, str, ZoneEvent], ...] = ()
     quality: tuple[tuple[int, float], ...] = ()
     scales: tuple[tuple[int, ScaleKind, ScaleLabel], ...] = ()
 
@@ -101,13 +99,13 @@ class PoseSnapshot:
                     type(row) is not tuple or len(row) != width for row in rows):
                 raise ValueError("Snapshot records must be immutable tuples")
         event_keys, quality_keys, scale_keys = set(), set(), set()
-        for frame, joint, event in self.events:
+        for frame, zone, event in self.events:
             _frame(frame)
-            _joint(joint)
-            _enum(event, JointEvent)
-            if (frame, joint) in event_keys:
-                raise ValueError("Duplicate joint event")
-            event_keys.add((frame, joint))
+            _zone(zone)
+            _enum(event, ZoneEvent)
+            if (frame, zone) in event_keys:
+                raise ValueError("Duplicate zone event")
+            event_keys.add((frame, zone))
         for frame, value in self.quality:
             _frame(frame)
             _number(value, 0.0, 1.0)
@@ -128,18 +126,18 @@ class PoseLabels:
     """Sparse recorded labels. Reads do not create records or infer defaults.
 
     Read methods return immutable values. Clearing one kind of label never
-    deletes another kind at the same frame/joint.
+    deletes another kind at the same frame/zone.
     """
 
     def __init__(self):
-        self._events: dict[tuple[int, str], JointEvent] = {}
+        self._events: dict[tuple[int, str], ZoneEvent] = {}
         self._quality: dict[int, float] = {}
         self._scales: dict[tuple[int, ScaleKind], ScaleLabel] = {}
 
     def snapshot(self) -> PoseSnapshot:
         """Capture labels independently of the active editing session."""
         return PoseSnapshot(
-            events=tuple((frame, joint, event) for (frame, joint), event
+            events=tuple((frame, zone, event) for (frame, zone), event
                          in sorted(self._events.items())),
             quality=tuple(sorted(self._quality.items())),
             scales=tuple((frame, kind, label) for (frame, kind), label
@@ -156,17 +154,17 @@ class PoseLabels:
         if not isinstance(snapshot, PoseSnapshot):
             raise ValueError("Expected a PoseSnapshot")
         labels = cls()
-        labels._events = {(frame, joint): event
-                          for frame, joint, event in snapshot.events}
+        labels._events = {(frame, zone): event
+                          for frame, zone, event in snapshot.events}
         labels._quality = dict(snapshot.quality)
         labels._scales = {(frame, kind): label
                           for frame, kind, label in snapshot.scales}
         return labels
 
-    def event(self, frame: int, joint: str) -> JointEvent | None:
+    def event(self, frame: int, zone: str) -> ZoneEvent | None:
         _frame(frame)
-        _joint(joint)
-        return self._events.get((frame, joint))
+        _zone(zone)
+        return self._events.get((frame, zone))
 
     def quality(self, frame: int) -> float | None:
         _frame(frame)
@@ -177,16 +175,21 @@ class PoseLabels:
         _enum(kind, ScaleKind)
         return self._scales.get((frame, kind))
 
-    def set_event(self, frame: int, joint: str, event: JointEvent | None,
+    def set_event(self, frame: int, zone: str, event: ZoneEvent | None,
                   *, displayed_frame: int | None) -> None:
         """Set/replace the boundary, or delete it with None; preserve quality."""
         _painted(frame, displayed_frame)
-        _joint(joint)
+        _zone(zone)
         if event is None:
-            self._events.pop((frame, joint), None)
+            self._events.pop((frame, zone), None)
         else:
-            _enum(event, JointEvent)
-            self._events[frame, joint] = event
+            _enum(event, ZoneEvent)
+            # Like Touch's whole-record Onset: the newest click determines
+            # the single channel boundary for every target on this frame.
+            for target in POSE_ZONES:
+                if (frame, target) in self._events:
+                    self._events[frame, target] = event
+            self._events[frame, zone] = event
 
     def set_quality(self, frame: int, value: float | None,
                     *, displayed_frame: int | None) -> None:
@@ -209,22 +212,12 @@ class PoseLabels:
         else:
             self._scales[frame, kind] = label
 
-    def active_joints(self, frame: int) -> frozenset[str]:
-        """ON-inclusive/OFF-exclusive projection, recomputed after boundary edits.
-
-        Repeated ON is idempotent; unmatched OFF leaves the joint inactive.
-        Quality has no effect on interval membership.
-        """
+    def active_zones(self, frame: int) -> frozenset[str]:
+        """Any OFF closes the global interval, regardless of its clicked zone."""
         _frame(frame)
-        active = set()
-        for (index, joint), event in sorted(self._events.items()):
-            if index > frame:
-                break
-            if event is JointEvent.ON:
-                active.add(joint)
-            else:
-                active.discard(joint)
-        return frozenset(active)
+        return active_targets(((index, event.value, zone)
+                               for (index, zone), event in self._events.items()), frame)
+
 
 
 class PoseScaleSession:

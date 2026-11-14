@@ -41,15 +41,21 @@ class ProjectPaths:
     video_name: str
     base_dir: str = DATA_DIR
 
+    annotation_type: str = "Touch"
+
+    def __post_init__(self):
+        from domain.annotation_type import annotation_type
+        annotation_type(self.annotation_type)
+
     # --- construction -------------------------------------------------------
     @classmethod
     def for_video(cls, video_name: str, reliability: bool = False,
-                  base_dir: str = DATA_DIR) -> "ProjectPaths":
+                  base_dir: str = DATA_DIR, annotation_type: str = "Touch") -> "ProjectPaths":
         """Build paths from a raw video name, applying the reliability rule:
         Reliability mode appends `_reliability` to the project folder name."""
         if reliability and not video_name.endswith(RELIABILITY_SUFFIX):
             video_name = video_name + RELIABILITY_SUFFIX
-        return cls(video_name=video_name, base_dir=base_dir)
+        return cls(video_name=video_name, base_dir=base_dir, annotation_type=annotation_type)
 
     @property
     def is_reliability(self) -> bool:
@@ -61,7 +67,7 @@ class ProjectPaths:
         its frames from the original instead of re-extracting)."""
         if not self.is_reliability:
             return self
-        return ProjectPaths(self.video_name[: -len(RELIABILITY_SUFFIX)], self.base_dir)
+        return ProjectPaths(self.video_name[: -len(RELIABILITY_SUFFIX)], self.base_dir, self.annotation_type)
 
     # --- directories ---------------------------------------------------------
     @property
@@ -97,7 +103,8 @@ class ProjectPaths:
         (`adapters.sqlite_repo.SqliteRepository`). Those names have no
         properties here any more: nothing reads or writes them.
         """
-        return os.path.join(self.state_dir, f"{self.video_name}.db")
+        return (self.pose_state_db if self.annotation_type == "Pose" else
+                os.path.join(self.state_dir, f"{self.video_name}.db"))
 
     @property
     def pose_state_db(self) -> str:

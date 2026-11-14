@@ -10,6 +10,7 @@ from tkinter import ttk
 import sys
 
 from domain.templates import get_template
+from domain.pose import Navigation
 from gui import theme
 from gui import widgets
 from gui import window_reveal
@@ -66,13 +67,20 @@ def _card_min_height(card):
     return card.inner.winfo_reqheight() + 2 * card._pad
 
 
+def diagram_native_size(app):
+    if getattr(app, "annotation_type", "Touch") == "Pose":
+        from domain.pose_geometry import POSE_SIZE
+        return POSE_SIZE
+    return get_template(app.template).native_size
+
+
 def max_diagram_scale(app):
     """Largest diagram scale that leaves the rest of the right column its minimum height.
 
     The channel and parameter cards keep their size and the notes card keeps
     at least its two-line note field, all on one screen.
     """
-    _, base_h = get_template(app.template).native_size
+    _, base_h = diagram_native_size(app)
     try:
         screen_h = int(app.winfo_screenheight())
     except tk.TclError:
@@ -123,7 +131,7 @@ def fit_diagram_to_column(app):
         app.apply_diagram_scale(limit)
         return
     app.diagram_scale = limit
-    w, h = (int(v * limit) for v in get_template(app.template).native_size)
+    w, h = (int(v * limit) for v in diagram_native_size(app))
     app.diagram_canvas.configure(width=w, height=h)
     app.diagram_canvas.delete("all")
     draw_startup_diagram(app, limit)
@@ -295,11 +303,11 @@ def build_ui(app):
 
 def _nav_command(app):
     actions = {
-        "jump_back": lambda: app.next_frame(-app.jump_frame_count),
+        "jump_back": lambda: app.next_frame(-app.jump_frame_count, navigation=Navigation.JUMP),
         "back": lambda: app.next_frame(-1),
         "select": app.select_frame,
         "forward": lambda: app.next_frame(1),
-        "jump_forward": lambda: app.next_frame(app.jump_frame_count),
+        "jump_forward": lambda: app.next_frame(app.jump_frame_count, navigation=Navigation.JUMP),
     }
     return lambda value: actions[value]()
 
@@ -466,7 +474,7 @@ def _build_diagram_panel(app, scale):
     # scale (LabelingApp.commit_diagram_scale).
     app.diagram_grip = DiagramResizeGrip(
         app.diagram_canvas,
-        native_size=lambda: get_template(app.template).native_size,
+        native_size=lambda: diagram_native_size(app),
         get_scale=lambda: app.diagram_scale,
         max_scale=lambda: max_diagram_scale(app),
         min_scale=lambda: min_diagram_scale(app),
@@ -605,8 +613,8 @@ def _bind_navigation(app):
     app.bind("<KeyRelease-Left>", lambda event: app._on_arrow_release(-1))
     app.bind("<KeyRelease-Right>", lambda event: app._on_arrow_release(1))
     app.bind("<FocusOut>", lambda event: app._cancel_arrow_hold_state(), add="+")
-    app.bind("<Shift-Left>", _guard_key(app, lambda event: app.next_frame(-app.jump_frame_count)))
-    app.bind("<Shift-Right>", _guard_key(app, lambda event: app.next_frame(app.jump_frame_count)))
+    app.bind("<Shift-Left>", _guard_key(app, lambda event: app.next_frame(-app.jump_frame_count, navigation=Navigation.JUMP)))
+    app.bind("<Shift-Right>", _guard_key(app, lambda event: app.next_frame(app.jump_frame_count, navigation=Navigation.JUMP)))
     app.bind("<space>", _guard_key(app, app.toggle_play))
 
     # Wheel bindings: Windows/Mac vs Linux

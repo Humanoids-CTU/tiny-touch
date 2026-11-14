@@ -132,10 +132,10 @@ def choose_video(parent, entries, *, center=None):
         state = {"ready": "Ready", "preparing": "Resume frame generation",
                  "draft": "Setup saved / resume preparation"}.get(
                      entry.preparation_state, "Setup / preparation required")
-        ttk.Label(info, text=f"{TEMPLATE_LABELS.get(entry.template, entry.template)} / {state}" + (f" / {entry.setup_name}" if entry.setup_name else ""), style="CardMuted.TLabel", wraplength=px(ROW_TEXT_WRAP)).pack(anchor="w", pady=px(5))
+        ttk.Label(info, text=f"{entry.annotation_type} / {TEMPLATE_LABELS.get(entry.template, entry.template)} / {state}" + (f" / {entry.setup_name}" if entry.setup_name else ""), style="CardMuted.TLabel", wraplength=px(ROW_TEXT_WRAP)).pack(anchor="w", pady=px(5))
         if not entry.source:
             ttk.Label(info, text="Source unavailable — select the source again with Load new video.", style="Card.TLabel", wraplength=px(ROW_TEXT_WRAP)).pack(anchor="w")
-        diagram = photo(template_diagram(entry.template), (px(ROW_DIAGRAM_SIZE[0]), px(ROW_DIAGRAM_SIZE[1])),
+        diagram = photo(template_diagram(entry.template) if entry.annotation_type == "Touch" else None, (px(ROW_DIAGRAM_SIZE[0]), px(ROW_DIAGRAM_SIZE[1])),
                         radius=px(DIAGRAM_RADIUS), rim=px(DIAGRAM_RIM))
         ttk.Label(row, image=diagram, style="Card.TLabel").pack(side="left", padx=px(14))
         ttk.Button(row, text="Resume", style="Card.Tool.TButton", command=lambda value=entry: finish(value), state="normal" if entry.source else "disabled").pack(side="right")

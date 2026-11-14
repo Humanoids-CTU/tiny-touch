@@ -33,6 +33,10 @@ from domain.model import (
 from domain.project import ProjectPaths
 from domain.touch import NO_ZONE, find_last_open_onset, find_open_touches, zones_at
 from domain.templates import DEFAULT_TEMPLATE, get_template
+from domain.pose import ZoneEvent, Navigation
+from gui.pose_panel import PosePanel
+from domain.pose_timeline import PoseTimelineIndex
+from gui.pose_timeline import PoseTimelineView, POSE_DETAIL_HEIGHT, POSE_OVERVIEW_HEIGHT
 from domain.zone_display import ZoneDisplaySettings
 from gui import theme
 from gui import widgets
@@ -48,6 +52,7 @@ from gui.template_dialog import choose_template, template_diagram
 from gui.video_library import choose_video, choose_existing_video
 from service_layer.project_copy import next_copy_project
 from gui.coding_setup_wizard import configure_video
+from gui.pose_setup_wizard import configure_pose_video, choose_annotation_type
 from adapters.project_catalog import list_projects, SOURCE_META
 from adapters.sqlite_repo import SqliteRepository
 from gui.zone_names_dialog import edit_zone_names
@@ -55,7 +60,7 @@ from gui.zone_labels import draw_zone_labels
 from gui.diagram_highlight import DiagramHighlighter
 from gui.resource_utils import asset_path
 from gui.ui_components import (CARD_CONTENT_PAD, build_ui, draw_startup_diagram, sync_play_control,
-                               align_timeline_to_video, max_diagram_scale)
+                               align_timeline_to_video, max_diagram_scale, TIMELINE_HEIGHT, TIMELINE2_HEIGHT)
 from gui.diagram_resize import clamp_scale
 from gui.video_overlay import BADGE_INSET
 from log_setup import open_logs_folder
@@ -262,7 +267,7 @@ def load_parameter_names_into(video_obj, par_buttons, limb_par_buttons, setup=No
     """
     labels = config.load_parameter_labels() if setup is None else {
         **{f"parameter{i}": setup.parameter_labels[f"Par{i}"] for i in range(1, 4)},
-        **{f"limb_parameter{i}": setup.limb_parameter_labels[f"Par{i}"] for i in range(1, 4)},
+        **{f"limb_parameter{i}": getattr(setup, "limb_parameter_labels", {}).get(f"Par{i}", "") for i in range(1, 4)},
     }
     p1 = labels['parameter1']
     p2 = labels['parameter2']
@@ -435,9 +440,13 @@ class LabelingApp(tk.Tk):
         has_video = self.video is not None
         state = tk.NORMAL if has_video else tk.DISABLED
         if getattr(self, "analysis_btn", None):
-            self.analysis_btn.config(state=state)
+            self.analysis_btn.config(state=state if getattr(self, "annotation_type", "Touch") == "Touch" else tk.DISABLED)
         if getattr(self, "special_zones_btn", None):
             self.special_zones_btn.config(state=state)
+        panel = self.__dict__.get("_pose_panel")
+        if panel is not None:
+            for widget in panel.widgets:
+                widget.config(state=state)
         # The right column only annotates a loaded video.
         selector = getattr(self, "channel_selector", None)
         if selector is not None:
@@ -469,6 +478,20 @@ class LabelingApp(tk.Tk):
         if not hasattr(self, "mode_controls_frame"):
             return
 
+        self._pose_timeline_index = None
+        self._pose_detail_timeline = PoseTimelineView(self.timeline_canvas)
+        self._pose_overview_timeline = PoseTimelineView(self.timeline2_canvas)
+        pose = getattr(self, "annotation_type", "Touch") == "Pose"
+        self.timeline_canvas.config(height=theme.px(POSE_DETAIL_HEIGHT if pose else TIMELINE_HEIGHT))
+        self.timeline2_canvas.config(height=theme.px(POSE_OVERVIEW_HEIGHT if pose else TIMELINE2_HEIGHT))
+        for name in ("_detail_timeline", "_overview_timeline"):
+            view = self.__dict__.get(name)
+            if view is not None:
+                view.reset()
+
+        old_panel = self.__dict__.pop("_pose_panel", None)
+        if old_panel is not None:
+            old_panel.detach()
         definition = get_template(self.template)
         self.limb_parameter_heading.config(text="Channel parameters")
         self._clear_frame_children(self.mode_controls_frame)
@@ -476,6 +499,12 @@ class LabelingApp(tk.Tk):
         self.limb_par1_btn = None
         self.limb_par2_btn = None
         self.limb_par3_btn = None
+
+        if getattr(self, "annotation_type", "Touch") == "Pose":
+            self._pose_panel = PosePanel(self)
+            self._pose_panel.build()
+            self._set_mode_button_states()
+            return
 
         px = theme.px
         inset = px(CARD_CONTENT_PAD)
@@ -519,6 +548,15 @@ class LabelingApp(tk.Tk):
         if self.video is None:
             return
         idx = self.video.current_frame if index is None else index
+
+        if self.__dict__.get("_pose_panel") is not None:
+            self._annotation_version = getattr(self, "_annotation_version", 0) + 1
+            bundle = self.video.frames.get(idx)
+            if isinstance(bundle, dict):
+                bundle["Changed"] = True
+            self._pose_annotation_changed(idx)
+            self._refresh_after_annotation_edit()
+            return
 
         # Every annotation edit passes through here, so this is where cached
         # views of the annotations go stale and the screen catches up.
@@ -941,6 +979,12 @@ class LabelingApp(tk.Tk):
         self.next_frame(delta, preserve_arrow_hold=self._pending_buffer_preserve_hold)
 
     def on_middle_click(self, event=None):
+        panel = self.__dict__.get("_pose_panel")
+        if panel is not None:
+            x = self.last_mouse_x if event is None or getattr(event, "keysym", "") == "d" else event.x
+            y = self.last_mouse_y if event is None or getattr(event, "keysym", "") == "d" else event.y
+            panel.click(x, y, None)
+            return
         if self.video is None:
             return
         if not LabelingApp._annotation_frame_ready(self):
@@ -988,12 +1032,19 @@ class LabelingApp(tk.Tk):
 
     def _redraw_diagram(self):
         """Full diagram repaint: limb image, zone labels, then the dots."""
+        panel = self.__dict__.get("_pose_panel")
+        if panel is not None:
+            panel.draw()
+            return
         self._draw_diagram_base()
         self._draw_diagram_dots()
 
     # === Diagram resize (corner grip) ==========================================
     def _diagram_display_size(self, scale):
         base_w, base_h = get_template(self.template).native_size
+        if getattr(self, "annotation_type", "Touch") == "Pose":
+            from domain.pose_geometry import POSE_SIZE
+            base_w, base_h = POSE_SIZE
         return int(base_w * scale), int(base_h * scale)
 
     def _diagram_image_path(self):
@@ -1012,6 +1063,10 @@ class LabelingApp(tk.Tk):
         self.diagram_scale = scale
         w, h = self._diagram_display_size(scale)
         self.diagram_canvas.config(width=w, height=h)
+        panel = self.__dict__.get("_pose_panel")
+        if panel is not None:
+            panel.draw()
+            return
         self.diagram_canvas.delete("all")
         path = self._diagram_image_path()
         cache = getattr(self, "_diagram_native_cache", None)
@@ -1077,6 +1132,11 @@ class LabelingApp(tk.Tk):
         Cheap (deletes and recreates a handful of cached sprites), so it runs
         on every frame change, including each playback step.
         """
+        panel = self.__dict__.get("_pose_panel")
+        if panel is not None:
+            panel.refresh()
+            panel.draw()
+            return
         self.diagram_canvas.delete(DIAGRAM_DOT_TAG)
         if not self.video:
             return
@@ -1123,6 +1183,10 @@ class LabelingApp(tk.Tk):
         self.draw_timeline2()
 
     def on_diagram_click(self, event, is_onset):
+        panel = self.__dict__.get("_pose_panel")
+        if panel is not None:
+            panel.click(event.x, event.y, ZoneEvent.ON if is_onset else ZoneEvent.OFF)
+            return
         if self.video is None:
             return
         onset = "ON" if is_onset else "OFF"
@@ -1285,6 +1349,12 @@ class LabelingApp(tk.Tk):
 
     # === Zone Masks & Lookups ==================================================
     def _load_zone_masks(self):
+        if getattr(self, "annotation_type", "Touch") == "Pose":
+            from adapters.pose_diagram import pose_zone_masks
+            import numpy as np
+            self._zone_masks = [(name, np.asarray(mask)) for name, mask in pose_zone_masks()]
+            self._zone_label_positions = zone_label_positions(self._zone_masks)
+            return
         directory = asset_path(get_template(self.template).masks_directory)
         setup = getattr(self, "coding_setup", None)
         layout = getattr(setup, "zone_layout", None)
@@ -1317,6 +1387,9 @@ class LabelingApp(tk.Tk):
             canvas_width = self.timeline_canvas.winfo_width()
             frame_number = timeline_click_frame(click_position, canvas_width, self.video.number_frames_in_zone)
             if self.video.total_frames >= frame_number + self.video.number_frames_in_zone * self.video.current_frame_zone:
+                panel = self.__dict__.get("_pose_panel")
+                if panel is not None:
+                    panel.pending = None
                 self.video.current_frame = frame_number + self.video.number_frames_in_zone * self.video.current_frame_zone
                 self.display_first_frame()
                 # display_first_frame refreshes the controls only; move both playheads.
@@ -1333,6 +1406,9 @@ class LabelingApp(tk.Tk):
             click_position = event.x
             canvas_width = self.timeline2_canvas.winfo_width()
             new_frame = timeline_click_frame(click_position, canvas_width, self.video.total_frames)
+            panel = self.__dict__.get("_pose_panel")
+            if panel is not None:
+                panel.pending = None
             self.video.current_frame = new_frame
             self.video.current_frame_zone = new_frame // self.video.number_frames_in_zone
             logger.debug("jumping to exact frame: %s", new_frame)
@@ -1349,6 +1425,9 @@ class LabelingApp(tk.Tk):
         for tag in event.widget.gettags("current"):
             if tag.startswith("note_frame:"):
                 frame = int(tag.split(":", 1)[1])
+                panel = self.__dict__.get("_pose_panel")
+                if panel is not None:
+                    panel.pending = None
                 self.stop_video()
                 self.video.current_frame = frame
                 self.video.current_frame_zone = frame // self.video.number_frames_in_zone
@@ -1360,6 +1439,16 @@ class LabelingApp(tk.Tk):
         return False
 
     def draw_timeline(self):
+        if self.__dict__.get("_pose_panel") is not None:
+            if self.video and self.video.total_frames >= 0:
+                index = self._get_pose_timeline_index()
+                count = self.video.number_frames_in_zone
+                zone = self.video.current_frame // count if count else self.video.current_frame_zone
+                self.video.current_frame_zone = zone
+                self._pose_detail_timeline.draw(index, self.video.total_frames,
+                                               self.video.current_frame,
+                                               offset=zone * count, count=count)
+            return
         self._assert_ui_thread()
         with self.perf.time("draw_timeline"):
             if not (self.video and self.video.total_frames > 0):
@@ -1383,6 +1472,12 @@ class LabelingApp(tk.Tk):
                         video.touch_to_next_zone.append(projection.carry)
 
     def draw_timeline2(self):
+        if self.__dict__.get("_pose_panel") is not None:
+            if self.video and self.video.total_frames >= 0:
+                index = self._get_pose_timeline_index()
+                self._pose_overview_timeline.draw(index, self.video.total_frames,
+                                                 self.video.current_frame)
+            return
         self._assert_ui_thread()
         with self.perf.time("draw_timeline2"):
             if not (self.video and self.video.total_frames > 0):
@@ -1391,6 +1486,26 @@ class LabelingApp(tk.Tk):
                 self.video.frames, self.option_var_1.get(), self.video.total_frames,
                 self.video.current_frame,
             )
+
+    def _get_pose_timeline_index(self):
+        labels = self.pose_session.labels
+        index = self.__dict__.get("_pose_timeline_index")
+        if index is None or index.labels is not labels:
+            index = self._pose_timeline_index = PoseTimelineIndex(labels, self.video.frames)
+            self._pose_detail_timeline = PoseTimelineView(self.timeline_canvas)
+            self._pose_overview_timeline = PoseTimelineView(self.timeline2_canvas)
+        return index
+
+    def _pose_annotation_changed(self, frame):
+        """Update recorded Pose/shared marks without invalidating Touch caches."""
+        if self.video is None or self.__dict__.get("_pose_panel") is None:
+            return
+        index = self._get_pose_timeline_index()
+        events_changed = index.update(frame, self.video.frames.get(frame, {}))
+        self._pose_detail_timeline.changed(frame, events_changed)
+        self._pose_overview_timeline.changed(frame, events_changed)
+        self.draw_timeline()
+        self.draw_timeline2()
 
     def update_frame_counter(self):
         # Runs on every control refresh (25 Hz in playback): each call below is
@@ -1694,6 +1809,11 @@ class LabelingApp(tk.Tk):
             return
         if getattr(self, "_selecting_frame", False):
             return  # Discard an advance queued just before the dialog paused playback.
+        panel = self.__dict__.get("_pose_panel")
+        if panel is not None:
+            navigation = (Navigation.FORWARD_HOLD if direction > 0 and getattr(self, "_hold_play_active", False)
+                          else Navigation.PLAY)
+            panel.request_navigation(self.video.current_frame, next_frame, navigation)
         self.video.current_frame = next_frame
         self._last_step_sign = direction
         self._play_ui_pending = True
@@ -1978,11 +2098,16 @@ class LabelingApp(tk.Tk):
         """Checkpoint the accumulator, session keeps running."""
         if self.video is None or self.state_repo is None:
             return
+        if getattr(self, "annotation_type", "Touch") == "Pose":
+            return
         self.labeling_timer.persist(self.state_repo)
 
     def _finalize_video_time(self):
         """Checkpoint the accumulator and end the session."""
         if self.video is None or self.state_repo is None:
+            return
+        if getattr(self, "annotation_type", "Touch") == "Pose":
+            self.labeling_timer.cancel_session()
             return
         self.labeling_timer.finalize(self.state_repo)
 
@@ -2013,7 +2138,8 @@ class LabelingApp(tk.Tk):
             return
         idx = self.video.current_frame
         new_state = annotation_service.toggle_global_param(
-            self.video.frames, idx, parameter_index
+            self.video.frames, idx, parameter_index,
+            shared_only=getattr(self, "annotation_type", "Touch") == "Pose",
         )
 
         # color the right button immediately
@@ -2025,6 +2151,8 @@ class LabelingApp(tk.Tk):
         annotation_logger.info("f=%s param P%s -> %s", idx, parameter_index, new_state)
 
     def toggle_limb_parameter(self, param_number: int):
+        if getattr(self, "annotation_type", "Touch") == "Pose":
+            return
         if not LabelingApp._lock_before_annotation(self):
             return
         limb = self.option_var_1.get()
@@ -2044,6 +2172,8 @@ class LabelingApp(tk.Tk):
         )
 
     def update_limb_parameter_buttons(self):
+        if self.__dict__.get("_pose_panel") is not None:
+            return
         if not self.video:
             return
         limb = self.option_var_1.get()
@@ -2092,7 +2222,7 @@ class LabelingApp(tk.Tk):
             self._selecting_frame = False
         self.focus_set()
         if target is not None and target != self.video.current_frame:
-            self.next_frame(target - self.video.current_frame)
+            self.next_frame(target - self.video.current_frame, navigation=Navigation.JUMP)
 
     def save_note(self):
         if not LabelingApp._annotation_frame_ready(self):
@@ -2102,7 +2232,9 @@ class LabelingApp(tk.Tk):
         if note_text and not LabelingApp._lock_before_annotation(self):
             return
 
-        changed = annotation_service.set_note(self.video.frames, idx, note_text)
+        changed = annotation_service.set_note(
+            self.video.frames, idx, note_text,
+            shared_only=getattr(self, "annotation_type", "Touch") == "Pose")
         if changed:
             # mark_bundle_changed already emits the notify_bundle_changed summary.
             self.mark_bundle_changed(idx)
@@ -2122,6 +2254,24 @@ class LabelingApp(tk.Tk):
         self._set_note_entry_text(note_text)
 
     # === Save / Export =========================================================
+    def _save_pose_workspace(self):
+        """Save Pose working state only; CSV and Analysis await their own format."""
+        session = self.pose_session
+        dialog = self.__dict__.get("_special_zones_app")
+        if dialog is not None and dialog.top_level.winfo_exists():
+            from service_layer.pose_project_service import special_zone_rows
+            session.special_zones = special_zone_rows(dialog.dots, dialog.diagram_scale, self._zone_masks)
+            session.special_note = dialog.note()
+            session.special_scale = dialog.diagram_scale
+        session.save_workspace(
+            self.video.frames, last_frame=self.video.current_frame,
+            total_frames=self.video.total_frames,
+            labeling_time_seconds=self._current_video_time_s(),
+            special_zones=session.special_zones, special_note=session.special_note,
+            special_scale=session.special_scale,
+        )
+        return True
+
     def save_data(self):
         if not self.video or not self.video.frames_dir:
             logger.info("save skipped: no video loaded")
@@ -2129,6 +2279,15 @@ class LabelingApp(tk.Tk):
         if self.state_repo is None:
             logger.error("save skipped: no state database is open")
             return False
+        if getattr(self, "annotation_type", "Touch") == "Pose":
+            try:
+                saved = self._save_pose_workspace()
+            except Exception as exc:
+                logger.exception("Pose workspace save failed; session retained for retry")
+                messagebox.showerror("Save failed", f"The Pose project remains open for retry.\n{exc}", parent=self)
+                return False
+            logger.info("Pose workspace saved for %s", self.video_name)
+            return saved
         started = time.perf_counter()
         dirty_count = sum(
             1 for bundle in self.video.frames.values()
@@ -2222,7 +2381,7 @@ class LabelingApp(tk.Tk):
         remains headless and testable. The saved project template is passed
         down for validation against the export metadata.
         """
-        if not self.video:
+        if not self.video or getattr(self, "annotation_type", "Touch") == "Pose":
             return
         if not self._resolve_open_touches_before_analysis():
             return
@@ -2331,21 +2490,23 @@ class LabelingApp(tk.Tk):
             self.play_video()
 
     # === Video Load & Init =====================================================
-    def _annotation_frame_ready(self):
+    def _annotation_frame_ready(self, *, pause_navigation=True):
         video = getattr(self, "video", None)
         if video is None:
             return True
         ready = getattr(self, "displayed_frame", video.current_frame) == video.current_frame
-        if (getattr(self, "play", False) or getattr(self, "_play_ui_pending", False)
+        if pause_navigation and (getattr(self, "play", False) or getattr(self, "_play_ui_pending", False)
                 or getattr(self, "_arrow_start_id", None) is not None):
             self.stop_video()
         if not ready:
             logger.debug("Annotation skipped: frame %s has not been painted yet", video.current_frame)
         return ready
 
-    def _lock_before_annotation(self):
-        if not LabelingApp._annotation_frame_ready(self):
+    def _lock_before_annotation(self, *, pause_navigation=True):
+        if not LabelingApp._annotation_frame_ready(self, pause_navigation=pause_navigation):
             return False
+        if getattr(self, "annotation_type", "Touch") == "Pose":
+            return True
         repo = getattr(self, "state_repo", None)
         if repo is None:
             return True
@@ -2362,6 +2523,8 @@ class LabelingApp(tk.Tk):
         return choose_template(self, initial, center=center_over_parent)
 
     def _apply_active_template(self, template):
+        if getattr(self, "annotation_type", "Touch") == "Pose":
+            return
         self.template = template
         self.zone_display = self.state_repo.load_zone_display(template)
         self._reset_zone_cache()
@@ -2374,6 +2537,8 @@ class LabelingApp(tk.Tk):
         self._redraw_diagram()
 
     def _save_zone_display(self, settings):
+        if getattr(self, "annotation_type", "Touch") == "Pose":
+            return False
         try:
             self.state_repo.save_zone_display(self.template, settings)
         except (OSError, ValueError, sqlite3.Error) as exc:
@@ -2394,6 +2559,8 @@ class LabelingApp(tk.Tk):
         return True
 
     def edit_project_zone_names(self):
+        if getattr(self, "annotation_type", "Touch") == "Pose":
+            return
         if self.state_repo and self.state_repo.load_preparation_state() == "ready":
             messagebox.showinfo("Coding setup locked", "Prepared video coding labels are read-only.", parent=self)
             return
@@ -2410,6 +2577,8 @@ class LabelingApp(tk.Tk):
         )
 
     def change_project_template(self):
+        if getattr(self, "annotation_type", "Touch") == "Pose":
+            return
         if self.video is None:
             return
         state = self.state_repo.load_template()
@@ -2462,7 +2631,8 @@ class LabelingApp(tk.Tk):
         # on close, so close it now, while that repo is still the right one.
         if self._special_zones_app and self._special_zones_app.top_level.winfo_exists():
             logger.debug("closing Special Zones window before unloading")
-            self._special_zones_app.on_close()
+            if self._special_zones_app.on_close() is False:
+                return False
         self._special_zones_app = None
 
         try:
@@ -2492,6 +2662,7 @@ class LabelingApp(tk.Tk):
 
         self._close_state_repo()
         self._reset_zone_cache()
+        LabelingApp._restore_empty_annotation_controls(self)
 
         # UI bits tied to the old project.
         self.update_frame_counter()
@@ -2513,6 +2684,7 @@ class LabelingApp(tk.Tk):
         self._reset_zone_cache()
         self.video = None
         self.video_name = None
+        LabelingApp._restore_empty_annotation_controls(self)
         self._ghost_cache = None  # drop the reference to the old video
         self._redraw_diagram()
         self.displayed_frame = None
@@ -2545,12 +2717,15 @@ class LabelingApp(tk.Tk):
                     filetypes=(("Video files", "*.mp4 *.MP4 *.mov *.MOV *.avi *.AVI *.mkv *.MKV *.flv *.FLV *.wmv *.WMV"), ("All files", "*.*")))
             if not video_path:
                 return
+            annotation_type = choose_annotation_type(self, center=center_over_parent)
+            if annotation_type is None:
+                return
             mode = self.ask_labeling_mode()
             if mode is None:
                 return
             raw_video_name = os.path.splitext(os.path.basename(video_path))[0]
-            candidate_paths = ProjectPaths.for_video(raw_video_name, reliability=mode == "Reliability")
-            if os.path.exists(candidate_paths.video_dir):
+            candidate_paths = ProjectPaths.for_video(raw_video_name, reliability=mode == "Reliability", annotation_type=annotation_type)
+            if os.path.exists(candidate_paths.state_db):
                 copy_paths = next_copy_project(candidate_paths)
                 duplicate_choice = choose_existing_video(
                     self, candidate_paths.video_name, copy_paths.video_name,
@@ -2564,19 +2739,24 @@ class LabelingApp(tk.Tk):
         else:
             video_path = choice.source
             candidate_paths = choice.paths
+            annotation_type = candidate_paths.annotation_type
             mode = "Reliability" if candidate_paths.is_reliability else "Normal"
         try:
             setup, ready = project_service.inspect_coding_setup(candidate_paths)
-            state = SqliteRepository.inspect_template(candidate_paths.state_db)
+            state = (SqliteRepository.inspect_template(candidate_paths.state_db)
+                     if annotation_type == "Touch" else None)
             if not ready and not project_service.can_resume_preparation(candidate_paths):
                 if os.path.exists(candidate_paths.state_db):
                     messagebox.showinfo("Review coding setup", project_service.coding_setup_warning(candidate_paths), parent=self)
-                setup = configure_video(self, setup, center=center_over_parent, locked_template=bool(state and state.locked))
+                setup = (configure_pose_video(self, setup, center=center_over_parent)
+                         if annotation_type == "Pose" else
+                         configure_video(self, setup, center=center_over_parent, locked_template=bool(state and state.locked)))
                 if setup is None:
                     return
             if setup is None:
                 raise ValueError("Review and prepare this video's coding setup first.")
-            template_plan = project_service.plan_project_template(candidate_paths, setup.template)
+            template_plan = (project_service.plan_project_template(candidate_paths, setup.template)
+                             if annotation_type == "Touch" else None)
             project_service.validate_source_association(candidate_paths, video_path)
         except (ValueError, RuntimeError, OSError, sqlite3.Error) as exc:
             messagebox.showerror("Cannot open video", str(exc), parent=self)
@@ -2610,10 +2790,12 @@ class LabelingApp(tk.Tk):
             return
 
         # Commit the mode only now that the load is actually going ahead.
+        self.annotation_type = annotation_type
         self.labeling_mode = mode
         annotation_logger.info("mode %s selected for video %s", mode, os.path.basename(video_path))
         self.mode_label.set(
-            theme.STATUS_WARN if mode == "Reliability" else theme.STATUS_OK, mode
+            theme.STATUS_WARN if mode == "Reliability" else theme.STATUS_OK,
+            f"{annotation_type} / {mode}"
         )
 
         # 4) Build the new session against a LOCAL Video object. self.video
@@ -2637,7 +2819,7 @@ class LabelingApp(tk.Tk):
         raw_video_name = candidate_paths.original.video_name
         # The "_reliability" suffix rule and directory creation live in the
         # service (ProjectPaths.for_video underneath).
-        paths = project_service.prepare_project(raw_video_name, self.labeling_mode)
+        paths = project_service.prepare_project(raw_video_name, self.labeling_mode, annotation_type)
         video_name = paths.video_name
 
         video.frames_dir = paths.frames_dir
@@ -2652,7 +2834,11 @@ class LabelingApp(tk.Tk):
                 fps=self.frame_rate,
                 program_version=video.program_version,
             )
-            project_service.apply_project_template(self.state_repo, template_plan)
+            if template_plan is not None:
+                project_service.apply_project_template(self.state_repo, template_plan)
+            if annotation_type == "Pose":
+                from service_layer.pose_project_service import PoseProjectSession
+                self.pose_session = PoseProjectSession.from_repository(self.state_repo)
             self.state_repo.save_coding_setup(setup, preparation_state="ready" if ready else "draft")
             self.state_repo.set_meta(SOURCE_META, os.path.abspath(video_path))
             self.state_repo.set_meta("source_video_sha256", project_service.source_fingerprint(video_path))
@@ -2720,11 +2906,16 @@ class LabelingApp(tk.Tk):
         #    switches from the old picture to the finished one in one step.
         #    The cover drops at the timeout if the frame is late, if the
         #    publish raises, or if a dialog or message box activates meanwhile.
-        content_swap.swap_content(
-            self, lambda: self._publish_loaded_video(video, video_name),
-            ready=lambda: self._first_frame_shown(video),
-            timeout_ms=LOAD_FIRST_FRAME_TIMEOUT_MS,
-        )
+        try:
+            content_swap.swap_content(
+                self, lambda: self._publish_loaded_video(video, video_name),
+                ready=lambda: self._first_frame_shown(video),
+                timeout_ms=LOAD_FIRST_FRAME_TIMEOUT_MS,
+            )
+        except Exception as exc:
+            logger.exception("Could not publish loaded video")
+            self._abort_load_to_clean_state()
+            messagebox.showerror("Load failed", str(exc), parent=self)
 
     def _first_frame_shown(self, video):
         """The load's swap may end: `video`'s current frame is on screen, or
@@ -2747,7 +2938,15 @@ class LabelingApp(tk.Tk):
         self.video = video
         self.video_name = video_name
         self._prepare_video_renderer()
-        self._apply_active_template(self.state_repo.load_template().template)
+        if getattr(self, "annotation_type", "Touch") == "Pose":
+            self.template = self.coding_setup.template
+            self.zone_display = ZoneDisplaySettings(self.coding_setup.zone_labels, show_names=bool(self.coding_setup.zone_labels))
+            self._reset_zone_cache()
+            self._load_zone_masks()
+            self.rebuild_annotation_controls()
+            self._redraw_diagram()
+        else:
+            self._apply_active_template(self.state_repo.load_template().template)
         self._refresh_jump_label()
 
         self._detail_timeline.reset()
@@ -2819,12 +3018,22 @@ class LabelingApp(tk.Tk):
             self.special_zones_btn.config(state=tk.DISABLED)
 
             def on_save(dots, diagram_scale=None, note=None):
-                self.update_data_special_zones(dots, diagram_scale, note)
+                return self.update_data_special_zones(dots, diagram_scale, note)
 
             def on_close(dots, diagram_scale=None, note=None):
-                self.update_data_special_zones(dots, diagram_scale, note)
+                if self.update_data_special_zones(dots, diagram_scale, note) is False:
+                    return False
                 self.special_zones_btn.config(state=tk.NORMAL)
                 self._special_zones_app = None
+                return True
+
+            pose = getattr(self, "annotation_type", "Touch") == "Pose"
+            if pose:
+                from adapters.pose_diagram import render_pose_diagram
+                session = self.pose_session
+                initial_points = project_service.rescale_special_zone_points(
+                    [(row[1], row[2]) for row in session.special_zones],
+                    session.special_scale, scale, DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE)
 
             try:
                 self._special_zones_app = SpecialZonesApp(
@@ -2832,9 +3041,10 @@ class LabelingApp(tk.Tk):
                     on_save,
                     on_close,
                     initial_points=initial_points,
-                    initial_note=self.state_repo.special_zones_note(),
+                    initial_note=self.pose_session.special_note if pose else self.state_repo.special_zones_note(),
                     diagram_scale=scale,
-                    diagram_path=template_diagram(self.state_repo.load_template().template),
+                    diagram_path=None if pose else template_diagram(self.state_repo.load_template().template),
+                    diagram_image=render_pose_diagram() if pose else None,
                     on_first_mark=self._lock_before_annotation,
                     zone_display=self.zone_display,
                     zone_positions=self._zone_label_positions,
@@ -2847,6 +3057,22 @@ class LabelingApp(tk.Tk):
                 logger.exception("failed to open Special Zones window")
 
     def update_data_special_zones(self, dots, diagram_scale=None, note=None):
+        if getattr(self, "annotation_type", "Touch") == "Pose":
+            from service_layer.pose_project_service import special_zone_rows
+            scale = diagram_scale or DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE
+            session = self.pose_session
+            session.special_zones = special_zone_rows(dots, scale, self._zone_masks)
+            session.special_note = note
+            session.special_scale = scale
+            try:
+                if self.save_data() is False:
+                    return False
+            except Exception as exc:
+                logger.exception("Pose Special Zones save failed")
+                messagebox.showerror("Save failed", f"Special Zones remain open for retry.\n{exc}", parent=self)
+                return False
+            theme.set_button_state(self.special_zones_btn, "ON" if dots else None)
+            return True
         self.data_special_zones = dots
         self.special_zones_note = note
         if diagram_scale:
@@ -2894,7 +3120,8 @@ class LabelingApp(tk.Tk):
     def on_close(self):
         if getattr(self, "_closing", False):
             return
-        touches = find_open_touches(self.video.frames, LIMBS) if self.video is not None else []
+        touches = (find_open_touches(self.video.frames, LIMBS)
+                   if self.video is not None and getattr(self, "annotation_type", "Touch") == "Touch" else [])
         if touches:
             if not self._resolve_open_touches(touches, closing=True):
                 return
@@ -2907,6 +3134,10 @@ class LabelingApp(tk.Tk):
             except Exception:
                 logger.exception("final save failed while closing")
                 ok = False
+            if not ok and getattr(self, "annotation_type", "Touch") == "Pose":
+                self._closing = False
+                messagebox.showerror("Save failed", "The Pose project remains open. Retry Save before closing.", parent=self)
+                return
             if not ok and not messagebox.askyesno(
                 "Save failed",
                 "Saving failed - your latest changes are NOT on disk (see the console).\n"
@@ -2974,13 +3205,34 @@ class LabelingApp(tk.Tk):
     def _close_state_repo(self):
         """Release the state DB connection (called before opening another
         project and on app close). Safe to call when nothing is open."""
-        if self.state_repo is None:
-            return
-        self.state_repo.close()
-        self.state_repo = None
+        panel = self.__dict__.pop("_pose_panel", None)
+        if panel is not None:
+            panel.detach()
+        self._pose_timeline_index = None
+        self.__dict__.pop("pose_session", None)
+        if self.state_repo is not None:
+            self.state_repo.close()
+            self.state_repo = None
+
+    def _restore_empty_annotation_controls(self):
+        """Remove project-specific controls and painted content after detach."""
+        self.annotation_type = "Touch"
+        self.template = DEFAULT_TEMPLATE
+        self.coding_setup = None
+        self.zone_display = ZoneDisplaySettings()
+        if self.__dict__.get("mode_controls_frame") is not None:
+            self.rebuild_annotation_controls()
+            self.diagram_canvas.delete("all")
+            self.timeline_canvas.delete("all")
+            self.timeline2_canvas.delete("all")
+        badge = self.__dict__.get("mode_label")
+        if badge is not None:
+            badge.set(theme.STATUS_OK, "No video")
 
     def save_last_position(self):
         if self.video is None or self.state_repo is None:
+            return
+        if getattr(self, "annotation_type", "Touch") == "Pose":
             return
         self.state_repo.save_last_position(
             self.video.current_frame, self.video.total_frames
@@ -3136,12 +3388,13 @@ class LabelingApp(tk.Tk):
             self._set_note_entry_text(note_draft)
 
     # === Frame Stepping ========================================================
-    def next_frame(self, number_of_frames, play=False, *, preserve_arrow_hold=False):
+    def next_frame(self, number_of_frames, play=False, *, preserve_arrow_hold=False, navigation=None):
         if self.video is None:
             logger.debug("frame movement skipped: no video loaded")
             return
         if not play and not preserve_arrow_hold:
             self.stop_video()
+        previous_frame = self.video.current_frame
         if number_of_frames > 0:
             self.video.current_frame = min(self.video.total_frames, self.video.current_frame + number_of_frames)
             self._last_step_sign = 1
@@ -3151,6 +3404,12 @@ class LabelingApp(tk.Tk):
         else:
             logger.warning("frame movement skipped: delta is zero")
             return
+
+        panel = self.__dict__.get("_pose_panel")
+        if panel is not None:
+            intent = navigation or (Navigation.FORWARD_STEP if number_of_frames == 1 and not play
+                                    else Navigation.JUMP)
+            panel.request_navigation(previous_frame, self.video.current_frame, intent)
 
         # Wake the buffering thread if the destination isn't cached so it gets
         # loaded with priority before any prefetch fills.

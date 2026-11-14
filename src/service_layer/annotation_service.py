@@ -30,6 +30,11 @@ def ensure_bundle(frames: Dict[int, FrameBundle], idx: int) -> FrameBundle:
     return b
 
 
+def ensure_shared_frame(frames, idx):
+    """Pose notes and parameters never manufacture Touch limb records."""
+    return frames.setdefault(idx, {"Note": None, "Params": {}, "Changed": False})
+
+
 def _empty_limb_record(limb: str) -> dict:
     return {"X": [], "Y": [], "Onset": "", "Bodypart": limb, "Zones": [], "Touch": None}
 
@@ -126,10 +131,10 @@ def remove_nearest_click(frames: Dict[int, FrameBundle], idx: int, limb: str,
 
 
 def toggle_global_param(frames: Dict[int, FrameBundle], idx: int,
-                        param_index: int) -> Optional[str]:
+                        param_index: int, *, shared_only=False) -> Optional[str]:
     """Cycle global Param_i (1..3) on the frame's bundle:
     None -> "ON" -> "OFF" -> None. Returns the new state."""
-    b = ensure_bundle(frames, idx)
+    b = ensure_shared_frame(frames, idx) if shared_only else ensure_bundle(frames, idx)
     params = b.get("Params")
     if not isinstance(params, dict):
         params = {}
@@ -158,10 +163,10 @@ def toggle_limb_param(frames: Dict[int, FrameBundle], idx: int, limb: str,
     return new_state
 
 
-def set_note(frames: Dict[int, FrameBundle], idx: int, note_text: str) -> bool:
+def set_note(frames: Dict[int, FrameBundle], idx: int, note_text: str, *, shared_only=False) -> bool:
     """Save-note semantics: store the stripped text (None when empty);
     returns True when the stored note actually changed."""
-    b = ensure_bundle(frames, idx)
+    b = ensure_shared_frame(frames, idx) if shared_only else ensure_bundle(frames, idx)
     prev = (b.get("Note") or "").strip()
     new_val = note_text if note_text else None
     if prev != (new_val or ""):

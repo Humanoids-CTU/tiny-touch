@@ -162,11 +162,11 @@ def apply_project_template(repo: SqliteRepository, plan: TemplatePlan) -> None:
     repo.save_template(repo.load_template().choose(plan.template))
 
 
-def prepare_project(raw_video_name: str, labeling_mode: str) -> ProjectPaths:
+def prepare_project(raw_video_name: str, labeling_mode: str, annotation_type="Touch") -> ProjectPaths:
     """ProjectPaths for a raw video name (reliability-suffix rule applied)
     with all project directories created."""
     paths = ProjectPaths.for_video(
-        raw_video_name, reliability=(labeling_mode == "Reliability")
+        raw_video_name, reliability=(labeling_mode == "Reliability"), annotation_type=annotation_type
     )
     for d in (paths.state_dir, paths.frames_dir, paths.plots_dir, paths.export_dir):
         os.makedirs(d, exist_ok=True)
@@ -186,8 +186,21 @@ def open_state(paths: ProjectPaths, *, fps=None,
     The caller owns closing it, and then calls `repo.load_frames()` — the two
     steps stay separate so the GUI can start its labeling timer between them.
     """
-    repo = SqliteRepository(paths.state_db)
+    if paths.annotation_type == "Pose":
+        from adapters.pose_sqlite_repo import PoseSqliteRepository
+        repo = PoseSqliteRepository(paths.state_db)
+    else:
+        repo = SqliteRepository(paths.state_db)
+    from domain.annotation_type import annotation_type
+    try:
+        saved_type = annotation_type(repo.get_meta("annotation_type", paths.annotation_type))
+        if saved_type != paths.annotation_type:
+            raise ValueError("Project annotation type disagrees with its database")
+    except Exception:
+        repo.close()
+        raise
     meta = {META_VIDEO_NAME: paths.video_name}
+    meta["annotation_type"] = paths.annotation_type
     if fps is not None:
         meta[META_FPS] = fps
     if program_version is not None:
@@ -250,7 +263,11 @@ def load_special_zone_points_from_repo(repo, display_scale: float,
 # === Coding setup/source provenance ==========================================
 class _ProjectSnapshot:
     """Repository-shaped read-only snapshot; opening a library never migrates a DB."""
-    def __init__(self, path):
+    def __init__(self, path, annotation_type="Touch"):
+        if annotation_type == "Pose":
+            from adapters.pose_sqlite_repo import PoseSqliteRepository
+            self.meta = PoseSqliteRepository.inspect_metadata(path)
+            return
         import sqlite3
         from pathlib import Path
         connection = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
@@ -258,6 +275,9 @@ class _ProjectSnapshot:
             self.meta = dict(connection.execute("SELECT key, value FROM meta"))
         finally:
             connection.close()
+        from domain.annotation_type import annotation_type as validate_type
+        if validate_type(self.meta.get("annotation_type", "Touch")) != annotation_type:
+            raise ValueError("Project annotation type disagrees with its database")
 
     def get_meta(self, key, default=None):
         return self.meta.get(key, default)
@@ -275,6 +295,9 @@ class _ProjectSnapshot:
         import json
         from domain.coding_setup import CodingSetup
         raw = self.get_meta("coding_setup")
+        if self.get_meta("annotation_type", "Touch") == "Pose":
+            from domain.pose_setup import PoseCodingSetup
+            return PoseCodingSetup.from_dict(json.loads(raw)) if raw else None
         return CodingSetup.from_dict(json.loads(raw)) if raw else None
 
     def load_preparation_state(self):
@@ -288,10 +311,13 @@ def inspect_coding_setup(paths):
     def read(candidate):
         if not os.path.isfile(candidate.state_db):
             return None, False
-        repo = _ProjectSnapshot(candidate.state_db)
+        repo = _ProjectSnapshot(candidate.state_db, candidate.annotation_type)
         setup = repo.load_coding_setup()
         if setup:
             return setup, repo.load_preparation_state() == "ready"
+        if candidate.annotation_type == "Pose":
+            from domain.pose_setup import PoseCodingSetup
+            return PoseCodingSetup(), False
         metadata = {}
         if os.path.isfile(candidate.export_metadata):
             with open(candidate.export_metadata, encoding="utf-8") as stream:
@@ -308,6 +334,9 @@ def inspect_coding_setup(paths):
         original, original_ready = read(paths.original)
         if original_ready:
             return original, False
+    if paths.annotation_type == "Pose":
+        from domain.pose_setup import PoseCodingSetup
+        return PoseCodingSetup(), False
     return default_coding_setup(), False
 
 
@@ -319,7 +348,7 @@ def can_resume_preparation(paths):
     """
     if not os.path.isfile(paths.state_db):
         return False
-    snapshot = _ProjectSnapshot(paths.state_db)
+    snapshot = _ProjectSnapshot(paths.state_db, paths.annotation_type)
     return (snapshot.load_coding_setup() is not None
             and snapshot.load_preparation_state() in ("draft", "preparing", "ready"))
 
@@ -329,13 +358,18 @@ def validate_source_association(paths, source):
     from pathlib import Path
     from adapters.project_catalog import SOURCE_META
     source_hash = None
-    candidates = (paths, paths.original) if paths.is_reliability else (paths,)
+    own_candidates = (paths, paths.original) if paths.is_reliability else (paths,)
+    sibling_type = "Touch" if paths.annotation_type == "Pose" else "Pose"
+    candidates = (*own_candidates, *(ProjectPaths(candidate.video_name, candidate.base_dir, sibling_type)
+                                   for candidate in own_candidates))
     for candidate in candidates:
         if not os.path.isfile(candidate.state_db):
             continue
-        snapshot = _ProjectSnapshot(candidate.state_db)
+        snapshot = _ProjectSnapshot(candidate.state_db, candidate.annotation_type)
         associated = snapshot.get_meta(SOURCE_META)
         fingerprint = snapshot.get_meta("source_video_sha256")
+        if candidate.annotation_type != paths.annotation_type and not associated and not fingerprint:
+            raise ValueError("The other annotation type has no verified source association. Use a fresh project name.")
         if fingerprint:
             source_hash = source_hash or source_fingerprint(source)
             if fingerprint != source_hash:
@@ -371,7 +405,7 @@ def coding_setup_warning(paths):
     from service_layer.coding_setup_service import inspect_legacy_coding_setup
     if not os.path.isfile(paths.state_db):
         return ""
-    repo = _ProjectSnapshot(paths.state_db)
+    repo = _ProjectSnapshot(paths.state_db, paths.annotation_type)
     if repo.load_coding_setup():
         return "Video preparation is incomplete. Review the saved setup before retrying."
     metadata = {}

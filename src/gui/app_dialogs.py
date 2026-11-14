@@ -259,9 +259,10 @@ def open_settings(app):
                variable=vars_map["diagram_hover_effects"]).pack(side="right")
     # Project-level toggle (saved with the project, not config.json), shown
     # under Display; it only takes effect while a video is loaded.
+    pose = getattr(app, "annotation_type", "Touch") == "Pose"
     zone_row = _row(display, "Show zone names on diagrams")
     Switch(zone_row, variable=show_zone_names,
-           state="normal" if app.video is not None else "disabled").pack(side="right")
+           state="normal" if app.video is not None and not pose else "disabled").pack(side="right")
     if app.video is None:
         zone_row.label.configure(style="CardMuted.TLabel", font=theme.FONT_BASE)
 
@@ -279,7 +280,8 @@ def open_settings(app):
     if app.video is not None and getattr(app, "coding_setup", None):
         for i in range(1, 4):
             vars_map[f"parameter{i}"].set(app.coding_setup.parameter_labels[f"Par{i}"])
-            vars_map[f"limb_parameter{i}"].set(app.coding_setup.limb_parameter_labels[f"Par{i}"])
+            if not pose:
+                vars_map[f"limb_parameter{i}"].set(app.coding_setup.limb_parameter_labels[f"Par{i}"])
 
     # --- Parameter labels --------------------------------------------------
     if SETTINGS_SHOW_PARAMETER_LABELS:
@@ -287,14 +289,15 @@ def open_settings(app):
         channel_noun = "Channel"
         coding_readonly = app.video is not None and app.state_repo.load_preparation_state() == "ready"
         state = "readonly" if coding_readonly else "normal"
-        for i in range(1, 4):
-            entry(_row(labels, f"{channel_noun} Parameter {i}"), f"limb_parameter{i}",
-                  SETTINGS_LABEL_ENTRY_WIDTH, state)
+        if not pose:
+            for i in range(1, 4):
+                entry(_row(labels, f"{channel_noun} Parameter {i}"), f"limb_parameter{i}",
+                      SETTINGS_LABEL_ENTRY_WIDTH, state)
         for i in range(1, 4):
             entry(_row(labels, f"Parameter {i}"), f"parameter{i}", SETTINGS_LABEL_ENTRY_WIDTH, state)
 
     # --- Project (project DB, not config.json) -----------------------------
-    if app.video is not None and (SETTINGS_SHOW_PROJECT_TEMPLATE or SETTINGS_SHOW_ZONE_NAME_EDITOR):
+    if app.video is not None and not pose and (SETTINGS_SHOW_PROJECT_TEMPLATE or SETTINGS_SHOW_ZONE_NAME_EDITOR):
         project = _section(content, "PROJECT")
         if SETTINGS_SHOW_PROJECT_TEMPLATE:
             template_state = app.state_repo.load_template()
@@ -359,7 +362,7 @@ def open_settings(app):
                 )
         cfg.clear()
         cfg.update(new_cfg)
-        if app.video is not None and show_zone_names.get() != app.zone_display.show_names:
+        if app.video is not None and not pose and show_zone_names.get() != app.zone_display.show_names:
             if not app._save_zone_display(
                     ZoneDisplaySettings(app.zone_display.labels, show_zone_names.get())):
                 return

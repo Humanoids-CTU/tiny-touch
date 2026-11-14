@@ -8,6 +8,8 @@ from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageChops, ImageFilter, ImageTk
 
 from domain.coding_setup import CodingSetup, default_coding_setup
+from domain.pose_setup import PoseCodingSetup, POSE_TEMPLATE
+from domain.pose import POSE_ZONES
 from domain.templates import TEMPLATE_LABELS
 from domain.zone_display import ZoneDisplaySettings
 from adapters.zone_masks import editable_zone_names, load_zone_masks, zone_label_positions, zones_dir
@@ -58,11 +60,12 @@ class _LayoutOnly:
 class CodingSetupWizard:
     def __init__(self, parent, initial=None, *, center=None, locked_template=False):
         self.parent = parent
-        self.setup = replace(initial or default_coding_setup("default"), channel_zones=None)
+        self.pose = isinstance(initial, PoseCodingSetup)
+        self.setup = initial if self.pose else replace(initial or default_coding_setup("default"), channel_zones=None)
         self.result = None
         self.step = 0
         self.locked_template = locked_template
-        self.store = CodingConfigStore(Path(config.get_config_path()).parent / "config")
+        self.store = CodingConfigStore(Path(config.get_config_path()).parent / "config", pose=self.pose)
         self.win = tk.Toplevel(parent)   # hidden until settled and centred
         self.win.title("Prepare video")
         self.win.transient(parent)
@@ -124,7 +127,7 @@ class CodingSetupWizard:
         self.variables[key] = variable
         if self.step == 1:
             entry.bind("<FocusIn>", lambda event, zone=key: self.highlight_zone(zone))
-        elif self.step == 2 and key in self.setup.channel_labels:
+        elif self.step == 2 and not self.pose and key in self.setup.channel_labels:
             entry.bind("<FocusIn>", lambda event, channel=key: self.highlight_channel(channel))
 
     def _description(self, text):
@@ -132,6 +135,9 @@ class CodingSetupWizard:
 
     def zone_masks(self):
         return _cached_zone_masks(self.setup.template, self.setup.zone_layout)
+
+    def editable_zones(self):
+        return POSE_ZONES if self.pose else editable_zone_names(self.setup.template, coding_setup=self.setup)
 
     def render(self):
         # On screen, the old step stays visible until the new one is drawn.
@@ -145,8 +151,10 @@ class CodingSetupWizard:
         self.back.configure(state="disabled" if self.step == 0 else "normal")
         self.next_button.configure(text="Prepare video" if self.step == 3 else "Next")
         self.heading.configure(text=STEP_TITLES[self.step])
+        if self.pose:
+            self.heading.configure(text=("1 · Diagram", "2 · Zone labels", "3 · Global parameters", "4 · Review coding setup")[self.step])
         if self.step == 0:
-            self._description("Choose a diagram or reuse a saved configuration. Geometry and zone IDs stay fixed.")
+            self._description("Choose a diagram or reuse a saved configuration.")
             self.template = tk.StringVar(value=self.setup.template)
             options = ttk.Frame(self.content)
             options.pack(fill="x")
@@ -155,6 +163,7 @@ class CodingSetupWizard:
             for column in range(len(TEMPLATE_LABELS) + 1):
                 options.columnconfigure(column, weight=1, uniform="templates")
             for column, (template, label) in enumerate(TEMPLATE_LABELS.items()):
+                disabled = self.locked_template or (self.pose and template != POSE_TEMPLATE)
                 tile = template_tile(options)
                 tile.grid(row=0, column=column, sticky="nsew", padx=theme.px(4))
                 self.template_cards[template] = tile
@@ -163,14 +172,15 @@ class CodingSetupWizard:
                 image.thumbnail(_scaled(TEMPLATE_THUMBNAIL_SIZE))
                 photo = ImageTk.PhotoImage(image, master=self.win)
                 self.photos.append(photo)
-                preview = ttk.Label(tile.inner, image=photo, style="Card.TLabel", cursor="" if self.locked_template else "hand2")
+                preview = ttk.Label(tile.inner, image=photo, style="Card.TLabel", cursor="" if disabled else "hand2")
                 preview.template_id = template
                 preview.pack()
-                if not self.locked_template:
+                if not disabled:
                     # The whole tile stays clickable: the card canvas, its inner frame and the preview.
                     for widget in (preview, tile, tile.inner):
                         widget.bind("<Button-1>", lambda event, value=template: self.select_template(value))
-                ttk.Radiobutton(tile.inner, text=label, value=template, variable=self.template, command=self.highlight_template_selection, state="disabled" if self.locked_template else "normal", style="Card.TRadiobutton").pack(pady=(theme.px(12), theme.px(4)))
+                caption = label
+                ttk.Radiobutton(tile.inner, text=caption, value=template, variable=self.template, command=self.highlight_template_selection, state="disabled" if disabled else "normal", style="Card.TRadiobutton").pack(pady=(theme.px(12), theme.px(4)))
             add_custom_template_placeholder(options, self.template, len(TEMPLATE_LABELS))
             self.highlight_template_selection()
             saved_card, saved_section = self._card(self.content, "Reuse a coding configuration")
@@ -184,7 +194,7 @@ class CodingSetupWizard:
             ttk.Button(saved, text="Use configuration", command=self.use_config, style="Card.Tool.TButton").pack(side="left", padx=theme.px(8))
             ttk.Button(saved_section, text="Import configuration…", command=self.import_config, style="Card.Tool.TButton", state="normal").pack(anchor="w", pady=(theme.px(6), 0))
         elif self.step == 1:
-            self._description("Add labels to the fixed zone IDs. Select a field to highlight its zone. Labels appear on hover; exports retain the IDs.")
+            self._description("Name the fixed zones. Select a field to highlight its zone; names will appear on the diagram." if self.pose else "Add labels to the fixed zone IDs. Select a field to highlight its zone. Labels appear on hover; exports retain the IDs.")
             preview_card, preview = self._card(self.content)
             preview_card.pack(side="left", padx=(0, theme.px(12)), anchor="n")
             self.zone_preview = ttk.Label(preview, style="Card.TLabel")
@@ -192,11 +202,19 @@ class CodingSetupWizard:
             self.highlight_zone(None)
             table_card, table = self._card(self.content)
             table_card.pack(side="left", fill="x", expand=True, anchor="n")
-            for index, zone in enumerate(editable_zone_names(self.setup.template, coding_setup=self.setup)):
+            for index, zone in enumerate(self.editable_zones()):
                 column = index // ZONE_ROWS_PER_COLUMN
                 table.columnconfigure(column * 2 + 1, weight=1, uniform="zone-entries")
                 self._entry(table, index % ZONE_ROWS_PER_COLUMN, zone, self.setup.zone_labels.get(zone, ""), zone, width=ZONE_ENTRY_WIDTH, column=column)
         elif self.step == 2:
+            if self.pose:
+                self._description("Name this coding setup and its whole-frame parameters. Pose has no channels.")
+                card, fields = self._card(self.content, "Global parameters")
+                card.pack(fill="x")
+                self._entry(fields, 0, "Coding name", self.setup.name, "name")
+                for row, (key, label) in enumerate(self.setup.parameter_labels.items(), 1):
+                    self._entry(fields, row, f"Parameter {row}", label, key)
+                return
             self._description("Name channels and parameters. Select a channel name to outline its assigned zone in blue.")
             overview = ttk.Frame(self.content)
             overview.pack(fill="x")
@@ -233,9 +251,12 @@ class CodingSetupWizard:
             diagram_card, diagram = self._card(overview, f"{TEMPLATE_LABELS[self.setup.template]} diagram with zone labels")
             diagram_card.grid(row=0, column=0, rowspan=3, sticky="n", padx=(0, theme.px(6)), pady=theme.px(3))
             self.review_diagram(diagram).pack()
-            self._review_group(overview, "Channels", tuple((f"Channel {i}", f"{label}; Zones: {self.channel_zone_labels(key)}") for i, (key, label) in enumerate(self.setup.channel_labels.items(), 1)), 0, 1)
-            self._review_group(overview, "Global parameters", tuple((f"Parameter {i}", label) for i, label in enumerate(self.setup.parameter_labels.values(), 1)), 1, 1)
-            self._review_group(overview, "Channel parameters", tuple((f"Parameter {i}", label) for i, label in enumerate(self.setup.limb_parameter_labels.values(), 1)), 2, 1)
+            if self.pose:
+                self._review_group(overview, self.setup.name, tuple(self.setup.parameter_labels.items()), 0, 1)
+            else:
+                self._review_group(overview, "Channels", tuple((f"Channel {i}", f"{label}; Zones: {self.channel_zone_labels(key)}") for i, (key, label) in enumerate(self.setup.channel_labels.items(), 1)), 0, 1)
+                self._review_group(overview, "Global parameters", tuple((f"Parameter {i}", label) for i, label in enumerate(self.setup.parameter_labels.values(), 1)), 1, 1)
+                self._review_group(overview, "Channel parameters", tuple((f"Parameter {i}", label) for i, label in enumerate(self.setup.limb_parameter_labels.values(), 1)), 2, 1)
             table_card, table = self._card(self.content, "Reusable configuration (optional)")
             table_card.pack(fill="x", pady=(theme.px(3), 0))
             table.columnconfigure(1, weight=1)
@@ -247,7 +268,7 @@ class CodingSetupWizard:
                          for zone in self.setup.channel_zones[channel]) or "none"
 
     def select_template(self, template):
-        if not self.locked_template:
+        if not self.locked_template and (not self.pose or template == POSE_TEMPLATE):
             self.template.set(template)
             self.highlight_template_selection()
 
@@ -310,6 +331,13 @@ class CodingSetupWizard:
         self.channel_preview.configure(image=self.channel_photo)
 
     def capture(self):
+        if self.pose:
+            if self.step == 1:
+                self.setup = replace(self.setup, zone_labels={key: var.get() for key, var in self.variables.items()})
+            elif self.step == 2:
+                self.setup = replace(self.setup, name=self.variables["name"].get(), parameter_labels={
+                    key: self.variables[key].get() for key in self.setup.parameter_labels})
+            return
         if self.step == 0 and self.template.get() != self.setup.template:
             previous = default_coding_setup(self.setup.template)
             selected = default_coding_setup(self.template.get())
@@ -360,7 +388,7 @@ class CodingSetupWizard:
                 setup = self.store.load(path)
                 if self.locked_template and setup.template != self.setup.template:
                     raise ValueError("This historical project keeps its original diagram.")
-                self.setup = replace(setup, channel_zones=None)
+                self.setup = setup if self.pose else replace(setup, channel_zones=None)
                 self.render()
         except (ValueError, OSError) as exc:
             self.error.configure(text=str(exc))
@@ -372,7 +400,8 @@ class CodingSetupWizard:
                 setup = self.store.load(path)
                 if self.locked_template and setup.template != self.setup.template:
                     raise ValueError("This historical project keeps its original diagram.")
-                self.setup = replace(self.store.load(self.store.import_config(path)), channel_zones=None)
+                imported = self.store.load(self.store.import_config(path))
+                self.setup = imported if self.pose else replace(imported, channel_zones=None)
                 self.render()
             except (ValueError, OSError) as exc:
                 self.error.configure(text=str(exc))

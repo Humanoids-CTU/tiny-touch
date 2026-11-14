@@ -155,30 +155,44 @@ Each `FrameRecord` holds aligned `X` / `Y` click lists, `Onset` (`"ON"`/`"OFF"`/
 
 `Video` exposes `dataLH / dataRH / dataLL / dataRL` as lightweight `LimbView` wrappers around the same shared `frames` dict, so legacy code that indexes a single limb still works.
 
-### Pure Pose domain (not yet connected to the application)
+### Pose annotation workspace
 
 `domain/pose.py` is separate from Touch `FrameBundle` and `LimbView`. `PoseLabels`
-stores sparse joint ON/OFF boundaries, independent optional global per-frame
+stores sparse Alternate-zone ON/OFF boundaries, independent optional global per-frame
 quality, and body/head scale labels with manual/carried provenance. Reads do not
 infer defaults. Every mutation requires the target frame to match the supplied
 actually painted frame. `PoseScaleSession` owns transient, initially inactive
 body/head carry; only explicit forward step/hold arrivals apply it to the single
 painted destination. Play, backward navigation and jumps only view labels.
-`PoseSnapshot` is an immutable, validated storage boundary; explicit
-`PoseLabels.from_snapshot` restores saved labels without pretending that any
-frame has been painted. `adapters.pose_sqlite_repo.PoseSqliteRepository` stores
-only these labels in the separate, versioned `state/<video>_pose.db` path supplied
-by `ProjectPaths.pose_state_db`. It validates existing files read-only before any
-write configuration, reads a consistent transaction, replaces sparse labels in
-one atomic transaction, and enforces owning-thread access. Touch state and exports
-are unchanged. `service_layer.pose_project_service.PoseProjectSession` provides
-headless open/save/close and initializes fresh inactive carry on every reopen;
-viewing saved labels never activates carry. A failed explicit save retains the
-usable in-memory session. Close only releases storage; GUI lifecycle wiring is
-pending. See [Pose working state](docs/POSE_STORAGE.md) and
-[the behavior specification](docs/plans/2026-11-12_3d_pose_behavior.md) for accepted
-rules and remaining decisions. No Pose setup, export or GUI is wired yet;
-notes, parameters and Special Zones are outside this label-storage stage.
+`PoseSnapshot` is an immutable, validated storage boundary.
+`adapters.pose_sqlite_repo.PoseSqliteRepository` stores schema version 3 in
+`state/<video>_pose.db`, separate from Touch. `PoseProjectSession.save_workspace`
+validates and saves labels, shared notes/global parameters, Special Zones,
+timer and resume position in one SQLite transaction. Failed saves retain the
+active session for retry. Reopen always initializes inactive carry.
+
+The new-video flow chooses Touch/Pose, then Normal/Reliability; each pass has its
+own immutable typed coding setup. `gui.pose_panel.PosePanel` owns the dedicated
+diagram and controls. It applies pending forward carry only after a matching
+paint callback; refresh and ordinary Play cannot label frames. Body/head and
+quality controls round edits to 0.01. Pose uses the Alternate template; its
+original artwork and clickable zones stay fixed; only exterior body/head
+outlines resize over the slightly gray original. Special Zones use the neutral diagram and its matching masks,
+independently of frame-level zone events.
+
+`domain.pose_timeline.PoseTimelineIndex` indexes sparse labels and shared marks;
+`gui.pose_timeline.PoseTimelineView` draws detail/overview tracks with cached
+content and a movable playhead. Numeric gaps remain gaps. Overview pixel bins
+preserve scale extrema. Existing Touch renderers draw event boundaries, notes
+and onset/during/offset shading; body/head size is represented by
+vertical trace position, with no numeric labels, quality track or count strip.
+Edits update affected bins; zone boundary changes also revise later shading.
+Touch and Pose share video playback/navigation, while annotation,
+state and timeline dispatch remain separate. Pose CSV/export and Analysis are
+explicitly deferred; Analysis is disabled for Pose. See
+[Pose working state](docs/POSE_STORAGE.md) and
+[the behavior specification](docs/plans/2026-11-12_3d_pose_behavior.md) for
+automated coverage and outstanding manual GUI/platform acceptance.
 
 ### Background processes
 
@@ -431,8 +445,8 @@ Timeline display rules live in `domain/touch_timeline.py`: pure projections of
 Touch cells, closed overview intervals, edge events, parameter states and notes.
 `gui/timeline.py` renders these projections from explicit inputs and owns shared
 canvas decorations. `gui/timeline_geometry.py` supplies pure drawing coordinates
-and canvas-wide click mapping, reusable by a future annotation type. The pure Pose
-model exists separately; no Pose display is implemented. `gui.timeline.TouchTimelineView` owns each
+and canvas-wide click mapping, reused by the separate Pose timeline adapter.
+`gui.timeline.TouchTimelineView` owns each
 canvas's invalidation, cache keys and playhead IDs. `LabelingApp` passes explicit
 data and requests invalidation/reset
 on annotation edits, appearance changes and project loads; navigation/session
@@ -767,3 +781,41 @@ PNG together, rolling back ordinary replacement failures. The JSON references
 the PNG by relative filename and SHA-256. CSV format remains version 2; analysis
 accepts both metadata revisions. Older export revisions are archived before
 replacement. See `docs/DATA_FORMAT.md` for field paths and coordinate conventions.
+
+### Pose presentation update (2026-11-14)
+
+Pose uses the shared coding wizard with template previews, zone aliases and global
+parameters; channels are omitted. Its sparse timeline index projects into the
+existing Touch renderer inputs. Scale traces are a separate cached overlay, so
+scale carry updates a bounded set of columns without rebuilding the base timeline.
+The original Alternate zone map stays fixed. Only exterior outlines scale over a
+gray reference; hit testing and labels remain aligned with the original diagram.
+Head is displayed above Body. The diagram grip uses the padded Pose viewport size.
+
+Pose ON/OFF presentation is global: any OFF closes the active interval even in a
+different zone. Zone IDs still identify where each boundary was clicked. A sparse
+single-channel index keeps playback lookups bounded. Pose reuses `DiagramHighlighter`
+with its fixed padded masks. Head scaling affects the front outline only.
+`CodingConfigStore(pose=True)` saves Pose setups and can import Alternate Touch
+aliases/global parameters, excluding channel settings.
+
+### Shared annotation channel (2026-11-14)
+
+`domain.annotation_channel.AnnotationChannel` owns ON/OFF transitions, closed
+interval pairing, detail shading, and latest-boundary lookup. Touch's projection
+adapter normalizes the selected limb's legacy records into this class; Pose keeps
+one cached instance, with no channel selection in its UI. Scale and quality tracks
+remain independent. Timeline DTOs are defined beside the shared rules and remain
+re-exported by `touch_timeline` for existing consumers.
+
+Pose's newest click sets the ON/OFF kind of all targets on that frame, matching
+Touch's whole-record onset rule. Removing one target retains that kind for the
+remaining targets. Hollow markers show the latest open onset's targets, rather
+than accumulating every target since the interval began. Existing experimental
+mixed-kind stored frames retain OFF precedence until edited; no storage rewrite
+or schema migration is performed by opening them.
+
+Tests compare all 243 five-frame boundary sequences across modes, plus mixed
+same-frame edits, deletion, earlier-frame edits and sparse gaps. Touch's legacy
+coordinate requirement for detail, Onset-only overview, note ordering and
+final-cell carry behavior remain intact.
