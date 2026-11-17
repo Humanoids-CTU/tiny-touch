@@ -30,6 +30,8 @@ from contextlib import nullcontext
 from threading import Event, RLock
 from typing import Callable, NamedTuple
 
+import cv2
+import numpy as np
 from PIL import Image
 
 
@@ -43,6 +45,122 @@ BUFFER_MAX_BYTES = 1_000_000_000
 # Upper bound on how long a priority load waits for a pool decode of the same
 # frame that is already running (normally 5-40 ms). Past it we decode ourselves.
 PRIORITY_WAIT_S = 1.0
+# Byte order of GPU-bound frames (`GpuFrame.pixels`): B, G, R, X per pixel,
+# which Direct3D uploads without a per-pixel conversion.
+GPU_FRAME_MODE = "BGRX"
+# GPU mode: shrink frames larger than the display in the worker (never enlarge).
+GPU_SHRINK_IN_WORKER = True
+# Filter for that shrink. Bilinear, not INTER_AREA: area filtering measured
+# 2-4 ms more per 1080p frame (5 ms with three decodes running), a third of the
+# decode. Reduced-scale decoding keeps the shrink below 2x, where bilinear
+# sampling drops no source rows; rendered frames differ from the Pillow route
+# by 0.26/255 on average.
+GPU_SHRINK_INTERPOLATION = cv2.INTER_LINEAR
+# libjpeg decodes directly at 1/2, 1/4 or 1/8 size; used while the reduced
+# frame still covers the display target (largest factor first).
+_REDUCED_DECODE_FLAGS = (
+    (8, cv2.IMREAD_REDUCED_COLOR_8),
+    (4, cv2.IMREAD_REDUCED_COLOR_4),
+    (2, cv2.IMREAD_REDUCED_COLOR_2),
+)
+# JPEG start-of-frame markers (they carry the image size); 0xC4, 0xC8 and 0xCC
+# in that range are tables, not frames.
+_JPEG_SOF_MARKERS = frozenset(range(0xC0, 0xD0)) - {0xC4, 0xC8, 0xCC}
+
+
+class GpuFrame:
+    """A decoded frame ready for GPU upload: `pixels` is a (height, width, 4)
+    uint8 array in B, G, R, X order (`GPU_FRAME_MODE`).
+
+    Deliberately not a PIL image: no Pillow mode describes this byte order
+    without a copy, and a mislabelled image would show swapped colours wherever
+    it was drawn. `to_image()` gives a correct RGB image for the CPU fallback.
+    """
+
+    __slots__ = ("pixels", "size")
+    mode = GPU_FRAME_MODE
+
+    def __init__(self, pixels):
+        self.pixels = pixels
+        self.size = (pixels.shape[1], pixels.shape[0])
+
+    @property
+    def width(self):
+        return self.size[0]
+
+    @property
+    def height(self):
+        return self.size[1]
+
+    def to_image(self):
+        """An independent RGB PIL image of this frame (copies the pixels)."""
+        return Image.frombuffer("RGB", self.size, self.pixels, "raw", "BGRX", 0, 1)
+
+
+def pack_for_gpu(img):
+    """Return PIL `img` as a `GpuFrame` (worker thread).
+
+    Only the fallback for a file OpenCV cannot decode: `decode_for_gpu` builds
+    GPU frames without Pillow. The conversion holds the GIL for its copy.
+    """
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    pixels = np.frombuffer(img.tobytes("raw", "BGRX"), np.uint8)
+    return GpuFrame(pixels.reshape(img.height, img.width, 4))
+
+
+def jpeg_size(data):
+    """(width, height) from a JPEG's frame header, or None when there is none."""
+    view = memoryview(data)
+    end = len(view) - 9
+    position = 2
+    while position < end and view[position] == 0xFF:
+        marker = view[position + 1]
+        if marker in _JPEG_SOF_MARKERS:
+            return ((view[position + 7] << 8) | view[position + 8],
+                    (view[position + 5] << 8) | view[position + 6])
+        position += 2 + ((view[position + 2] << 8) | view[position + 3])
+    return None
+
+
+def decode_for_gpu(frame_path, display_w, display_h, downscale):
+    """Decode a JPEG into a `GpuFrame` no larger than the display target.
+
+    OpenCV does the whole job outside the GIL: decode (at a reduced libjpeg
+    scale while that still covers the target), one bilinear shrink when
+    the frame is larger than the target, and the BGR -> BGRX expansion into a
+    buffer that is never zero-filled. The Pillow route took 24 ms per 1080p
+    frame against 7-9 ms here, and held the GIL for about 1 ms of it; both
+    slowed the Tk thread enough to miss 100 FPS. Never enlarges: the GPU does.
+    Returns None when OpenCV cannot decode the file.
+    """
+    # fromfile + imdecode rather than imread: imread cannot open non-ASCII
+    # paths on Windows.
+    data = np.fromfile(frame_path, np.uint8)
+    flag = cv2.IMREAD_COLOR
+    source = jpeg_size(data)
+    if source is not None:
+        target = compute_target_size(*source, display_w, display_h, downscale)
+        for factor, reduced in _REDUCED_DECODE_FLAGS:
+            # libjpeg rounds a reduced size up.
+            if -(-source[0] // factor) >= target[0] and -(-source[1] // factor) >= target[1]:
+                flag = reduced
+                break
+    # Frames carry no orientation tag; ignoring it matches the Pillow route.
+    bgr = cv2.imdecode(data, flag | cv2.IMREAD_IGNORE_ORIENTATION)
+    if bgr is None:
+        return None
+    height, width = bgr.shape[:2]
+    if source is None:
+        target = compute_target_size(width, height, display_w, display_h, downscale)
+    if GPU_SHRINK_IN_WORKER and target[0] < width:
+        bgr = cv2.resize(bgr, target, interpolation=GPU_SHRINK_INTERPOLATION)
+        height, width = bgr.shape[:2]
+    # np.empty, not bytearray(n): the latter zero-fills ~4 MB under the GIL
+    # (1.2 ms per frame, up to 20 ms), stalling the Tk thread.
+    pixels = np.empty((height, width, 4), np.uint8)
+    cv2.cvtColor(bgr, cv2.COLOR_BGR2BGRA, dst=pixels)
+    return GpuFrame(pixels)
 
 
 def compute_target_size(orig_w, orig_h, display_w, display_h, downscale):
@@ -95,7 +213,7 @@ class BufferContext(NamedTuple):
     downscale: float
     jump_frame_count: int
     last_step_sign: int
-    resize_in_worker: bool = True  # False: retain JPEG draft pixels for GPU scaling.
+    resize_in_worker: bool = True  # False (GPU): shrink only, pack RGBX; GPU enlarges.
 
 
 class _NullPerf:
@@ -134,7 +252,7 @@ class FrameBuffer:
 
         # Buffer structures — ALL guarded by the one RLock.
         self._lock = RLock()
-        self._buffer = {}            # frame index -> decoded/resized PIL image
+        self._buffer = {}            # frame index -> PIL image (CPU) / GpuFrame (GPU)
         self._buffer_bytes = {}      # frame index -> estimated byte size
         self._buffer_total = 0       # running byte total
         self._inflight = {}          # frame index -> Future (pool decode) or
@@ -175,7 +293,8 @@ class FrameBuffer:
         return frame_number in self._buffer
 
     def get(self, frame_number):
-        """The decoded PIL image for `frame_number`, or None if not buffered."""
+        """The decoded frame for `frame_number` (a PIL image in CPU mode, a
+        `GpuFrame` in GPU mode), or None if not buffered."""
         return self._buffer.get(frame_number)
 
     def request_priority(self, frame_number):
@@ -439,9 +558,11 @@ class FrameBuffer:
         on JPEGs, which is exactly what the frames dir holds. The (much
         smaller) decoded image then gets one cheap BILINEAR resize, skipped
         entirely when draft already landed on the exact target size.
-        With resize_in_worker=False the GPU performs final scaling instead;
-        JPEG draft decoding still uses the display target, and the detached
-        draft-sized pixels are stored without an additional Pillow resize.
+        With resize_in_worker=False (GPU) OpenCV decodes instead
+        (`decode_for_gpu`): the frame is only ever shrunk to the display
+        target, never enlarged (the GPU scales up), and is stored as a
+        `GpuFrame` ready for upload. Pillow remains the fallback for a file
+        OpenCV cannot read.
 
         Stores the result only if the buffer generation still matches (gen == self._gen),
         i.e. no reset() happened mid-decode. Always discards from the in-flight map
@@ -453,21 +574,38 @@ class FrameBuffer:
         try:
             with self._perf.time("load_frame_total"):
                 frame_path = os.path.join(frames_dir, f"frame{frame_number}.jpg")
-                with self._perf.time("load_frame_open"):
-                    with Image.open(frame_path) as opened:
-                        target = compute_target_size(
-                            *opened.size, display_w, display_h, downscale
-                        )
-                        opened.draft("RGB", target)
-                        img = opened.copy()
-                with self._perf.time("load_frame_resize"):
-                    if resize_in_worker and img.size != target:
-                        img = img.resize(target, Image.Resampling.BILINEAR)
-                try:
-                    bytes_per_pixel = max(1, len(img.getbands()))
-                except Exception:
-                    bytes_per_pixel = 4
-                est_bytes = int(img.width * img.height * bytes_per_pixel)
+                img = None
+                if not resize_in_worker:
+                    # GPU mode only shrinks: uploading pixels the GPU would
+                    # discard cost ~2 ms/frame (1080p into a 1324 px panel).
+                    # Enlarging stays on the GPU, where it is free.
+                    with self._perf.time("load_frame_gpu"):
+                        img = decode_for_gpu(frame_path, display_w, display_h, downscale)
+                if img is None:
+                    with self._perf.time("load_frame_open"):
+                        with Image.open(frame_path) as opened:
+                            target = compute_target_size(
+                                *opened.size, display_w, display_h, downscale
+                            )
+                            opened.draft("RGB", target)
+                            img = opened.copy()
+                    with self._perf.time("load_frame_resize"):
+                        if (resize_in_worker and img.size != target) or (
+                                not resize_in_worker and GPU_SHRINK_IN_WORKER
+                                and target[0] < img.width):
+                            img = img.resize(target, Image.Resampling.BILINEAR)
+                    if not resize_in_worker:
+                        # A file OpenCV refused but Pillow reads.
+                        with self._perf.time("load_frame_pack"):
+                            img = pack_for_gpu(img)
+                if isinstance(img, GpuFrame):
+                    est_bytes = int(img.pixels.nbytes)
+                else:
+                    try:
+                        bytes_per_pixel = max(1, len(img.getbands()))
+                    except Exception:
+                        bytes_per_pixel = 4
+                    est_bytes = int(img.width * img.height * bytes_per_pixel)
                 with self._lock:
                     duplicate = frame_number in self._buffer
                     if gen == self._gen:

@@ -1,11 +1,16 @@
 """Shared canvas decorations and Touch timeline rendering.
 
 Receives explicit projections and geometry; never accesses the app controller.
+
+A track's static content (cells, ticks, separators, rounded corners) is painted
+into one pixel array (`gui.timeline_raster`) and shown as a single opaque
+canvas image. Only the playhead and the clickable note markers are canvas
+items, so a playhead move repaints one image strip whatever the track holds.
 """
 from PIL import Image, ImageDraw, ImageTk
 from gui import theme
-from gui.video_surface import rounded_corner_mask
 from gui.timeline_geometry import TimelineGeometry
+from gui.timeline_raster import TrackRaster
 from domain.touch_timeline import detail_timeline, overview_timeline
 
 
@@ -15,6 +20,14 @@ PLAYHEAD_CAP_ROUND = 1.5
 PLAYHEAD_STEM_W = 2
 PLAYHEAD_SUPERSAMPLE = 8
 TIMELINE_CORNER_RADIUS = 6
+# Canvas tag of the one image item that shows a track's static content.
+TRACK_TAG = "track"
+# Horizontal offsets of the three channel-parameter ticks around a frame's centre.
+LIMB_TICK_OFFSETS = (-2, 0, 2)
+# Onset / offset edge marks in the overview, in pixels.
+EDGE_MARK_WIDTH = 2
+# A closed interval is filled only when wider than this, inset by half of it.
+OVERVIEW_INTERVAL_MIN_PX = 6
 
 
 class TouchTimelineView:
@@ -80,71 +93,127 @@ def parameter_color(state):
     return None
 
 
-def draw_param_tick(canvas, x, top, bottom, color):
-    return canvas.create_line(x, top, x, bottom, fill=color,
+class _Ticks:
+    """Parameter ticks collected per colour, global marks apart from channel marks.
+
+    Drawing them per colour is one array operation each instead of one call
+    per tick; channel ticks are painted after (over) all global ticks.
+    """
+
+    def __init__(self):
+        self._global, self._limb = {}, {}
+
+    def add(self, marks, x, *, global_marks=True):
+        if global_marks:
+            color = parameter_color(marks.parameter)
+            if color:
+                self._global.setdefault(color, []).append(x)
+        for dx, state in zip(LIMB_TICK_OFFSETS, marks.limb_parameters):
+            color = parameter_color(state)
+            if color:
+                self._limb.setdefault(color, []).append(x + dx)
+
+    def paint(self, raster, geometry):
+        for group in (self._global, self._limb):
+            for color, xs in group.items():
+                raster.vlines(xs, geometry.top, geometry.bottom, color,
                               width=theme.TL_PARAM_MARK_WIDTH, dash=theme.TL_PARAM_MARK_DASH)
 
 
-def _parameter_ticks(canvas, marks, x, geometry, *, global_marks=True):
-    if global_marks:
-        color = parameter_color(marks.parameter)
-        if color:
-            draw_param_tick(canvas, x, geometry.top, geometry.bottom, color)
-    for dx, state in zip((-2, 0, 2), marks.limb_parameters):
-        color = parameter_color(state)
-        if color:
-            draw_param_tick(canvas, x + dx, geometry.top, geometry.bottom, color)
-
-
-def draw_touch_detail(canvas, geometry, projection, during_color):
-    canvas.delete("all")
+def render_touch_detail(geometry, projection, during_color):
+    """Paint the detail track; returns (raster, [(note frame, marker x), ...])."""
     g = geometry
+    raster = TrackRaster(g.width, g.height, theme.CARD)
     count = len(projection.cells)
     colors = {"on": theme.TL_ON, "off": theme.TL_OFF, "during": during_color,
               "empty": theme.TL_EMPTY, "unavailable": theme.TL_UNAVAILABLE}
+    ticks, notes = _Ticks(), []
     for i, (cell, marks) in enumerate(zip(projection.cells, projection.marks)):
         left, right = g.position(i, count), g.position(i + 1, count)
-        canvas.create_rectangle(left, g.top, right, g.bottom, fill=colors[cell], outline="")
+        raster.fill(left, g.top, right, g.bottom, colors[cell])
         if cell == "unavailable":
-            canvas.create_line(left + 2, g.bottom - 2, right - 2, g.top + 2,
-                               fill=theme.TL_UNAVAILABLE_MARK, width=1)
-        _parameter_ticks(canvas, marks, (left + right) / 2, g)
-    # Preserve the existing final-cell duplicate limb ticks and draw order.
-    if projection.marks:
-        _parameter_ticks(canvas, projection.marks[-1], (left + right) / 2, g, global_marks=False)
-    canvas.create_rectangle(g.left, g.top, g.right, g.bottom, fill="", outline=theme.TL_OUTLINE)
-    for i in range(1, count):
-        x = g.position(i, count)
-        canvas.create_line(x, g.top, x, g.bottom, fill=theme.TL_OUTLINE, width=1)
-    for i, marks in enumerate(projection.marks):
+            raster.line(left + 2, g.bottom - 2, right - 2, g.top + 2, theme.TL_UNAVAILABLE_MARK)
+        ticks.add(marks, (left + right) / 2)
         if marks.note:
-            draw_note_marker(canvas, marks.frame, g.marker_position(i, count, centered=True), g.bottom)
-    _round_track_corners(canvas, 0, 0, g.width, g.height)
+            notes.append((marks.frame, g.marker_position(i, count, centered=True)))
+    ticks.paint(raster, g)
+    raster.outline(g.left, g.top, g.right, g.bottom, theme.TL_OUTLINE)
+    raster.vlines([g.position(i, count) for i in range(1, count)], g.top, g.bottom, theme.TL_OUTLINE)
+    return raster, notes
+
+
+def render_touch_overview(geometry, projection, total_frames):
+    """Paint the overview track; returns (raster, [(note frame, marker x), ...])."""
+    g = geometry
+    raster = TrackRaster(g.width, g.height, theme.CARD)
+    raster.fill(g.left, g.top, g.right, g.bottom, theme.TL_EMPTY)
+    raster.outline(g.left, g.top, g.right, g.bottom, theme.TL_OUTLINE)
+    inset = OVERVIEW_INTERVAL_MIN_PX / 2
+    for start, end in projection.intervals:
+        x1, x2 = g.position(start, total_frames), g.position(end, total_frames)
+        if x2 - x1 > OVERVIEW_INTERVAL_MIN_PX:
+            raster.fill(x1 + inset, g.top + 1, x2 - inset, g.bottom - 1, theme.TL_DURING)
+    # Global marks precede all limb marks, then semantic edges and notes.
+    ticks = _Ticks()
+    for marks in projection.marks:
+        ticks.add(marks, g.position(marks.frame, total_frames))
+    ticks.paint(raster, g)
+    for frames, color in ((projection.onsets, theme.TL_ONSET_MARK), (projection.offsets, theme.TL_OFFSET_MARK)):
+        raster.vlines([g.position(frame, total_frames) for frame in frames], g.top, g.bottom,
+                      color, width=EDGE_MARK_WIDTH)
+    notes = [(frame, g.marker_position(frame, total_frames)) for frame in projection.notes]
+    return raster, notes
+
+
+def rounded_track(raster):
+    """The raster's pixels with the card colour over its four corners."""
+    return raster.rounded(theme.px(TIMELINE_CORNER_RADIUS), theme.CARD)
+
+
+def show_track_image(canvas, pixels):
+    """Show `pixels` (height x width x 3, uint8) as the canvas's track image.
+
+    The one place a track touches a Tk image. The photo is reused while the
+    size holds (a paste, no new Tk image); the image item is created below
+    everything else when the canvas has none.
+    """
+    image = Image.fromarray(pixels)
+    canvas.__dict__["_track_pixels"] = pixels
+    photo = canvas.__dict__.get("_track_photo")
+    fresh = photo is None or (photo.width(), photo.height()) != image.size
+    if fresh:
+        photo = canvas.__dict__["_track_photo"] = ImageTk.PhotoImage(image, master=canvas)
+    else:
+        photo.paste(image)
+    items = canvas.find_withtag(TRACK_TAG)
+    if not items:
+        canvas.tag_lower(canvas.create_image(0, 0, image=photo, anchor="nw", tags=TRACK_TAG))
+    elif fresh:
+        canvas.itemconfigure(items[0], image=photo)
+
+
+def track_pixels(canvas):
+    """The pixel array the canvas's track image currently shows (None before a draw)."""
+    return canvas.__dict__.get("_track_pixels")
+
+
+def present_track(canvas, pixels, notes, bottom):
+    """Replace the canvas content: the track image, then its note markers."""
+    canvas.delete("all")
+    show_track_image(canvas, pixels)
+    for frame, x in notes:
+        draw_note_marker(canvas, frame, x, bottom)
+
+
+def draw_touch_detail(canvas, geometry, projection, during_color):
+    raster, notes = render_touch_detail(geometry, projection, during_color)
+    present_track(canvas, rounded_track(raster), notes, geometry.bottom)
 
 
 def draw_touch_overview(canvas, geometry, projection, total_frames):
-    canvas.delete("all")
-    g = geometry
-    canvas.create_rectangle(g.left, g.top, g.right, g.bottom, fill=theme.TL_EMPTY, outline=theme.TL_OUTLINE)
-    for start, end in projection.intervals:
-        x1, x2 = g.position(start, total_frames), g.position(end, total_frames)
-        if x2 - x1 > 6:
-            canvas.create_rectangle(x1 + 3, g.top + 1, x2 - 3, g.bottom - 1,
-                                    fill=theme.TL_DURING, outline="")
-    # Global marks precede all limb marks, then semantic edges and notes.
-    for marks in projection.marks:
-        color = parameter_color(marks.parameter)
-        if color:
-            draw_param_tick(canvas, g.position(marks.frame, total_frames), g.top, g.bottom, color)
-    for marks in projection.marks:
-        _parameter_ticks(canvas, marks, g.position(marks.frame, total_frames), g, global_marks=False)
-    for frames, color in ((projection.onsets, theme.TL_ONSET_MARK), (projection.offsets, theme.TL_OFFSET_MARK)):
-        for frame in frames:
-            x = g.position(frame, total_frames)
-            canvas.create_line(x, g.top, x, g.bottom, fill=color, width=2)
-    for frame in projection.notes:
-        draw_note_marker(canvas, frame, g.marker_position(frame, total_frames), g.bottom)
-    _round_track_corners(canvas, 0, 0, g.width, g.height)
+    raster, notes = render_touch_overview(geometry, projection, total_frames)
+    present_track(canvas, rounded_track(raster), notes, geometry.bottom)
+
 
 def _playhead_photo(canvas, height):
     """Antialiased playhead image `height` px tall, cached on the canvas."""
@@ -173,29 +242,6 @@ def _playhead_photo(canvas, height):
     return cache[key]
 
 
-def _round_track_corners(canvas, left, top, right, bottom):
-    """Card-coloured corner masks over a timeline track's four corners.
-
-    Drawn last in a full redraw (the playhead is raised above them), so the
-    track reads as a rounded bar without changing how anything else is drawn.
-    """
-    r = min(theme.px(TIMELINE_CORNER_RADIUS), (right - left) // 2, (bottom - top) // 2)
-    if r <= 0:
-        return
-    key = (r, theme.CARD)
-    cache = canvas.__dict__.setdefault("_corner_photos", {})
-    if key not in cache:
-        corner = Image.new("RGBA", (r, r), theme.CARD)
-        corner.putalpha(rounded_corner_mask(r))
-        flips = (None, Image.Transpose.FLIP_LEFT_RIGHT, Image.Transpose.FLIP_TOP_BOTTOM,
-                 Image.Transpose.ROTATE_180)
-        cache[key] = [ImageTk.PhotoImage(corner if f is None else corner.transpose(f), master=canvas)
-                      for f in flips]
-    for (x, y), photo in zip(((left, top), (right - r, top), (left, bottom - r), (right - r, bottom - r)),
-                             cache[key]):
-        canvas.create_image(x, y, image=photo, anchor="nw", tags="track_corner")
-
-
 def draw_note_marker(canvas, frame, x, bottom):
     """Keep frame notes distinct from full-height touch/parameter ticks."""
     canvas.create_polygon(
@@ -220,4 +266,3 @@ def update_playhead(canvas, item_id, x, top, bottom):
         canvas.itemconfigure(item_id, image=photo)
     canvas.tag_raise(item_id)
     return item_id
-

@@ -15,7 +15,8 @@ from PIL import Image, ImageTk
 from adapters import config
 from adapters import video_probe
 from adapters.frame_buffer import (
-    PLAYBACK_BUFFER_AHEAD, BufferContext, FrameBuffer, compute_target_size, resize_for_buffer,
+    PLAYBACK_BUFFER_AHEAD, BufferContext, FrameBuffer, GpuFrame, compute_target_size,
+    resize_for_buffer,
 )
 from adapters.frame_extractor import FrameExtractionCancelled, FrameExtractionError
 from adapters.timer_resolution import PreciseTimers
@@ -60,7 +61,8 @@ from gui.zone_labels import draw_zone_labels
 from gui.diagram_highlight import DiagramHighlighter
 from gui.resource_utils import asset_path
 from gui.ui_components import (CARD_CONTENT_PAD, build_ui, draw_startup_diagram, sync_play_control,
-                               align_timeline_to_video, max_diagram_scale, TIMELINE_HEIGHT, TIMELINE2_HEIGHT)
+                               align_timeline_to_video, max_diagram_scale, TIMELINE_HEIGHT, TIMELINE2_HEIGHT,
+                               diagram_native_size, fit_diagram_to_column)
 from gui.diagram_resize import clamp_scale
 from gui.video_overlay import BADGE_INSET
 from log_setup import open_logs_folder
@@ -106,6 +108,12 @@ LOAD_FIRST_FRAME_TIMEOUT_MS = 1500
 PLAYBACK_STALL_POLL_MS = 20
 # Video frames follow source FPS; annotation controls need fewer repaints.
 PLAYBACK_UI_INTERVAL_S = 1.0 / 25.0
+# Timeline playheads move at most at a typical monitor refresh: a move the
+# screen cannot show still costs Tk ~1-1.5 ms of GDI repaint per timeline
+# beside the GPU video (measured), most of a 100 FPS frame budget. Videos at
+# or below 60 FPS keep a playhead move on every frame (the jitter allowance).
+PLAYBACK_PLAYHEAD_INTERVAL_S = 1.0 / 60.0
+PLAYBACK_PLAYHEAD_JITTER_S = 0.003
 # Recover ordinary event-loop jitter without accumulating unlimited catch-up
 # work after a long pause. Every callback still advances at most one frame.
 PLAYBACK_MAX_LAG_S = 0.25
@@ -504,6 +512,7 @@ class LabelingApp(tk.Tk):
             self._pose_panel = PosePanel(self)
             self._pose_panel.build()
             self._set_mode_button_states()
+            self._refit_diagram_if_resized()
             return
 
         px = theme.px
@@ -539,6 +548,19 @@ class LabelingApp(tk.Tk):
         self.limb_par3_btn = pill(3, self.config.limb_parameter3)
 
         self._set_mode_button_states()
+        self._refit_diagram_if_resized()
+
+    def _refit_diagram_if_resized(self):
+        """Fit the diagram to the column again when its native size changed.
+
+        Pose's diagram is much larger than Touch's and its controls are taller,
+        so the scale fitted for one would push the other cards off the window.
+        """
+        native = diagram_native_size(self)
+        previous = self.__dict__.get("_fitted_native_size")
+        self._fitted_native_size = native
+        if previous is not None and previous != native and self.__dict__.get("notes_card") is not None:
+            fit_diagram_to_column(self)
 
     # === Data Bundle Management ================================================
     def _param_key_for_index(self, idx: int) -> str:
@@ -767,6 +789,15 @@ class LabelingApp(tk.Tk):
     def on_mouse_wheel(self, event):
         if self.video is None or getattr(self, "_selecting_frame", False):
             return
+        # The wheel is bound app-wide; scrolling inside a dialog (video
+        # library, zone names, ...) must not step the video behind it.
+        widget = getattr(event, "widget", None)
+        if widget is not None:
+            try:
+                if widget.winfo_toplevel() is not self:
+                    return
+            except (AttributeError, tk.TclError):
+                return  # e.g. a popdown reported by path string: not the main window
         notches = self._wheel_notches(event)
         if notches == 0:
             return
@@ -1135,7 +1166,7 @@ class LabelingApp(tk.Tk):
         panel = self.__dict__.get("_pose_panel")
         if panel is not None:
             panel.refresh()
-            panel.draw()
+            panel.draw_frame()
             return
         self.diagram_canvas.delete(DIAGRAM_DOT_TAG)
         if not self.video:
@@ -1445,9 +1476,10 @@ class LabelingApp(tk.Tk):
                 count = self.video.number_frames_in_zone
                 zone = self.video.current_frame // count if count else self.video.current_frame_zone
                 self.video.current_frame_zone = zone
-                self._pose_detail_timeline.draw(index, self.video.total_frames,
-                                               self.video.current_frame,
-                                               offset=zone * count, count=count)
+                self._pose_detail_timeline.draw(
+                    index, self.video.total_frames, self.video.current_frame,
+                    offset=zone * count, count=count,
+                    defer=self.__dict__.get("_defer_timeline_content", False))
             return
         self._assert_ui_thread()
         with self.perf.time("draw_timeline"):
@@ -1475,8 +1507,9 @@ class LabelingApp(tk.Tk):
         if self.__dict__.get("_pose_panel") is not None:
             if self.video and self.video.total_frames >= 0:
                 index = self._get_pose_timeline_index()
-                self._pose_overview_timeline.draw(index, self.video.total_frames,
-                                                 self.video.current_frame)
+                self._pose_overview_timeline.draw(
+                    index, self.video.total_frames, self.video.current_frame,
+                    defer=self.__dict__.get("_defer_timeline_content", False))
             return
         self._assert_ui_thread()
         with self.perf.time("draw_timeline2"):
@@ -1504,6 +1537,11 @@ class LabelingApp(tk.Tk):
         events_changed = index.update(frame, self.video.frames.get(frame, {}))
         self._pose_detail_timeline.changed(frame, events_changed)
         self._pose_overview_timeline.changed(frame, events_changed)
+        if getattr(self, "_play_ui_pending", False):
+            # A played frame's carry: _refresh_playback_ui draws both timelines
+            # (dirty columns included) on its next playhead move, and always
+            # when playback pauses or stalls.
+            return
         self.draw_timeline()
         self.draw_timeline2()
 
@@ -1917,11 +1955,17 @@ class LabelingApp(tk.Tk):
                                            self.video_downscale)
             except VideoRendererError as error:
                 self._disable_gpu(error)
+        if isinstance(pil_img, GpuFrame):
+            # A failed upload leaves a GPU buffer frame (B, G, R, X bytes) to
+            # draw on the CPU until the buffer is rebuilt.
+            pil_img = pil_img.to_image()
         if getattr(self, "_gpu_failed", False):
-            # A failed upload may have arrived from a GPU-sized buffer. Fit it
-            # immediately on the CPU as well as rebuilding the future buffer.
+            # That frame is GPU-sized (never enlarged). Fit it immediately on
+            # the CPU as well as rebuilding the future buffer.
             pil_img = resize_for_buffer(pil_img, self._display_w, self._display_h,
                                        self.video_downscale)
+            if pil_img.mode != "RGB":
+                pil_img = pil_img.convert("RGB")
         shown = self._displayed_image
         if (self.image is not None and shown is not None
                 and shown.size == pil_img.size and shown.mode == pil_img.mode):
@@ -2003,6 +2047,11 @@ class LabelingApp(tk.Tk):
                 self._disable_gpu(error)
             return
         shown = getattr(self, "_displayed_image", None)
+        if isinstance(shown, GpuFrame):
+            # Still the frame a failed GPU upload left on screen (drawn on the
+            # CPU by _paint_frame_image): patch the same fitted RGB picture.
+            shown = resize_for_buffer(shown.to_image(), self._display_w, self._display_h,
+                                      self.video_downscale)
         if shown is not None:
             LabelingApp._patch_frame_overlays(self, shown)
 
@@ -2062,18 +2111,28 @@ class LabelingApp(tk.Tk):
         self._play_ui_pending = False
 
     def _refresh_playback_ui(self, *, force=False):
-        """Move the playheads every frame; refresh the other controls at most 25 times/second.
+        """Move the playheads up to 60 times/second; other controls at most 25.
 
-        A playhead move is two canvas coords calls (a timeline is rebuilt
-        only when the 100-frame zone changes), so the playheads follow the
-        video exactly, like single steps do.
+        Up to 60 FPS the playheads follow every frame, like single steps do.
+        `force` (pause, stall, exact navigation) always moves them, so they
+        rest exactly on the painted frame.
         """
         if self.video is None:
             self._play_ui_pending = False
             return
-        self.draw_timeline()
-        self.draw_timeline2()
         now = time.perf_counter()
+        head_due = getattr(self, "_playhead_next_due", None)
+        if force or head_due is None or now >= head_due - PLAYBACK_PLAYHEAD_JITTER_S:
+            # A played frame may batch its Pose scale-trace update (see
+            # gui.pose_timeline); a forced refresh shows everything at once.
+            self._defer_timeline_content = not force
+            try:
+                self.draw_timeline()
+                self.draw_timeline2()
+            finally:
+                self._defer_timeline_content = False
+            on_time = head_due is not None and now - head_due < PLAYBACK_PLAYHEAD_INTERVAL_S
+            self._playhead_next_due = (head_due if on_time else now) + PLAYBACK_PLAYHEAD_INTERVAL_S
         due = self._play_ui_next_due
         if not force and due is not None and now < due:
             return
@@ -2089,6 +2148,11 @@ class LabelingApp(tk.Tk):
         """Complete a deferred refresh before pausing, editing, or stalling."""
         if getattr(self, "_play_ui_pending", False):
             self._refresh_playback_ui(force=True)
+        # Pose scale traces that the last played frames left batched.
+        for name in ("_pose_detail_timeline", "_pose_overview_timeline"):
+            view = self.__dict__.get(name)
+            if view is not None:
+                view.flush()
 
     # === Labeling-time accumulator (service_layer.project_service) =============
     def _current_video_time_s(self) -> float:
@@ -2251,7 +2315,10 @@ class LabelingApp(tk.Tk):
         if isinstance(b, dict):
             note_text = (b.get("Note") or "")
 
-        self._set_note_entry_text(note_text)
+        # Playback calls this 25 times a second: rewriting an unchanged note
+        # costs eight Tk calls and a Text relayout (about 1 ms), reading it one.
+        if self._get_note_entry_text() != note_text:
+            self._set_note_entry_text(note_text)
 
     # === Save / Export =========================================================
     def _save_pose_workspace(self):

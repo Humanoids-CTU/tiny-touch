@@ -49,7 +49,8 @@ Validation on Windows, 3 November 2026:
   executable was not built or exercised.
 
 The app retains JPEG frame access. GPU mode moves final scaling/drawing into SDL;
-JPEG decoding remains in the background workers. CPU mode retains the original
+JPEG decoding remains in the background workers (OpenCV for GPU frames since
+17 November 2026, Pillow for the CPU renderer). CPU mode retains the original
 Pillow resize/PhotoImage implementation. Initialization or drawing failure
 automatically selects CPU and rebuilds the buffer for that path.
 
@@ -110,3 +111,23 @@ After correcting GUI helper paint-readiness waits and giving reverse-hold tests
 room before the video boundary, all 7 affected arrow/template tests passed.
 The 8 focused playback/renderer/refresh tests also passed. The full GUI suite
 was not rerun to completion after these test-only corrections.
+
+## Realtime playback update (17 November 2026)
+
+The 7 November figures above were best batches; on a warm laptop the same
+1920x1080, 100 FPS clip played at 70-90 FPS. Two causes were measured and removed:
+
+- **Decode workers slowed the Tk thread.** The same UI work cost about twice as
+  much while workers decoded (4.8 ms against 9.9 ms per frame). GPU frames are now
+  decoded by OpenCV outside the GIL (7-8 ms per frame instead of 24 ms) into a
+  buffer that is not zero-filled, and uploaded as BGRA without conversion.
+- **Timeline canvases repainted every item under the playhead.** Each track is
+  now one image; a playhead move repaints one strip of it. Pose scale traces
+  carried during playback are shown at most 10 times per second, and at once on
+  pause, stall, step or edit.
+
+The note field is no longer rewritten on a control refresh when its text is
+unchanged. Every source frame is still painted, in order. The interleaved
+before/after measurements are recorded with the change that introduced them.
+Rendered GPU frames differ from the Pillow route by 0.26/255 on average (bilinear
+shrink without the wider antialiasing filter); the CPU renderer is unchanged.

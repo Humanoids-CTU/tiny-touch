@@ -97,7 +97,7 @@ def test_carry_waits_for_paint_and_never_fills_skipped_frames():
     assert changes == [10, 13]
 
 
-@pytest.mark.parametrize("navigation", [Navigation.PLAY, Navigation.BACKWARD, Navigation.JUMP, Navigation.REFRESH])
+@pytest.mark.parametrize("navigation", [Navigation.BACKWARD, Navigation.JUMP, Navigation.REFRESH])
 def test_view_only_navigation_and_refresh_never_change_carry(navigation):
     panel, app, labels, changes = panel_at()
     panel.edit_scale(ScaleKind.BODY, 1.2)
@@ -175,7 +175,8 @@ def test_refresh_synchronizes_unset_and_zero_without_writing_labels():
     panel, app, labels, changes = panel_at()
     values, readouts = {}, {}
     for key in (*ScaleKind, "quality"):
-        panel.values[key] = SimpleNamespace(set=lambda value, k=key: values.update({k: value}))
+        panel.values[key] = SimpleNamespace(set=lambda value, k=key: values.update({k: value}),
+                                            get=lambda k=key: values.get(k))
         panel.readouts[key] = SimpleNamespace(config=lambda text, k=key: readouts.update({k: text}))
     panel.refresh()
     assert "unset" in readouts["quality"]
@@ -191,8 +192,8 @@ def test_refresh_synchronizes_unset_and_zero_without_writing_labels():
     assert labels.quality(10) == 0 and labels.scale(10, ScaleKind.BODY) is None
 
 
-@pytest.mark.parametrize("held, expected", [(False, None), (True, 1.2)])
-def test_controller_distinguishes_play_from_forward_arrow_hold(held, expected):
+@pytest.mark.parametrize("held, expected", [(False, 1.2), (True, 1.2)])
+def test_controller_play_and_forward_arrow_hold_both_carry(held, expected):
     panel, app, labels, _ = panel_at()
     app._pose_panel = panel
     panel.edit_scale(ScaleKind.BODY, 1.2)

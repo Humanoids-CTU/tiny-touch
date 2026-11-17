@@ -8,7 +8,10 @@ import ctypes
 import importlib
 import tkinter as tk
 
+import numpy as np
 from PIL import Image, ImageDraw
+
+from adapters.frame_buffer import GpuFrame
 
 CORNER_SUPERSAMPLE = 4   # antialiasing factor for the rounded-corner mask
 
@@ -37,6 +40,7 @@ class GpuVideoSurface:
         self.renderer = None
         self.texture = None
         self.texture_size = None
+        self._texture_format = None
         self._corner_texture = None
         self._corner_radius = 0
         self._overlay_texture = None
@@ -196,20 +200,33 @@ class GpuVideoSurface:
         if self._closed:
             raise VideoRendererError("GPU surface is closed")
         sdl = self.sdl
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-        if self.texture_size != image.size:
+        # Frames from the GPU buffer arrive as GpuFrame (B, G, R, X bytes):
+        # upload them untouched. BGRA32 is ARGB8888 on little-endian machines,
+        # a format Direct3D takes without conversion (RGBX cost ~0.5 ms more
+        # per 1326x745 frame). A PIL image is packed here, on Tk's thread.
+        if isinstance(image, GpuFrame):
+            pixels = np.ascontiguousarray(image.pixels)
+            pixel_format, pitch = sdl.SDL_PIXELFORMAT_BGRA32, image.width * 4
+        else:
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+            pixels = image.tobytes()
+            pixel_format, pitch = sdl.SDL_PIXELFORMAT_RGB24, image.width * 3
+        if (self.texture_size, self._texture_format) != (image.size, pixel_format):
             if self.texture:
                 sdl.SDL_DestroyTexture(self.texture)
-            self.texture = sdl.SDL_CreateTexture(self.renderer, sdl.SDL_PIXELFORMAT_RGB24,
+            self.texture = sdl.SDL_CreateTexture(self.renderer, pixel_format,
                                                  sdl.SDL_TEXTUREACCESS_STREAMING, *image.size)
             if not self.texture:
                 raise VideoRendererError(self._error())
             self.texture_size = image.size
+            self._texture_format = pixel_format
             self._check(sdl.SDL_SetTextureScaleMode(self.texture, sdl.SDL_ScaleModeLinear))
-        pixels = image.tobytes()
-        pointer = ctypes.cast(ctypes.c_char_p(pixels), ctypes.c_void_p)
-        self._check(sdl.SDL_UpdateTexture(self.texture, None, pointer, image.width * 3))
+        if isinstance(pixels, np.ndarray):   # the frame's own buffer: no copy
+            pointer = ctypes.c_void_p(pixels.ctypes.data)
+        else:
+            pointer = ctypes.cast(ctypes.c_char_p(pixels), ctypes.c_void_p)
+        self._check(sdl.SDL_UpdateTexture(self.texture, None, pointer, pitch))
         self._downscale = downscale
         self._draw()
         sdl.SDL_RenderPresent(self.renderer)

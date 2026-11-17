@@ -6,6 +6,7 @@ import pytest
 from domain.pose import ZoneEvent, PoseLabels, PoseSnapshot, ScaleKind, ScaleLabel, ScaleSource
 from domain.pose_timeline import PoseTimelineIndex
 from gui import pose_timeline, timeline
+from gui.timeline_raster import rgb
 from labeling_app import LabelingApp
 
 
@@ -80,6 +81,7 @@ class Canvas:
         self.width = width
         self.items = {}
         self.calls = []
+        self.shown = []
         self.serial = 0
 
     def winfo_width(self):
@@ -88,17 +90,27 @@ class Canvas:
     def winfo_height(self):
         return 128
 
-    def delete(self, tag):
-        self.calls.append(("delete", tag))
-        for key, (_, _, kwargs) in list(self.items.items()):
-            tags = kwargs.get("tags", ())
-            if isinstance(tags, str):
-                tags = (tags,)
-            if tag == "all" or tag in tags:
-                del self.items[key]
+    def delete(self, *targets):
+        self.calls.append(("delete", *targets))
+        for tag in targets:
+            for key, (_, _, kwargs) in list(self.items.items()):
+                tags = kwargs.get("tags", ())
+                if isinstance(tags, str):
+                    tags = (tags,)
+                if tag == "all" or tag == key or tag in tags:
+                    del self.items[key]
 
     def tag_raise(self, *args):
-        pass
+        # Recorded: a raise repaints the raised items' joint bounding box.
+        self.calls.append(("tag_raise", args))
+
+    def tag_lower(self, *args):
+        self.calls.append(("tag_lower", args))
+
+    def find_withtag(self, tag):
+        return tuple(key for key, (_, _, kwargs) in self.items.items()
+                     if tag in ((kwargs.get("tags", ()),) if isinstance(kwargs.get("tags", ()), str)
+                                else kwargs.get("tags", ())))
 
     def __getattr__(self, name):
         if name.startswith("create_"):
@@ -114,7 +126,14 @@ class Canvas:
 @pytest.fixture(autouse=True)
 def no_tk_images(monkeypatch):
     monkeypatch.setattr(timeline, "update_playhead", lambda *args: 1)
-    monkeypatch.setattr(timeline, "_round_track_corners", lambda *args: None)
+    # Stands in for the Tk image: keeps the pixels each track would show.
+    monkeypatch.setattr(timeline, "show_track_image",
+                        lambda canvas, pixels: (setattr(canvas, "track", pixels),
+                                                canvas.shown.append(pixels)))
+
+
+def has_color(pixels, color):
+    return bool((pixels == rgb(color)).all(axis=-1).any())
 
 
 def test_cached_playback_only_moves_playhead_without_label_reads(monkeypatch):
@@ -151,6 +170,8 @@ def test_scale_carry_redraws_one_pixel_bin_and_keeps_item_count_bounded(monkeypa
         canvas.calls.clear()
         view.draw(index, 100000, frame)
         assert ("delete", "all") not in canvas.calls
+        # A raise would repaint the whole track on every played frame.
+        assert not [call for call in canvas.calls if call[0] == "tag_raise"]
         assert len(canvas.calls) <= 8
         assert len(canvas.items) < canvas.width * 8
     assert len(reads) == 200
@@ -180,8 +201,7 @@ def test_detail_shows_notes_global_parameters_and_deletes_old_note_hit_target():
     view = pose_timeline.PoseTimelineView(canvas)
     view.draw(index, 1000, 1, offset=0, count=100)
     assert any("note_frame:1" in value[2].get("tags", ()) for value in canvas.items.values())
-    assert any(value[2].get("fill") == pose_timeline.BODY_COLOR and value[0] == "create_rectangle"
-               for value in canvas.items.values())
+    assert has_color(canvas.track, pose_timeline.BODY_COLOR)
     frames[1] = {}
     view.changed(1, index.update(1, {}))
     view.draw(index, 1000, 1, offset=0, count=100)
@@ -244,8 +264,7 @@ def test_single_frame_video_uses_valid_overview_geometry(monkeypatch):
     app.draw_timeline()
     app.draw_timeline2()
     assert len(positions) == 2 and all(position >= 1 for position in positions)
-    assert any(value[2].get("fill") == pose_timeline.BODY_COLOR and value[0] == "create_rectangle"
-               for value in app.timeline2_canvas.items.values())
+    assert has_color(app.timeline2_canvas.track, pose_timeline.BODY_COLOR)
 
 
 def test_event_edit_never_extends_active_strip_into_unavailable_detail_frames():
@@ -272,11 +291,12 @@ def test_classic_onset_offset_shading_and_scale_only_captions():
     view.draw(PoseTimelineIndex(labels, {}), 4, 2, count=5)
     captions = [kw["text"] for _, _, kw in canvas.items.values() if "text" in kw]
     assert captions == []
-    cells = [kw["fill"] for kind, _, kw in canvas.items.values()
-             if kind == "create_rectangle" and kw.get("fill")]
-    assert cells == [pose_timeline.theme.TL_EMPTY, pose_timeline.theme.TL_ON,
-                     pose_timeline.theme.TL_DURING, pose_timeline.theme.TL_OFF,
-                     pose_timeline.theme.TL_EMPTY]
+    assert not canvas.items   # no notes: the track image is the only content
+    geometry = pose_timeline.TimelineGeometry(canvas.winfo_width(), canvas.winfo_height())
+    cells = [tuple(canvas.track[10, int(geometry.position(i, 5, centered=True))]) for i in range(5)]
+    assert cells == [rgb(color) for color in (
+        pose_timeline.theme.TL_EMPTY, pose_timeline.theme.TL_ON, pose_timeline.theme.TL_DURING,
+        pose_timeline.theme.TL_OFF, pose_timeline.theme.TL_EMPTY)]
 
 
 def test_head_scale_line_is_above_body():
@@ -285,9 +305,9 @@ def test_head_scale_line_is_above_body():
     scale(labels, 1, 1, ScaleKind.HEAD)
     canvas = Canvas()
     pose_timeline.PoseTimelineView(canvas).draw(PoseTimelineIndex(labels, {}), 4, 1, count=5)
-    heights = {kw["fill"]: args[1] for kind, args, kw in canvas.items.values()
-               if kind == "create_rectangle" and kw.get("fill") in (pose_timeline.HEAD_COLOR, pose_timeline.BODY_COLOR)}
-    assert heights[pose_timeline.HEAD_COLOR] < heights[pose_timeline.BODY_COLOR]
+    heights = {color: (canvas.track == rgb(color)).all(axis=-1).any(axis=1).nonzero()[0]
+               for color in (pose_timeline.HEAD_COLOR, pose_timeline.BODY_COLOR)}
+    assert heights[pose_timeline.HEAD_COLOR].max() < heights[pose_timeline.BODY_COLOR].min()
 
 
 def test_offset_in_another_zone_ends_global_pose_interval():
@@ -298,3 +318,79 @@ def test_offset_in_another_zone_ends_global_pose_interval():
     assert index.detail(9, 0, 10).cells[6:] == ("empty",) * 4
     assert index.overview().intervals == ((2, 5),)
     assert labels.active_zones(6) == frozenset()
+
+
+def test_played_frames_batch_scale_columns_and_pause_shows_them_at_once(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr(pose_timeline.time, "perf_counter", lambda: now[0])
+    labels = PoseLabels()
+    index = PoseTimelineIndex(labels, {})
+    canvas = Canvas()
+    view = pose_timeline.PoseTimelineView(canvas)
+    view.draw(index, 1000, 0, offset=0, count=100)
+    assert len(canvas.shown) == 1 and not has_color(canvas.track, pose_timeline.BODY_COLOR)
+
+    def carry(frame):
+        scale(labels, frame, 1.2)
+        view.changed(frame, index.update(frame, {}))
+
+    # Played frames inside the interval change the picture but not the screen.
+    for frame in (1, 2, 3):
+        carry(frame)
+        now[0] += .01
+        view.draw(index, 1000, frame, offset=0, count=100, defer=True)
+    assert len(canvas.shown) == 1
+    # Once the interval has passed, one update shows all of them.
+    carry(4)
+    now[0] += pose_timeline.POSE_TRACK_FLUSH_INTERVAL_S
+    view.draw(index, 1000, 4, offset=0, count=100, defer=True)
+    assert len(canvas.shown) == 2 and has_color(canvas.track, pose_timeline.BODY_COLOR)
+    # A pause flushes what is still waiting; a second flush has nothing to do.
+    carry(5)
+    view.draw(index, 1000, 5, offset=0, count=100, defer=True)
+    assert len(canvas.shown) == 2
+    view.flush()
+    view.flush()
+    assert len(canvas.shown) == 3
+    # A step or an edit (not deferred) is shown by its own draw.
+    carry(6)
+    view.draw(index, 1000, 6, offset=0, count=100)
+    assert len(canvas.shown) == 4
+    assert len([call for call in canvas.calls if call[0] == "delete"]) == 1   # never rebuilt
+
+
+def test_a_removed_scale_restores_the_track_under_its_column():
+    labels = PoseLabels()
+    index = PoseTimelineIndex(labels, {})
+    canvas = Canvas()
+    view = pose_timeline.PoseTimelineView(canvas)
+    view.draw(index, 1000, 0, offset=0, count=100)
+    empty = canvas.track.copy()
+    scale(labels, 7, 1.3)
+    view.changed(7, index.update(7, {}))
+    view.draw(index, 1000, 0, offset=0, count=100)
+    assert has_color(canvas.track, pose_timeline.BODY_COLOR)
+    labels.set_scale(7, ScaleKind.BODY, None, displayed_frame=7)
+    view.changed(7, index.update(7, {}))
+    view.draw(index, 1000, 0, offset=0, count=100)
+    assert (canvas.track == empty).all()
+
+
+def test_controller_flush_shows_columns_left_waiting_by_played_frames(monkeypatch):
+    now = [50.0]
+    monkeypatch.setattr(pose_timeline.time, "perf_counter", lambda: now[0])
+    app = app_stub()
+    app.draw_timeline()
+    app.draw_timeline2()
+    scale(app.pose_session.labels, 1, 1.2)
+    app._play_ui_pending = True          # a played frame: the redraw waits for the playhead
+    app._pose_annotation_changed(1)
+    app._defer_timeline_content = True
+    app.draw_timeline()
+    app.draw_timeline2()
+    app._defer_timeline_content = False
+    assert not has_color(app.timeline_canvas.track, pose_timeline.BODY_COLOR)
+    app._play_ui_pending = False
+    LabelingApp._flush_playback_ui(app)
+    assert has_color(app.timeline_canvas.track, pose_timeline.BODY_COLOR)
+    assert has_color(app.timeline2_canvas.track, pose_timeline.BODY_COLOR)

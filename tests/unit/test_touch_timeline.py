@@ -8,8 +8,14 @@ import pytest
 from gui.timeline_geometry import TimelineGeometry, timeline_click_frame
 from domain.touch_timeline import detail_timeline, overview_timeline
 from gui import theme, timeline
+from gui.timeline_raster import rgb
 from labeling_app import LabelingApp
 from video_model import Video
+
+
+def show_track(canvas, pixels):
+    """Stands in for the Tk image: keeps the pixels the track would show."""
+    canvas.track = pixels
 
 
 class Canvas:
@@ -70,29 +76,39 @@ def test_parameters_notes_and_selected_limb_projection():
 
 
 def test_detail_canvas_preserves_final_ticks_grid_and_notes(monkeypatch):
-    monkeypatch.setattr(timeline, "_round_track_corners", lambda *args: None)
+    monkeypatch.setattr(timeline, "show_track_image", show_track)
     canvas = Canvas()
     frames = {0: {"Note": "note", "LH": {"LimbParams": {"Par1": "ON"}}}}
-    timeline.draw_touch_detail(canvas, TimelineGeometry(403, 40), detail_timeline(frames, "LH", 1, 0, 1), "during")
-    ticks = [call for call in canvas.calls if call[0] == "create_line"]
-    assert len(ticks) == 2  # original duplicate final-cell limb mark
-    assert all(call[2]["dash"] == theme.TL_PARAM_MARK_DASH for call in ticks)
-    note = canvas.calls[-1]
-    assert note[0] == "create_polygon"
-    assert note[2]["tags"] == ("note_marker", "note_frame:0")
+    timeline.draw_touch_detail(canvas, TimelineGeometry(403, 40), detail_timeline(frames, "LH", 1, 0, 1),
+                               theme.TL_DURING)
+    # One cell: its first channel-parameter tick is a dashed column 2 px left of centre.
+    on, off = theme.TL_PARAM_MARK_DASH
+    tick = [tuple(pixel) == rgb(theme.TL_PARAM_ON_MARK) for pixel in canvas.track[2:38, 199]]
+    assert tick == [(row % (on + off)) < on for row in range(1, 37)]   # row 0 of the dash lies under the outline
+    assert tuple(canvas.track[10, 190]) == rgb(theme.TL_EMPTY)
+    assert tuple(canvas.track[1, 100]) == tuple(canvas.track[38, 100]) == rgb(theme.TL_OUTLINE)
+    # The track is one image; the only other item is the clickable note marker.
+    assert [call[0] for call in canvas.calls] == ["delete", "create_polygon"]
+    assert canvas.calls[-1][2]["tags"] == ("note_marker", "note_frame:0")
 
 
 def test_overview_draws_closed_fills_before_ticks_and_notes(monkeypatch):
-    monkeypatch.setattr(timeline, "_round_track_corners", lambda *args: None)
+    monkeypatch.setattr(timeline, "show_track_image", show_track)
     canvas = Canvas()
     frames = {0: {"LH": {"Onset": "ON"}, "Params": {"Par1": "OFF"}},
               50: {"LH": {"Onset": "OFF"}, "Note": "note"},
               70: {"LH": {"Onset": "ON"}}}
     timeline.draw_touch_overview(canvas, TimelineGeometry(403, 40), overview_timeline(frames, "LH"), 100)
-    rectangles = [call for call in canvas.calls if call[0] == "create_rectangle"]
-    assert len(rectangles) == 2  # background plus one closed interval
-    assert rectangles[1][1] == (4, 2, 198, 37)
-    assert rectangles[1][2]["fill"] == theme.TL_DURING
+    during, empty = rgb(theme.TL_DURING), rgb(theme.TL_EMPTY)
+    # One closed interval, inset from its edges; the open onset at 70 fills nothing.
+    assert tuple(canvas.track[2, 4]) == tuple(canvas.track[36, 197]) == during
+    assert tuple(canvas.track[20, 3]) == tuple(canvas.track[20, 199]) == empty
+    assert tuple(canvas.track[20, 300]) == empty
+    # Edge marks are two pixels wide and cover the interval and the parameter tick.
+    assert tuple(canvas.track[20, 1]) == tuple(canvas.track[20, 0]) == rgb(theme.TL_ONSET_MARK)
+    assert tuple(canvas.track[20, 201]) == tuple(canvas.track[20, 200]) == rgb(theme.TL_OFFSET_MARK)
+    assert tuple(canvas.track[20, 281]) == rgb(theme.TL_ONSET_MARK)
+    assert [call[0] for call in canvas.calls] == ["delete", "create_polygon"]
     assert canvas.calls[-1][2]["tags"] == ("note_marker", "note_frame:50")
 
 
@@ -109,7 +125,7 @@ def test_geometry_retains_insets_centers_and_canvas_wide_seek():
 def app_stub():
     app = SimpleNamespace(
         video=Video("test", 1000), timeline_canvas=Canvas(), timeline2_canvas=Canvas(),
-        option_var_1=SimpleNamespace(get=lambda: "LH"), color_during="during",
+        option_var_1=SimpleNamespace(get=lambda: "LH"), color_during=theme.TL_DURING,
         _assert_ui_thread=lambda: None, perf=SimpleNamespace(time=lambda name: nullcontext()),
     )
     app._detail_timeline = timeline.TouchTimelineView(app.timeline_canvas)
@@ -118,7 +134,7 @@ def app_stub():
 
 
 def test_cached_draw_moves_playhead_without_reprojecting(monkeypatch):
-    monkeypatch.setattr(timeline, "_round_track_corners", lambda *args: None)
+    monkeypatch.setattr(timeline, "show_track_image", show_track)
     monkeypatch.setattr(timeline, "update_playhead", lambda canvas, item, *args: item or 1)
     app = app_stub()
     LabelingApp.draw_timeline(app)
@@ -134,7 +150,7 @@ def test_cached_draw_moves_playhead_without_reprojecting(monkeypatch):
 
 
 def test_cached_frame_change_moves_both_playheads_over_existing_content(monkeypatch):
-    monkeypatch.setattr(timeline, "_round_track_corners", lambda *args: None)
+    monkeypatch.setattr(timeline, "show_track_image", show_track)
     photo = SimpleNamespace(width=lambda: 10)
     monkeypatch.setattr(timeline, "_playhead_photo", lambda *args: photo)
     app = app_stub()
@@ -157,7 +173,7 @@ def test_cached_frame_change_moves_both_playheads_over_existing_content(monkeypa
 
 
 def test_edit_invalidates_both_views_and_reset_discards_cached_content(monkeypatch):
-    monkeypatch.setattr(timeline, "_round_track_corners", lambda *args: None)
+    monkeypatch.setattr(timeline, "show_track_image", show_track)
     monkeypatch.setattr(timeline, "update_playhead", lambda canvas, item, *args: item or 1)
     app = app_stub()
     app.video.frames[0] = {}
@@ -179,7 +195,7 @@ def test_edit_invalidates_both_views_and_reset_discards_cached_content(monkeypat
 
 
 def test_limb_and_size_changes_rebuild_cached_views(monkeypatch):
-    monkeypatch.setattr(timeline, "_round_track_corners", lambda *args: None)
+    monkeypatch.setattr(timeline, "show_track_image", show_track)
     monkeypatch.setattr(timeline, "update_playhead", lambda canvas, item, *args: item or 1)
     app = app_stub()
     for change in (lambda: None,

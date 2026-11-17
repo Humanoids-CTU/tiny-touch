@@ -17,7 +17,8 @@ Researchers record videos of infants and use TinyTouch to produce structured CSV
 ## Tech Stack
 
 - **Python 3.12** with **Tkinter** (desktop GUI; built-in, no separate install)
-- **OpenCV** (`opencv-contrib-python`) -- video probing, fallback frame extraction, mask reads
+- **OpenCV** (`opencv-contrib-python`) -- video probing, fallback frame extraction, mask reads,
+  and JPEG frame decoding for the GPU renderer
 - **imageio-ffmpeg** -- bundles a static `ffmpeg` binary used as the primary frame extractor (much faster than OpenCV)
 - **Pillow** -- image / diagram rendering on Tk canvases
 - **PySDL2 + SDL2** -- optional-at-runtime GPU video drawing in a Tk-owned child window, with the existing Pillow/Tk display as fallback
@@ -182,7 +183,9 @@ independently of frame-level zone events.
 
 `domain.pose_timeline.PoseTimelineIndex` indexes sparse labels and shared marks;
 `gui.pose_timeline.PoseTimelineView` draws detail/overview tracks with cached
-content and a movable playhead. Numeric gaps remain gaps. Overview pixel bins
+content and a movable playhead. It keeps the Touch-style picture and paints the
+scale columns into a copy, so a changed column is restored and repainted in the
+array and the picture is sent to the canvas image again. Numeric gaps remain gaps. Overview pixel bins
 preserve scale extrema. Existing Touch renderers draw event boundaries, notes
 and onset/during/offset shading; body/head size is represented by
 vertical trace position, with no numeric labels, quality track or count strip.
@@ -220,7 +223,8 @@ costs one rebuild instead of one per event. The old frame stays on screen meanwh
   upscaling low-res sources to fill big monitors), asks libjpeg via `Image.draft` to decode
   at a reduced DCT scale when the source is larger, then does one BILINEAR resize (skipped
   when draft lands exactly on target). Frames are buffered at final display size, so the UI
-  thread never resizes at paint time.
+  thread never resizes at paint time. This is the CPU renderer's route (Pillow). The GPU
+  renderer's frames are decoded by OpenCV instead (`decode_for_gpu`, below).
 - **Buffering loop** -- keeps decoded JPEG frames around the current frame, with an
   asymmetric, velocity-aware window: base read-ahead 50 / look-back 30, widened in the
   direction of the last navigation step (at least `2 × jump_frame_count`) and halved on the
@@ -242,8 +246,11 @@ costs one rebuild instead of one per event. The old frame stays on screen meanwh
   then it re-checks every `PLAYBACK_STALL_POLL_MS = 20` ms, so playback stalls briefly
   rather than stutters. Every write to `current_frame` is therefore on the Tk thread.
   Video presentation and timeline playheads follow source FPS while annotation controls
-  refresh at most 25 times per second. The timelines retain their cached static
-  content and move their playheads between rebuilds. Unchanged semantic button styles do
+  refresh at most 25 times per second (the note field is rewritten only when its
+  text changes). The timelines retain their cached static content and move their
+  playheads between rebuilds; Pose scale traces carried onto played frames reach
+  the screen at most 10 times per second (`POSE_TRACK_FLUSH_INTERVAL_S`) and at
+  once on pause, stall, step or edit (`_flush_playback_ui`). Unchanged semantic button styles do
   not request another widget repaint. Stop, release, boundaries, exact navigation and
   annotation actions synchronize deferred controls immediately. Focusing Notes pauses
   before editing. `displayed_frame` still advances only after successful video painting;
@@ -298,9 +305,21 @@ libraries, unsupported embedding and drawing errors retain or restore the existi
 PhotoImage path. Settings offers Automatic/CPU and shows the active renderer.
 
 The worker's `BufferContext.resize_in_worker` flag selects its output: CPU mode
-keeps the existing draft-decode-and-resize path; GPU mode retains draft-decoded
-RGB pixels and lets SDL scale them. GPU initialization, upload, expose/resize
-redraw and cleanup all stay on Tk's thread. A mode switch resets the buffer
+keeps the existing Pillow draft-decode-and-resize path. GPU mode decodes with
+OpenCV (`frame_buffer.decode_for_gpu`): `cv2.imdecode` at a reduced libjpeg scale
+(1/2, 1/4, 1/8) while that still covers the panel, one bilinear shrink when the
+frame is larger than the panel (SDL enlarges), and a BGR -> BGRX expansion into
+an unzeroed buffer. The whole route runs outside the GIL and takes 7-8 ms per
+1080p frame; the Pillow route took 24 ms and zero-filled 4 MB under the GIL per
+frame, and both slowed the Tk thread (the same UI work cost twice as much while
+workers decoded). The result is a `frame_buffer.GpuFrame`: a (height, width, 4)
+array in B, G, R, X order, deliberately not a PIL image, because no Pillow mode
+names that order without a copy. `GpuVideoSurface.show` uploads it untouched as
+`SDL_PIXELFORMAT_BGRA32` (ARGB8888 on little-endian machines, which Direct3D
+takes without conversion). Whatever draws a GPU buffer frame on the CPU (the
+fallback after a failed upload) converts it with `GpuFrame.to_image()`. A file
+OpenCV cannot decode falls back to Pillow and `pack_for_gpu`. GPU initialization,
+upload, expose/resize redraw and cleanup all stay on Tk's thread. A mode switch resets the buffer
 generation and pauses playback. Native texture/renderer/window resources are
 released before Tk destroys the child, including direct `LabelingApp.destroy()`.
 SDL wraps the native handle without owning the Tk window; it does not run a second
@@ -446,6 +465,13 @@ Touch cells, closed overview intervals, edge events, parameter states and notes.
 `gui/timeline.py` renders these projections from explicit inputs and owns shared
 canvas decorations. `gui/timeline_geometry.py` supplies pure drawing coordinates
 and canvas-wide click mapping, reused by the separate Pose timeline adapter.
+`gui.timeline_raster.TrackRaster` paints a track's static content (cells, ticks,
+separators, edge marks, rounded corners) into one pixel array, and
+`gui.timeline.show_track_image` shows it as a single opaque canvas image. Only
+the playhead image and the clickable note markers (`note_frame:<n>` tags) are
+canvas items: Tk repaints every item under a moved playhead (about 60 us each),
+which on a densely marked track cost 5-9 ms per move. An edit, a zone change, a
+resize or an appearance change repaints the whole picture (a few ms).
 `gui.timeline.TouchTimelineView` owns each
 canvas's invalidation, cache keys and playhead IDs. `LabelingApp` passes explicit
 data and requests invalidation/reset
@@ -786,8 +812,9 @@ replacement. See `docs/DATA_FORMAT.md` for field paths and coordinate convention
 
 Pose uses the shared coding wizard with template previews, zone aliases and global
 parameters; channels are omitted. Its sparse timeline index projects into the
-existing Touch renderer inputs. Scale traces are a separate cached overlay, so
-scale carry updates a bounded set of columns without rebuilding the base timeline.
+existing Touch renderer inputs. Scale traces are painted over a cached copy of the
+base picture, so scale carry updates a bounded set of columns without rebuilding
+the base timeline.
 The original Alternate zone map stays fixed. Only exterior outlines scale over a
 gray reference; hit testing and labels remain aligned with the original diagram.
 Head is displayed above Body. The diagram grip uses the padded Pose viewport size.

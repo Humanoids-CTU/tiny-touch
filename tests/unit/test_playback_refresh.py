@@ -274,11 +274,65 @@ def test_async_video_repaint_keeps_both_timeline_cursors_synchronized_on_stop(ap
     app._start_playback(1)
     tick(app)
     assert app.displayed_frame == 2
-    # The playheads move with every played frame (only other controls are throttled).
-    assert app.timelines[-1] == app.timelines2[-1] == 2
+    # At 100 FPS the playheads move at the 60 Hz cap: frame 2 came 10 ms later.
+    assert app.timelines[-1] == app.timelines2[-1] == 1
     # A resize or renderer fallback replaces the image for the same frame.
     app._displayed_image = None
     app._display_pump()
     app.stop_video()
     assert app.controls[-1] == app.displayed_frame == 2
     assert app.timelines[-1] == app.timelines2[-1] == 2
+
+
+@pytest.mark.parametrize("fps, every_frame", [(100, False), (60, True), (50, True), (25, True)])
+def test_playheads_follow_every_frame_up_to_60_fps_and_cap_at_60_hz_above(app, fps, every_frame):
+    app.frame_rate = fps
+    app._start_playback(1)
+    for _ in range(99):
+        tick(app)
+    played = app.painted
+    assert played == list(range(1, 101))
+    if every_frame:
+        assert app.timelines == app.timelines2 == played
+    else:
+        # A 1 s run: about 60 moves, never two within one 60 Hz interval.
+        assert 55 <= len(app.timelines) <= 62
+        assert app.timelines == app.timelines2
+    app.stop_video()
+    # Pausing always puts both playheads on the painted frame.
+    assert app.timelines[-1] == app.timelines2[-1] == app.displayed_frame == 100
+
+
+def test_an_unchanged_note_is_read_but_not_rewritten():
+    shown, writes = ["kept"], []
+    stub = SimpleNamespace(
+        video=SimpleNamespace(current_frame=3, frames={3: {"Note": "kept"}, 4: {"Note": None}}),
+        _get_note_entry_text=lambda: shown[0],
+        _set_note_entry_text=lambda text: (writes.append(text), shown.__setitem__(0, text)),
+    )
+    LabelingApp.update_note_entry(stub)
+    assert writes == []
+    stub.video.current_frame = 4
+    LabelingApp.update_note_entry(stub)
+    assert writes == [""] and shown == [""]
+    LabelingApp.update_note_entry(stub)
+    assert writes == [""]
+
+
+def test_a_gpu_buffer_frame_is_drawn_in_true_colours_after_gpu_failure(monkeypatch):
+    import numpy as np
+    from adapters.frame_buffer import GpuFrame
+
+    photos = []
+    monkeypatch.setattr(labeling_app.ImageTk, "PhotoImage",
+                        lambda image, master=None: photos.append(image) or SimpleNamespace())
+    pixels = np.zeros((6, 8, 4), np.uint8)
+    pixels[..., 2] = 250          # B, G, R, X: pure red
+    stub = SimpleNamespace(
+        _gpu_video=None, _gpu_failed=True, _display_w=16, _display_h=12, video_downscale=1.0,
+        image=None, _displayed_image=None,
+        frame_label=SimpleNamespace(configure=lambda **kwargs: None),
+    )
+    size = LabelingApp._paint_frame_image(stub, GpuFrame(pixels))
+    assert size == (16, 12)       # fitted to the panel on the CPU
+    assert photos[0].mode == "RGB" and photos[0].getpixel((8, 6)) == (250, 0, 0)

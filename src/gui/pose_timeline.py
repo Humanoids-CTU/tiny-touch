@@ -1,5 +1,6 @@
 """Cached Pose timelines using sparse data and bounded overview pixel bins."""
 from math import ceil
+import time
 
 from gui import theme, timeline
 from gui.timeline_geometry import TimelineGeometry
@@ -8,9 +9,22 @@ POSE_DETAIL_HEIGHT = 50
 POSE_OVERVIEW_HEIGHT = 30
 BODY_COLOR = "#3b93d1"
 HEAD_COLOR = "#cf83d8"
+# While playing, scale traces carried onto played frames reach the screen at
+# most this often: every update re-sends the track image to Tk (about 1 ms per
+# canvas), which a 100 FPS frame cannot afford twice. Pauses, stalls, steps and
+# edits show them at once.
+POSE_TRACK_FLUSH_INTERVAL_S = 0.1
 
 
 class PoseTimelineView:
+    """One Pose track: a static picture plus scale columns painted into it.
+
+    `_base` is the Touch-style content (cells, ticks, edges); `_raster` adds
+    the head/body scale traces. A changed column is restored from `_base` and
+    repainted in the array, then the whole picture goes to the canvas's single
+    track image (`flush`). Note markers and the playhead are canvas items.
+    """
+
     def __init__(self, canvas):
         self.canvas = canvas
         self.reset()
@@ -19,6 +33,11 @@ class PoseTimelineView:
         self._key = None
         self._dirty = set()
         self._playhead = None
+        self._base = None      # static content, without scale columns
+        self._raster = None    # what the canvas shows (before corner rounding)
+        self._columns = {}     # column -> drawn (head, body) extents
+        self._stale = False    # _raster changed since it was last shown
+        self._shown_at = 0.0
 
     def invalidate(self):
         self._key = None
@@ -26,7 +45,12 @@ class PoseTimelineView:
     def changed(self, frame, events_changed=False):
         self._dirty.add(frame)
 
-    def draw(self, index, total_frames, current_frame, *, offset=0, count=None):
+    def draw(self, index, total_frames, current_frame, *, offset=0, count=None, defer=False):
+        """Bring the track up to date and move the playhead.
+
+        `defer` (a played frame) lets changed scale columns wait up to
+        POSE_TRACK_FLUSH_INTERVAL_S before they are shown.
+        """
         overview = count is None
         count = total_frames + 1 if overview else count
         if count <= 0:
@@ -38,10 +62,14 @@ class PoseTimelineView:
         full = key != self._key
         if full:
             self._playhead = None
+            self._columns = {}
             if overview:
-                timeline.draw_touch_overview(self.canvas, g, index.overview(), max(1, total_frames))
+                self._base, notes = timeline.render_touch_overview(
+                    g, index.overview(), max(1, total_frames))
             else:
-                timeline.draw_touch_detail(self.canvas, g, index.detail(total_frames, offset, count), theme.TL_DURING)
+                self._base, notes = timeline.render_touch_detail(
+                    g, index.detail(total_frames, offset, count), theme.TL_DURING)
+            self._raster = self._base.copy()
             changed_bins = range(bins)
         else:
             changed_bins = {min(bins - 1, int((frame - offset) * bins / count))
@@ -51,29 +79,50 @@ class PoseTimelineView:
             start = offset + ceil(column * count / bins)
             stop = min(total_frames + 1, offset + ceil((column + 1) * count / bins))
             marks = index.column(start, stop) if stop > start else None
-            self._column(g, column, bins, marks)
+            if self._column(g, column, bins, marks):
+                self._stale = True
         self._dirty.clear()
         self._key = key
-        # Keep notes and rounded corners above the scale overlay.
-        self.canvas.tag_raise("note_marker")
-        self.canvas.tag_raise("track_corner")
+        if full:
+            timeline.present_track(self.canvas, timeline.rounded_track(self._raster), notes, g.bottom)
+            self._stale = False
+            self._shown_at = time.perf_counter()
+        elif self._stale and (
+                not defer or time.perf_counter() - self._shown_at >= POSE_TRACK_FLUSH_INTERVAL_S):
+            self.flush()
         self._playhead = timeline.update_playhead(
             self.canvas, self._playhead,
             g.marker_position(current_frame if overview else current_frame - offset,
                               max(1, total_frames) if overview else count, centered=not overview),
             g.top, g.bottom)
 
+    def flush(self):
+        """Show scale columns that a played frame left waiting."""
+        if self._stale and self._raster is not None:
+            timeline.show_track_image(self.canvas, timeline.rounded_track(self._raster))
+            self._stale = False
+            self._shown_at = time.perf_counter()
+
     def _row(self, g, row):
         height = (g.bottom - g.top) / 2
         return g.top + row * height, height
 
     def _column(self, g, column, bins, marks):
-        c = self.canvas
-        tag = f"pose_column:{column}"
-        c.delete(tag)
-        if marks is None:
-            return
+        """(Re)paint one column in the array; True when its pixels changed."""
+        drawn = None if marks is None else (marks.head, marks.body)
+        if column in self._columns and self._columns[column] == drawn:
+            return False   # e.g. a carry into an overview bin that already shows it
+        previous = self._columns.get(column)
+        self._columns[column] = drawn
+        blank = (None, None)
+        if (previous or blank) == blank and (drawn or blank) == blank:
+            return False   # nothing was painted here and nothing is now
         left, right = g.position(column, bins), g.position(column + 1, bins)
+        right = max(left + 1, right)
+        x1, x2 = int(round(left)), int(round(right))
+        self._raster.pixels[:, x1:x2] = self._base.pixels[:, x1:x2]
+        if marks is None:
+            return True
         for row, extent, color in ((0, marks.head, HEAD_COLOR),
                                    (1, marks.body, BODY_COLOR)):
             top, height = self._row(g, row)
@@ -84,5 +133,5 @@ class PoseTimelineView:
             bottom = top + height * .96
             y1, y2 = bottom - high * height * .54, bottom - low * height * .54
             # A point/neutral/zero remains visible; no line crosses unset gaps.
-            c.create_rectangle(left, y1 - 1, max(left + 1, right), y2 + 1,
-                               fill=color, outline="", tags=tag)
+            self._raster.fill(left, y1 - 1, right, y2 + 1, color)
+        return True

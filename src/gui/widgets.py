@@ -740,9 +740,20 @@ class CounterLabel(ttk.Frame):
         font = ttk.Style(self).lookup("StatusValue.TLabel", "font") or "TkDefaultFont"
         self._font = tkfont.Font(root=self._root(), font=font)
         self._digit_w = max(self._font.measure(str(d)) for d in range(10))
+        # Playback updates this 25 times a second. Every Tk call hands the GIL
+        # back and may wait for a decoder thread, so _draw keeps its text items
+        # and only retexts changed characters; sizes and widths are cached.
+        self._widths = {}
+        self._size = (1, 1)
+        self._layout = None   # (canvas size, cell advances) the items were laid out for
+        self._items = []      # (item id, character), rightmost first
 
     def _advance(self, ch):
-        return self._digit_w if ch.isdigit() else self._font.measure(ch)
+        if ch.isdigit():
+            return self._digit_w
+        if ch not in self._widths:
+            self._widths[ch] = self._font.measure(ch)
+        return self._widths[ch]
 
     def cget(self, key):
         """``cget("text")`` gives "current / total", like a plain label would."""
@@ -760,21 +771,35 @@ class CounterLabel(ttk.Frame):
             self._total.configure(text=f" / {total}")
             width = sum(self._advance(ch) for ch in total) + theme.px(2)
             height = self._font.metrics("linespace")
-            if (int(self._canvas.cget("width")), int(self._canvas.cget("height"))) != (width, height):
+            if self._size != (width, height):
                 self._canvas.configure(width=width, height=height)
+                self._size = (width, height)
         self._shown = (current, total)
-        self._draw()
+        self._draw(full=False)
 
-    def _draw(self):
+    def _draw(self, full=True):
         canvas, text = self._canvas, self._shown[0] or ""
+        chars = text[::-1]
+        layout = (self._size, tuple(self._advance(ch) for ch in chars))
+        if not full and layout == self._layout:
+            # Same cells in the same places: only retext what changed.
+            for index, ((item, old), ch) in enumerate(zip(self._items, chars)):
+                if ch != old:
+                    canvas.itemconfigure(item, text=ch)
+                    self._items[index] = (item, ch)
+            return
         canvas.delete("all")
-        x = int(canvas.cget("width")) - theme.px(2)
-        y = int(canvas.cget("height")) / 2
+        width, height = self._size
+        x = width - theme.px(2)
+        y = height / 2
         ink = theme.color("TEXT")
-        for ch in reversed(text):
+        self._items = []
+        for ch in chars:
             cell = self._advance(ch)
             x -= cell
-            canvas.create_text(x + cell / 2, y, text=ch, font=self._font, fill=ink, anchor="center")
+            item = canvas.create_text(x + cell / 2, y, text=ch, font=self._font, fill=ink, anchor="center")
+            self._items.append((item, ch))
+        self._layout = layout
 
     def theme_changed(self):
         self._draw()
