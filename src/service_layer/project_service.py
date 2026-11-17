@@ -353,8 +353,13 @@ def can_resume_preparation(paths):
             and snapshot.load_preparation_state() in ("draft", "preparing", "ready"))
 
 
-def validate_source_association(paths, source):
-    """Reject project-stem collisions even when source extensions differ."""
+def validate_source_association(paths, source, *, hash_source=None):
+    """Reject project-stem collisions even when source extensions differ.
+
+    `hash_source(path)` hashes the source; the GUI passes one that runs off
+    the Tk thread and remembers its result (a long video takes seconds).
+    """
+    hash_source = hash_source or source_fingerprint
     from pathlib import Path
     from adapters.project_catalog import SOURCE_META
     source_hash = None
@@ -371,7 +376,7 @@ def validate_source_association(paths, source):
         if candidate.annotation_type != paths.annotation_type and not associated and not fingerprint:
             raise ValueError("The other annotation type has no verified source association. Use a fresh project name.")
         if fingerprint:
-            source_hash = source_hash or source_fingerprint(source)
+            source_hash = source_hash or hash_source(source)
             if fingerprint != source_hash:
                 raise ValueError("The source video content changed after preparation. Use the original source or a fresh project name.")
             # Content identity survives moving the installation or its videos.

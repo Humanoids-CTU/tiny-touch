@@ -148,6 +148,21 @@ def test_each_pass_restores_its_own_snapshot(tmp_path, opening_reliability):
         "clip", reliability=opening_reliability, base_dir=str(tmp_path))) == (expected, True)
 
 
+def test_catalog_lists_most_recently_used_project_first(tmp_path):
+    import os
+    base = str(tmp_path / "data")
+    used_at = {"alpha": 1_000, "bravo": 3_000, "charlie": 2_000}
+    for name, moment in used_at.items():
+        paths = ProjectPaths(name, base)
+        Path(paths.state_dir).mkdir(parents=True)
+        repo = SqliteRepository(paths.state_db)
+        repo.save_coding_setup(default_coding_setup("general"))
+        repo.close()
+        os.utime(paths.state_db, (moment, moment))
+    assert [entry.title for entry in list_projects(base, str(tmp_path / "videos"))] == [
+        "bravo", "charlie", "alpha"]
+
+
 def test_catalog_corrupt_template_is_unavailable(tmp_path):
     paths = ProjectPaths("clip", str(tmp_path))
     Path(paths.state_dir).mkdir(parents=True)

@@ -199,7 +199,7 @@ def _openers():
     import labeling_app
 
     template = next(iter(TEMPLATE_LABELS))
-    entries = [SimpleNamespace(title=f"Video {i}", thumbnail=None, template=template,
+    entries = [SimpleNamespace(title=f"Video {i}", thumbnail=None, template=template, annotation_type="Touch",
                                preparation_state=("ready", "draft", None)[i % 3], setup_name="", source="x.mp4")
                for i in range(5)]
     touches = [SimpleNamespace(start_frame=10 * i, limb="LH") for i in range(3)]

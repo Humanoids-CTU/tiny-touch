@@ -46,6 +46,7 @@ def load_app(monkeypatch):
     app._detail_timeline = app._overview_timeline = SimpleNamespace(reset=lambda: None)
     app._prepare_video_copy = lambda source: source
     app._open_data_progress_window = lambda: (lambda *a: None, lambda: None)
+    app._run_with_progress = lambda work, **kw: work()
     app._run_frame_extraction = lambda *a: None
     app.display_first_frame = lambda: setattr(app, "displayed_frame", app.video.current_frame)
     app.restore_last_position = lambda: LabelingApp.restore_last_position(app)
@@ -111,6 +112,62 @@ def test_load_and_publish_pose_touch_pose_restores_saved_type_and_labels(tmp_pat
     LabelingApp._close_state_repo(app)
     if mode == "Reliability":
         assert all(not labeling_app.os.path.exists(entry.paths.original.state_db) for entry in entries)
+
+
+def test_resume_hashes_the_source_once_and_keeps_slow_checks_off_the_ui_thread(tmp_path, monkeypatch):
+    """Resuming a long video looked frozen: the source was hashed twice and the
+    frames folder was listed on the Tk thread with no window on screen."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(project_service, "DEFAULT_VIDEOS_DIR", str(tmp_path / "videos"))
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"source")
+    paths = project_service.prepare_project("clip", "Normal", "Touch")
+    repo = project_service.open_state(paths)
+    repo.save_coding_setup(default_coding_setup("general"))
+    repo.mark_prepared()
+    repo.set_meta(SOURCE_META, str(source))
+    repo.set_meta("source_video_sha256", project_service.source_fingerprint(str(source)))
+    repo.close()
+    entry = SimpleNamespace(source=str(source), paths=paths)
+    app = load_app(monkeypatch)
+    behind_progress = []
+    depth = []
+
+    def run_with_progress(work, **options):
+        behind_progress.append(options["heading"])
+        depth.append(1)
+        try:
+            return work()
+        finally:
+            depth.pop()
+
+    app._run_with_progress = run_with_progress
+    real_fingerprint = project_service.source_fingerprint
+    unprotected = []
+    hashed = []
+
+    def fingerprint(path):
+        hashed.append(path)
+        if not depth:
+            unprotected.append("fingerprint")
+        return real_fingerprint(path)
+
+    def frames_ready(*args):
+        if not depth:
+            unprotected.append("frames check")
+        return True
+
+    monkeypatch.setattr(project_service, "source_fingerprint", fingerprint)
+    monkeypatch.setattr(project_service, "frames_ready", frames_ready)
+    monkeypatch.setattr(labeling_app, "list_projects", lambda: [entry])
+    monkeypatch.setattr(labeling_app, "choose_video", lambda *a, **kw: entry)
+
+    LabelingApp._load_video_flow(app)
+
+    assert len(hashed) == 1
+    assert unprotected == []
+    assert behind_progress == ["Checking the video file...", "Checking video frames..."]
+    LabelingApp._close_state_repo(app)
 
 
 def test_cancel_pose_setup_keeps_active_project_and_creates_no_database(tmp_path, monkeypatch):

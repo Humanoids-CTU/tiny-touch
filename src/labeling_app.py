@@ -134,6 +134,8 @@ NOT_SAVED_MESSAGE = (
     "Your latest changes were NOT saved to disk. Details are in the log.\n\n"
     "Try Save again before closing the video."
 )
+# Title of the progress windows shown while a video is opened.
+LOAD_PROGRESS_TITLE = "Loading Video"
 UNLOAD_SAVE_FAILED_MESSAGE = (
     "Saving the current video failed (see the log).\n"
     "The new video was NOT loaded, so nothing is lost."
@@ -1752,9 +1754,21 @@ class LabelingApp(tk.Tk):
     def _run_export_with_progress(self, export_fn):
         """Run a full export off the Tk thread while a modal stays responsive.
         Returns what `export_fn` returned; re-raises what it raised."""
+        return LabelingApp._run_with_progress(
+            self, export_fn, title="Saving Data", heading="Building full export...",
+            status="Writing export snapshot", thread_name="data-export",
+        )
+
+    def _run_with_progress(self, work, *, title, heading, status, thread_name="background-work"):
+        """Run blocking `work()` on a worker thread behind a modal window with
+        a moving bar and an elapsed-time line, so the app never looks frozen.
+
+        `work` must not touch Tk or the state database (both belong to this
+        thread). Returns what `work` returned; re-raises what it raised.
+        """
         self._assert_ui_thread()
         win = tk.Toplevel(self)   # hidden until settled and centred (gui.window_reveal)
-        win.title("Saving Data")
+        win.title(title)
         win.geometry(f"{theme.px(PROGRESS_WINDOW_W)}x{theme.px(EXPORT_WINDOW_H)}")
         win.resizable(False, False)
         win.transient(self)
@@ -1763,15 +1777,15 @@ class LabelingApp(tk.Tk):
 
         content = ttk.Frame(win, padding=theme.px(16))
         content.pack(fill="both", expand=True)
-        ttk.Label(content, text="Building full export...", font=theme.FONT_TITLE).pack(
+        ttk.Label(content, text=heading, font=theme.FONT_TITLE).pack(
             pady=(2, 8)
         )
         # A fixed character width: the elapsed digits are proportional in the UI
         # font, so the label would otherwise resize (and re-centre) every second.
-        status_text = f"Writing export snapshot - elapsed {self._format_duration(0)}"
-        status = ttk.Label(content, text=status_text, font=theme.FONT_BASE,
-                           width=len(status_text) + EXPORT_STATUS_SLACK_CHARS, anchor="center")
-        status.pack()
+        status_text = f"{status} - elapsed {self._format_duration(0)}"
+        status_label = ttk.Label(content, text=status_text, font=theme.FONT_BASE,
+                                 width=len(status_text) + EXPORT_STATUS_SLACK_CHARS, anchor="center")
+        status_label.pack()
         bar = ttk.Progressbar(
             content,
             mode="indeterminate",
@@ -1788,13 +1802,13 @@ class LabelingApp(tk.Tk):
 
         def worker():
             try:
-                result["value"] = export_fn()
+                result["value"] = work()
             except Exception as exc:
                 result["error"] = exc
             finally:
                 done.set()
 
-        Thread(target=worker, name="data-export", daemon=True).start()
+        Thread(target=worker, name=thread_name, daemon=True).start()
 
         def poll_worker():
             if done.is_set():
@@ -1802,7 +1816,7 @@ class LabelingApp(tk.Tk):
                 win.destroy()
                 return
             elapsed = time.perf_counter() - started
-            status.config(text=f"Writing export snapshot - elapsed {self._format_duration(elapsed)}")
+            status_label.config(text=f"{status} - elapsed {self._format_duration(elapsed)}")
             win.after(100, poll_worker)
 
         win.after(100, poll_worker)
@@ -2870,6 +2884,21 @@ class LabelingApp(tk.Tk):
             candidate_paths = choice.paths
             annotation_type = candidate_paths.annotation_type
             mode = "Reliability" if candidate_paths.is_reliability else "Normal"
+
+        fingerprints = {}
+
+        def fingerprint(path):
+            """SHA-256 of a source video: hashed once per load, off the Tk
+            thread (a 3-hour file takes seconds when the disk cache is cold)."""
+            key = os.path.abspath(path)
+            if key not in fingerprints:
+                fingerprints[key] = self._run_with_progress(
+                    lambda: project_service.source_fingerprint(path),
+                    title=LOAD_PROGRESS_TITLE, heading="Checking the video file...",
+                    status="Verifying the source video", thread_name="video-fingerprint",
+                )
+            return fingerprints[key]
+
         try:
             setup, ready = project_service.inspect_coding_setup(candidate_paths)
             state = (SqliteRepository.inspect_template(candidate_paths.state_db)
@@ -2886,7 +2915,8 @@ class LabelingApp(tk.Tk):
                 raise ValueError("Review and prepare this video's coding setup first.")
             template_plan = (project_service.plan_project_template(candidate_paths, setup.template)
                              if annotation_type == "Touch" else None)
-            project_service.validate_source_association(candidate_paths, video_path)
+            project_service.validate_source_association(
+                candidate_paths, video_path, hash_source=fingerprint)
         except (ValueError, RuntimeError, OSError, sqlite3.Error) as exc:
             messagebox.showerror("Cannot open video", str(exc), parent=self)
             return
@@ -2965,7 +2995,7 @@ class LabelingApp(tk.Tk):
                 self.pose_session = PoseProjectSession.from_repository(self.state_repo)
             self.state_repo.save_coding_setup(setup, preparation_state="ready" if ready else "draft")
             self.state_repo.set_meta(SOURCE_META, os.path.abspath(video_path))
-            self.state_repo.set_meta("source_video_sha256", project_service.source_fingerprint(video_path))
+            self.state_repo.set_meta("source_video_sha256", fingerprint(video_path))
             self.coding_setup = setup
             # ORDERING (unchanged): the labeling timer starts BEFORE the frame
             # load so the session is already accumulating; an extraction abort
@@ -2987,8 +3017,15 @@ class LabelingApp(tk.Tk):
             data_progress_close()
 
         # Frames generation/check
+        # Listing the frames folder of a long video takes seconds (344k files:
+        # 1-9 s), so it runs off the Tk thread behind a progress window.
         logger.debug("checking frames folder: %s", paths.frames_dir)
-        if not ready or not project_service.frames_ready(paths, video.total_frames):
+        frames_complete = ready and self._run_with_progress(
+            lambda: project_service.frames_ready(paths, video.total_frames),
+            title=LOAD_PROGRESS_TITLE, heading="Checking video frames...",
+            status="Counting the prepared frames", thread_name="frames-check",
+        )
+        if not frames_complete:
             logger.info("frame set incomplete; extracting frames for %s", video_name)
             if not ready:
                 self.state_repo.set_meta("preparation_state", "preparing")

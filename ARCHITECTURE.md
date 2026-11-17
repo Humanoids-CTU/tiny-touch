@@ -680,8 +680,13 @@ exception to otherwise pure computation.
 
 ## Application Workflow
 
-1. **Load Video** -- browse the library and resume a prepared project or select a
-   new file and finish the coding setup wizard. Choices are gathered before the
+1. **Load Video** -- browse the library (most recently used project first: the
+   order is the state database's modification time, which every save and every
+   open updates) and resume a prepared project or select a
+   new file and finish the coding setup wizard. The two slow read-only checks of a
+   load, hashing the source video and listing the frames folder, run once each on a
+   worker thread behind `LabelingApp._run_with_progress` (the same modal window the
+   export uses), so the Tk thread stays responsive. Choices are gathered before the
    current project is detached. A failed state save prevents switching; an export
    that could not be updated asks for confirmation first. The new session
    is published only after its state is loaded and frames exist; successful
