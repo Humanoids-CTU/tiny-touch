@@ -41,7 +41,7 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
-# Executable icon: the same "TT" logo the windows use (gui/app_icon.py),
+# Executable icon: the same hand logo the windows use (gui/app_icon.py),
 # rendered into the build folder so no .ico file has to be kept in the repo.
 # Windows only; Linux executables carry no embedded icon.
 exe_icon = None

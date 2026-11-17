@@ -553,7 +553,7 @@ def init_style(root, appearance="light"):
     bind_colors(root, bg="WIN")
     try:
         from gui.app_icon import apply_app_icon
-        apply_app_icon(root)   # the TT icon on every window (and the taskbar)
+        apply_app_icon(root)   # the hand icon on every window (and the taskbar)
     except Exception:
         logger.debug("app icon unavailable", exc_info=True)
     root.bind_all("<Map>", _on_window_map, add="+")
