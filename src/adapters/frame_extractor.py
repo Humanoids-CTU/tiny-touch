@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 _FRAME_RE = re.compile(r"^frame(\d+)\.(jpg|jpeg|png)$", re.IGNORECASE)
 FRAME_COUNT_TOLERANCE_PCT = 0.001  # probe discrepancy warning threshold only
 FFMPEG_POLL_INTERVAL_S = 0.1
+# ffmpeg is a console program: started from the windowed .exe (no console of
+# its own), Windows would open a console window for it. 0 elsewhere.
+FFMPEG_CREATION_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # Coding images fit this landscape box; source videos remain untouched.
 MAX_FRAME_WIDTH = 1920
 MAX_FRAME_HEIGHT = 1080
@@ -242,7 +245,13 @@ def _extract_frames_ffmpeg(
     logger.debug("Spawning ffmpeg: %s", " ".join(cmd))
     try:
         _raise_if_cancelled(cancel_event)
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=FFMPEG_CREATION_FLAGS,
+        )
     except BaseException:
         staging.cleanup()
         raise
