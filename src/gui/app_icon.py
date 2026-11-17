@@ -115,18 +115,27 @@ def _apply_windows_ico(root):
         write_ico(partial)
         os.replace(partial, path)
     root.iconbitmap(default=path)
-    _set_big_icon(root, path)
-    # Tk builds a new native frame when the window is first shown (and when
-    # its decorations change), which drops the big icon; set it again then.
-    root.bind("<Map>", lambda event: event.widget is root and _set_big_icon(root, path), add="+")
+    _set_big_icon(root, path, root)
+
+    def on_map(event):
+        # Tk builds a window's native frame when it is first shown (and when its
+        # decorations change), which drops the big icon; set it again then.
+        # Children of a window also deliver <Map> to these bindings; skip them.
+        if event.widget.winfo_toplevel() is event.widget:
+            _set_big_icon(root, path, event.widget)
+
+    root.bind("<Map>", on_map, add="+")
+    root.bind_class("Toplevel", "<Map>", on_map, add="+")   # every dialog
 
 
-def _set_big_icon(root, path):
-    """Windows: give the main window its own big icon, for the taskbar and Alt+Tab.
+def _set_big_icon(root, path, window):
+    """Windows: give `window` its own big icon.
 
     Tk uses the small title-bar icon as the big one too, so the taskbar
     enlarged it and it looked pixelated. Windows loads the big size from the
-    .ico here and gets it through WM_SETICON. Failures leave Tk's icon in place.
+    .ico here and gets it through WM_SETICON; it then also draws the title-bar
+    icon from it, so the main window and every dialog show the same picture.
+    Failures leave Tk's icon in place.
     """
     try:
         import ctypes
@@ -145,7 +154,7 @@ def _set_big_icon(root, path):
             if not icon:
                 return
             root._tt_big_icon = icon   # one icon for the app's lifetime; Windows frees it at exit
-        user32.SendMessageW(int(root.frame(), 16), WM_SETICON, ICON_BIG, icon)
+        user32.SendMessageW(int(window.frame(), 16), WM_SETICON, ICON_BIG, icon)
     except Exception:
         pass
 
