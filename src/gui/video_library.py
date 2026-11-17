@@ -34,6 +34,17 @@ def _rounded(image, radius, rim=0):
     return Image.composite(image, Image.new("RGB", image.size, theme.color("CARD")), mask)
 
 
+def row_diagram(entry):
+    """Diagram for a library row: the template image (Touch) or the rendered Pose figure."""
+    if entry.annotation_type == "Pose":
+        from adapters.pose_diagram import render_pose_diagram
+        try:
+            return render_pose_diagram()
+        except (OSError, ValueError):
+            return None
+    return template_diagram(entry.template)
+
+
 def choose_existing_video(parent, name, copy_name, *, center=None):
     """Return resume/copy, or None on cancellation, before any project writes."""
     px = theme.px
@@ -106,11 +117,15 @@ def choose_video(parent, entries, *, center=None):
     canvas.bind("<Configure>", lambda e: canvas.itemconfigure(item, width=e.width))
     photos = []
     def photo(path, size, radius=0, rim=0):
-        if not path:
+        """`path` is an image file or an already rendered PIL image."""
+        if path is None or path == "":
             return None
         try:
-            with Image.open(path) as source:
-                image = source.copy()
+            if isinstance(path, Image.Image):
+                image = path.copy()
+            else:
+                with Image.open(path) as source:
+                    image = source.copy()
             image.thumbnail((size[0] - 2 * rim, size[1] - 2 * rim))
             if radius:
                 image = _rounded(image, radius, rim)
@@ -135,7 +150,7 @@ def choose_video(parent, entries, *, center=None):
         ttk.Label(info, text=f"{entry.annotation_type} / {TEMPLATE_LABELS.get(entry.template, entry.template)} / {state}" + (f" / {entry.setup_name}" if entry.setup_name else ""), style="CardMuted.TLabel", wraplength=px(ROW_TEXT_WRAP)).pack(anchor="w", pady=px(5))
         if not entry.source:
             ttk.Label(info, text="Source unavailable — select the source again with Load new video.", style="Card.TLabel", wraplength=px(ROW_TEXT_WRAP)).pack(anchor="w")
-        diagram = photo(template_diagram(entry.template) if entry.annotation_type == "Touch" else None, (px(ROW_DIAGRAM_SIZE[0]), px(ROW_DIAGRAM_SIZE[1])),
+        diagram = photo(row_diagram(entry), (px(ROW_DIAGRAM_SIZE[0]), px(ROW_DIAGRAM_SIZE[1])),
                         radius=px(DIAGRAM_RADIUS), rim=px(DIAGRAM_RIM))
         ttk.Label(row, image=diagram, style="Card.TLabel").pack(side="left", padx=px(14))
         ttk.Button(row, text="Resume", style="Card.Tool.TButton", command=lambda value=entry: finish(value), state="normal" if entry.source else "disabled").pack(side="right")
