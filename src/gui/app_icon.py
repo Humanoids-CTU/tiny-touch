@@ -1,4 +1,4 @@
-"""TinyTouch window icon: a light grey rounded square with a grey baby hand, drawn at runtime.
+"""TinyTouch window icon: a grey baby hand on a transparent background, drawn at runtime.
 
 Used for every window's title bar and the taskbar, so no icon file has to ship
 with the app. On Windows it is written once to a cached .ico in the temp folder
@@ -13,23 +13,17 @@ from PIL import Image, ImageColor, ImageDraw, ImageTk
 
 ICON_SIZES = (16, 20, 24, 32, 40, 48, 64, 256)   # incl. 125%/150% title-bar sizes
 # Cached .ico for the Windows window icon; bump the suffix when the design changes.
-ICO_CACHE_NAME = "TinyTouch-icon-v4.ico"
-ICON_FILL = "#e5e5ea"             # light grey tile, close to the window colour
-ICON_HAND = "#8e8e93"             # mid-grey hand
-ICON_RADIUS = 0.24                # corner radius, fraction of the size
-SUPERSAMPLE = 4
-# Title-bar sizes: the tile is nearly the title bar's colour and leaves the hand
-# only two thirds of the icon, so up to this size the hand is drawn alone, filling it.
-BARE_HAND_MAX_SIZE = 24
-BARE_HAND_MARGIN = 0.5            # px kept free around the bare hand
-SUPERSAMPLE_SMALL = 8
+ICO_CACHE_NAME = "TinyTouch-icon-v5.ico"
+ICON_HAND = "#8e8e93"             # mid-grey hand; visible on light and dark title bars
+HAND_MARGIN = 0.04                # free space around the hand, fraction of the size
+HAND_MIN_MARGIN = 0.5             # px; the smallest sizes keep at least this much
+SUPERSAMPLE = 8
 # Win32 constants for the main window's big icon (see _set_big_icon).
 SM_CXICON = 11
 IMAGE_ICON = 1
 LR_LOADFROMFILE = 0x10
 WM_SETICON = 0x80
 ICON_BIG = 1
-HAND_BOX = 64                     # the outline below is drawn in a 64 x 64 box
 HAND_CURVE_STEPS = 8              # straight pieces per curve segment
 # Chubby baby hand: points on its outline, joined by a smooth closed curve
 # (Catmull-Rom). Thumb on the left, fingers up.
@@ -66,34 +60,20 @@ def _hand_polygon(scale, origin=(0.0, 0.0)):
     return points
 
 
-def _render_bare_hand(size):
-    """Small sizes: the hand alone, as large as the icon allows."""
-    n = size * SUPERSAMPLE_SMALL
+def render_icon(size):
+    """RGBA icon `size` px square: the hand on a transparent background."""
+    n = size * SUPERSAMPLE
     xs = [x for x, _ in HAND_OUTLINE]
     ys = [y for _, y in HAND_OUTLINE]
     width, height = max(xs) - min(xs), max(ys) - min(ys)
-    scale = (n - 2 * BARE_HAND_MARGIN * SUPERSAMPLE_SMALL) / max(width, height)
+    margin = max(HAND_MIN_MARGIN, size * HAND_MARGIN) * SUPERSAMPLE
+    scale = (n - 2 * margin) / max(width, height)
     origin = (min(xs) - (n / scale - width) / 2, min(ys) - (n / scale - height) / 2)
     # Transparent pixels carry the hand colour, so its soft edge has no halo.
     img = Image.new("RGBA", (n, n), ImageColor.getrgb(ICON_HAND) + (0,))
     ImageDraw.Draw(img).polygon(_hand_polygon(scale, origin), fill=ICON_HAND)
-    return img.resize((size, size), Image.Resampling.BOX)
-
-
-def render_icon(size):
-    """RGBA icon `size` px square."""
-    if size <= BARE_HAND_MAX_SIZE:
-        return _render_bare_hand(size)
-    s = SUPERSAMPLE
-    n = size * s
-    # Transparent pixels carry the tile colour, so the anti-aliased rim blends
-    # to the tile colour instead of a light or dark halo.
-    img = Image.new("RGBA", (n, n), ImageColor.getrgb(ICON_FILL) + (0,))
-    draw = ImageDraw.Draw(img)
-    draw.rounded_rectangle([0, 0, n - 1, n - 1], radius=round(n * ICON_RADIUS), fill=ICON_FILL)
-    draw.polygon(_hand_polygon(n / HAND_BOX), fill=ICON_HAND)
-    # Area-average the supersampled image: LANCZOS overshoots at the rounded
-    # corners and left pixels brighter than the tile (a white fringe).
+    # Area-average the supersampled image: LANCZOS overshoots at the edge and
+    # leaves a light fringe.
     return img.resize((size, size), Image.Resampling.BOX)
 
 
