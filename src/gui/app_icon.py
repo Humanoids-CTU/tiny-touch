@@ -1,12 +1,19 @@
 """TinyTouch window icon: a blue rounded square with a white "TT", drawn at runtime.
 
-Used for every window's title bar and the taskbar (``wm iconphoto -default``),
-so no icon file has to ship with the app.
+Used for every window's title bar and the taskbar, so no icon file has to ship
+with the app. On Windows it is written once to a cached .ico in the temp folder
+(``wm iconbitmap -default``); elsewhere it is set as photos (``wm iconphoto``).
 """
+
+import os
+import sys
+import tempfile
 
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-ICON_SIZES = (16, 24, 32, 48, 64, 256)
+ICON_SIZES = (16, 20, 24, 32, 40, 48, 64, 256)   # incl. 125%/150% title-bar sizes
+# Cached .ico for the Windows window icon; bump the suffix when the design changes.
+ICO_CACHE_NAME = "TinyTouch-icon-v1.ico"
 ICON_FILL = "#e5e5ea"             # light grey tile, close to the window colour
 ICON_TEXT = "#8e8e93"             # mid-grey letters
 ICON_RADIUS = 0.24                # corner radius, fraction of the size
@@ -47,8 +54,34 @@ def render_icon(size):
     return img.resize((size, size), Image.Resampling.LANCZOS)
 
 
+def write_ico(path):
+    """Save the icon as a multi-size .ico (also used for the .exe by TinyTouch.spec)."""
+    images = [render_icon(size) for size in ICON_SIZES]
+    images[-1].save(path, format="ICO", sizes=[(s, s) for s in ICON_SIZES], append_images=images[:-1])
+
+
+def _apply_windows_ico(root):
+    """Windows: load a real .ico, so the title bar and taskbar keep its transparency.
+
+    ``wm iconphoto`` converts the photo itself and leaves the rounded corners
+    as a white square; a native .ico lets Windows pick and blend each size.
+    """
+    path = os.path.join(tempfile.gettempdir(), ICO_CACHE_NAME)
+    if not os.path.exists(path):
+        partial = f"{path}.{os.getpid()}.tmp"   # atomic: two instances may start at once
+        write_ico(partial)
+        os.replace(partial, path)
+    root.iconbitmap(default=path)
+
+
 def apply_app_icon(root):
     """Set the TT icon as the default for every window of `root`'s app."""
+    if sys.platform == "win32":
+        try:
+            _apply_windows_ico(root)
+            return
+        except Exception:
+            pass   # fall back to the photo icon below
     photos = [ImageTk.PhotoImage(render_icon(size), master=root) for size in ICON_SIZES]
     root.iconphoto(True, *photos)
     root._tt_icon_photos = photos   # Tk does not keep the Python objects alive

@@ -5,6 +5,7 @@ import startup_splash
 startup_splash.start()
 
 import log_setup
+import single_instance
 from app_info import PROGRAM_VERSION
 from gui.resource_utils import get_app_dir
 
@@ -44,6 +45,11 @@ def set_windows_app_id() -> None:
 
 def main() -> None:
     app_dir = get_app_dir()
+    if not single_instance.acquire(app_dir):
+        # Already running from this folder: show that window instead.
+        startup_splash.close()
+        single_instance.focus_running_instance()
+        return
     log_setup.configure_logging(app_dir)
     log_setup.install_process_exception_hooks()
 
