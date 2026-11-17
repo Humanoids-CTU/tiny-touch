@@ -7,6 +7,7 @@ import pytest
 
 import labeling_app
 from labeling_app import LabelingApp
+from service_layer.save_service import SaveOutcome
 from gui.open_touches_dialog import GO_TO_ONSET, SAVE_AND_CLOSE
 
 
@@ -91,7 +92,7 @@ def test_video_picker_is_owned_by_main_window(monkeypatch):
     assert picker_options["parent"] is app
 
 
-def _app(events, save_result=True):
+def _app(events, save_result=SaveOutcome.SAVED):
     return SimpleNamespace(
         video=SimpleNamespace(frames={}),
         save_data=lambda: events.append("save") or save_result,
@@ -151,7 +152,7 @@ def test_M9_confirm_saves_before_teardown(monkeypatch):
 
 def test_M9_rejected_close_anyway_keeps_session_alive(monkeypatch):
     events = []
-    app = _app(events, save_result=False)
+    app = _app(events, save_result=SaveOutcome.NOT_SAVED)
     monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda root: True)
     monkeypatch.setattr(
         labeling_app.messagebox,

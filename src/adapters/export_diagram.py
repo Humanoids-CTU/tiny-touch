@@ -1,6 +1,10 @@
 """Portable, labeled diagram reference rendered without a Tk window."""
 import hashlib
+import io
+import json
 import math
+import threading
+from collections import OrderedDict
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -19,6 +23,11 @@ BADGE_WIDTH = 210
 BADGE_PADDING = 8
 BADGE_GAP = 8
 FONT_CANDIDATES = ("DejaVuSans.ttf", "segoeui.ttf", "Arial.ttf")
+# Rendered PNGs kept in memory, keyed by coding setup (one per open video in practice).
+DIAGRAM_CACHE_SIZE = 4
+
+_rendered = OrderedDict()
+_rendered_lock = threading.Lock()  # saves render on a worker thread
 
 
 def _font(size):
@@ -115,6 +124,35 @@ def _label_layout(draw, setup, positions, bounds):
 
 
 def write_export_diagram(path, setup):
+    """Write the labeled reference diagram for `setup` and return its metadata entry."""
+    png = export_diagram_png(setup)
+    Path(path).write_bytes(png)
+    return {"image": Path(path).name, "image_sha256": hashlib.sha256(png).hexdigest()}
+
+
+def export_diagram_png(setup):
+    """PNG bytes of the reference diagram, rendered once per coding setup.
+
+    Rendering is deterministic: it reads only `setup` and bundled assets
+    (diagram, zone masks, fonts) that do not change while the app runs. The
+    cache key is the complete setup content, so any edit to the setup renders
+    a new picture and a stale one can never be served.
+    """
+    key = json.dumps(setup.to_dict(), sort_keys=True, ensure_ascii=False)
+    with _rendered_lock:
+        png = _rendered.get(key)
+        if png is not None:
+            _rendered.move_to_end(key)
+            return png
+    png = _render_png(setup)
+    with _rendered_lock:
+        _rendered[key] = png
+        while len(_rendered) > DIAGRAM_CACHE_SIZE:
+            _rendered.popitem(last=False)
+    return png
+
+
+def _render_png(setup):
     """Burn saved zone names and IDs into the diagram, with saved settings beside it.
 
     The reference has margins and is scaled; annotation coordinates continue
@@ -151,5 +189,6 @@ def write_export_diagram(path, setup):
                             label["text"], fill="#20242b", font=font, spacing=4, align="center")
     for index, (line, heading) in enumerate(lines):
         draw.text((panel_x, MARGIN + index * LINE_HEIGHT), line, fill="#20242b" if heading else "#505660", font=font)
-    image.save(path, format="PNG")
-    return {"image": Path(path).name, "image_sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest()}
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()

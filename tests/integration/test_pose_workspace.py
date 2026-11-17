@@ -130,7 +130,8 @@ def test_controller_save_captures_open_special_zones_in_the_same_workspace(tmp_p
                           _current_video_time_s=lambda: 12,
                           _zone_masks=[(name, np.asarray(mask)) for name, mask in pose_zone_masks()])
     app._save_pose_workspace = lambda: LabelingApp._save_pose_workspace(app)
-    assert LabelingApp.save_data(app) is True
+    from service_layer.save_service import SaveOutcome
+    assert LabelingApp.save_data(app) is SaveOutcome.SAVED
     assert repo.load().quality(4) == 0
     assert repo.load_frames()[4]["Note"] == "hello"
     assert repo.load_special_zone_rows() == [(1, x * .5, y * .5, "L")]

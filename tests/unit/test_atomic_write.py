@@ -24,7 +24,6 @@ Run:  uv run pytest tests/ -k C1 -v
 """
 import os
 
-import pandas as pd
 import pytest
 
 from adapters.export_writer import export_from_unified
@@ -52,23 +51,17 @@ def test_C1_export_preserves_prior_file_on_write_crash(tmp_path, monkeypatch):
     crash is exactly when a published dataset would be destroyed."""
     out_csv = str(tmp_path / "export" / "vid_export.csv")
 
-    # 1) baseline good save (real to_csv)
+    # 1) baseline good save
     _export(out_csv, _one_changed(1))
     good = open(out_csv, "rb").read()
 
-    # 2) inject a write that corrupts its target then crashes
-    def boom(self, path_or_buf=None, *a, **k):
-        target = path_or_buf
-        if hasattr(target, "write"):
-            target.write("CORRUPT")             # -> lands in .tmp under atomic code
-        else:
-            open(target, "w").write("CORRUPT")  # -> corrupts live file under old code
-        raise IOError("simulated disk-full mid-write")
+    # 2) a save that fails mid-stream: rows 0..2 are already written when the
+    #    last frame turns out to be unexportable (X/Y lists do not align)
+    doomed = _one_changed(3, "v2")
+    doomed[3]["RH"].update(X=[1, 2], Y=[3], Zones=[["A"], ["B"]])
 
-    monkeypatch.setattr(pd.DataFrame, "to_csv", boom)
-
-    with pytest.raises(IOError):
-        _export(out_csv, _one_changed(2))
+    with pytest.raises(ValueError):
+        _export(out_csv, doomed)
 
     # RED (before): live file truncated to "CORRUPT".
     # GREEN (after): corruption confined to .tmp; original bytes intact.

@@ -105,8 +105,9 @@ def preview_lines_for_save(frames: Dict[int, FrameBundle],
             return True
         return any(isinstance(b.get(l), dict) and b[l].get("changed") for l in limbs_order)
 
-    for f in range(total_frames + 1):
-        b = frames.get(f)
+    # Only frames present in the dict can be listed; a long video has few.
+    for f in sorted(f for f in frames if 0 <= f <= total_frames):
+        b = frames[f]
         if not isinstance(b, dict):
             continue
         if changed_only and not b.get("Changed"):

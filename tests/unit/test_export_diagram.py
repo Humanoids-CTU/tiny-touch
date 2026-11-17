@@ -126,3 +126,24 @@ def test_long_zone_names_are_complete_and_labels_do_not_overlap_or_clip(template
         for other in labels[i + 1:]:
             ol, ot, ore, ob = other["rect"]
             assert right <= ol or ore <= left or bottom <= ot or ob <= top
+
+
+def test_repeated_saves_publish_the_same_diagram_and_never_a_stale_one(tmp_path):
+    """The diagram is reused across saves within a session, keyed by the full
+    coding setup: equal setups give the first render's exact bytes, any change
+    to the setup gives a new picture, and the hash always matches the file."""
+    setup = default_coding_setup("general")
+    renamed = replace(setup, zone_labels={"1": "Renamed after the first save"})
+
+    def publish(name, value):
+        info = write_export_diagram(tmp_path / name, value)
+        data = (tmp_path / name).read_bytes()
+        assert info == {"image": name, "image_sha256": hashlib.sha256(data).hexdigest()}
+        return data
+
+    first = publish("first.png", setup)
+    assert publish("second.png", default_coding_setup("general")) == first
+    changed = publish("renamed.png", renamed)
+    assert changed != first
+    assert publish("back.png", setup) == first
+    assert publish("renamed-again.png", replace(setup, zone_labels={"1": "Renamed after the first save"})) == changed

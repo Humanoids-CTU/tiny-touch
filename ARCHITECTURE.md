@@ -128,13 +128,26 @@ User input (clicks / keys)
          └─► repaints diagram canvas + timelines
                                               ┌─► persist_state  (dirty frames -> state DB,
                                               │                   ONE transaction, Tk thread)
-On Save / Close ─► LabelingApp.save_data ─────┼─► export_from_unified  (version 2 channel schema)
-                                              ├─► write_export_metadata (JSON sidecar)
+On Save / Close ─► LabelingApp.save_data ─────┼─► run_export (worker thread):
+                                              │     export_from_unified  (CSV, skipped when unchanged)
+                                              │     write_export_diagram (PNG, rendered once per setup)
+                                              └─►   write_export_metadata (JSON sidecar, every save)
 ```
 
-The state write happens on the Tk thread; the three export writes run on a worker
+The state write happens on the Tk thread; the export writes run on a worker
 thread against a `deepcopy` snapshot taken beforehand. The SQLite connection
 never leaves the Tk thread (`SqliteRepository` raises if it does).
+
+`save_data` returns a `save_service.SaveOutcome` instead of raising:
+
+| Outcome | Meaning | What the user sees |
+| --- | --- | --- |
+| `SAVED` | State DB and export files are up to date | Nothing |
+| `EXPORT_STALE` | State DB saved; export files NOT updated (typically the CSV is open in Excel, so Windows refuses to replace it) | Save button: a warning to close the CSV and save again. Close / switch video: one confirmation, then it proceeds. Analysis: does not run |
+| `NOT_SAVED` | The state DB write failed; the latest edits are only in memory | Save button: an error. Close: "changes are NOT on disk, close anyway?". Switch video: refused |
+
+The `Changed` flags are cleared only after `SAVED`, so after any failure the next
+save writes those frames again.
 
 ### In-memory data model
 
@@ -171,6 +184,15 @@ painted destination. Play, backward navigation and jumps only view labels.
 validates and saves labels, shared notes/global parameters, Special Zones,
 timer and resume position in one SQLite transaction. Failed saves retain the
 active session for retry. Reopen always initializes inactive carry.
+
+Pose saves are incremental. `PoseLabels` records the keys its setters touch since a
+baseline set by `start_tracking()`, and `pending_changes()` returns only those rows
+(validated) plus the deleted keys. `PoseSqliteRepository` writes just those rows
+when the labels object holds the token it issued at its last load or successful
+save and SQLite `PRAGMA data_version` shows no other writer. Otherwise, including
+after any failed save, it replaces all label rows and adopts the labels as its new
+baseline. Stored rows always equal a full rewrite. Labels past the video end are
+rejected inside the save transaction against the stored result.
 
 The new-video flow chooses Touch/Pose, then Normal/Reliability; each pass has its
 own immutable typed coding setup. `gui.pose_panel.PosePanel` owns the dedicated
@@ -548,7 +570,9 @@ Operational choices, all deliberate:
 The split between the state DB and `export/<video>_export.csv` stays deliberate:
 
 - **State DB** is the source of truth for round-trips, written incrementally.
-- **Export CSV** is rewritten from scratch each save with one row per frame in the canonical legacy column order. Downstream consumers (Analysis, external tooling) read this file.
+- **Export CSV** is the full table, one row per frame in the canonical column order, always written whole (never patched in place) by a direct `csv.writer` stream (about 0.4 s for 344k frames). Downstream consumers (Analysis, external tooling) read this file. A save skips rewriting it only when it provably cannot be stale: this session already published it successfully for the open video (`Video.published_export_csv` holds the file's size and mtime from that export, reset on load, unload and any export failure), no frame is dirty, and the file on disk still has that size and mtime. A legacy metadata sidecar also forces a rewrite. The metadata JSON is rewritten on every save (labeling time, special zones and zone labels change without frame edits).
+- **Diagram PNG** is deterministic for a coding setup, so `export_diagram_png` keeps the rendered bytes in memory keyed by the full setup content. The first save of a session renders it; later saves reuse the identical bytes, and any setup change renders a new one.
+- **Publish order:** all three files are staged in a temporary folder first. They then replace the published ones in the order diagram, CSV, metadata, so a new metadata file only appears once the files it describes are in place. If a replace fails, only the files already replaced are restored from their backups.
 
 ### Opening a project
 
@@ -658,14 +682,15 @@ exception to otherwise pure computation.
 
 1. **Load Video** -- browse the library and resume a prepared project or select a
    new file and finish the coding setup wizard. Choices are gathered before the
-   current project is detached. Save failure prevents switching. The new session
+   current project is detached. A failed state save prevents switching; an export
+   that could not be updated asks for confirmation first. The new session
    is published only after its state is loaded and frames exist; successful
    preparation locks its setup. Frame extraction failure leaves a retryable project
    and a clean unloaded controller. Unloading retains the order: save current
    data/position/time, drop the active video, reset the frame buffer, close SQLite.
 2. **Special Zones** -- mark a project-wide set of body zones (e.g. covered with clothes) and describe them in a note; stored in the state DB's `special_zone_dots` and `meta.special_zones_note` and surfaced in the export metadata as `Special Zones` / `Special Zones Note`.
 3. **Annotate** -- pick a limb, click onsets/offsets, set gaze and parameters, type notes. Edits stay in memory until Save.
-4. **Save** -- `Save` button (or auto on Close / before Load) writes the dirty frames to the state DB (one transaction), then the export CSV (full) and the metadata sidecar. The `Changed` flags are cleared.
+4. **Save** -- `Save` button (or auto on Close / before Load / before Analysis) writes the dirty frames to the state DB (one transaction), then publishes the export set: the full CSV (unless unchanged since this session's last successful export), the diagram PNG and the metadata sidecar. The `Changed` flags are cleared only when both steps succeeded. If only the export failed, the annotations are safe in the state DB and the user is told the export files are out of date (see the `SaveOutcome` table above).
 5. **Analysis** -- runs `analysis_service.run_analysis` over the export CSV: per-limb summary stats, transition heatmaps, touch-trajectory plots, histograms, and a master HTML. Output lands in `plots/`; the service returns the master HTML path and `LabelingApp.analysis` opens it in the browser. See "Analysis conventions" below.
 6. **Close** -- final save, persists labeling-time accumulator and last frame position.
 

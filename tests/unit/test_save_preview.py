@@ -54,3 +54,11 @@ def test_clean_frames_stay_out_of_the_preview():
     frames[2]["RH"].update(X=[1], Y=[1], Onset="ON", Zones=[["Z"]])
 
     assert preview_lines_for_save(frames, total_frames=9) == []
+
+
+def test_preview_lists_frames_in_frame_order_within_the_video_range():
+    frames = {9: _dirty_bundle(), 2: _dirty_bundle(), 11: _dirty_bundle(), -1: _dirty_bundle()}
+
+    lines = preview_lines_for_save(frames, total_frames=10)
+
+    assert lines == ["frame=    2 | (cleared)", "frame=    9 | (cleared)"]

@@ -69,6 +69,7 @@ from log_setup import open_logs_folder
 from perf_utils import PerfLogger
 from service_layer import analysis_service, annotation_service, project_service, save_service
 from service_layer.project_service import LabelingTimer
+from service_layer.save_service import SaveOutcome
 from service_layer.frame_preparation import FramePreparationJob
 from video_model import Video
 
@@ -122,6 +123,31 @@ PLAYBACK_MAX_LAG_S = 0.25
 # <Configure> events of a window-edge drag (~16 ms) and the perf scenario's
 # 50 ms resize steps; every extra millisecond delays the sharp frame.
 RESIZE_SETTLE_MS = 100
+# What the user is told when a save did not fully reach disk (save_service.SaveOutcome).
+EXPORT_STALE_MESSAGE = (
+    "Your annotations are saved, but the export files (CSV, metadata and diagram) "
+    "could not be updated and are out of date.\n\n"
+    "Close the CSV in other programs (for example Excel) and save again. "
+    "Details are in the log."
+)
+NOT_SAVED_MESSAGE = (
+    "Your latest changes were NOT saved to disk. Details are in the log.\n\n"
+    "Try Save again before closing the video."
+)
+UNLOAD_SAVE_FAILED_MESSAGE = (
+    "Saving the current video failed (see the log).\n"
+    "The new video was NOT loaded, so nothing is lost."
+)
+
+
+def _report_save_outcome(parent, outcome):
+    """Tell the user about a Touch save that did not fully reach disk."""
+    if outcome is SaveOutcome.EXPORT_STALE:
+        messagebox.showwarning("Export not updated", EXPORT_STALE_MESSAGE, parent=parent)
+    elif outcome is SaveOutcome.NOT_SAVED:
+        messagebox.showerror("Save failed", NOT_SAVED_MESSAGE, parent=parent)
+
+
 def format_counter_time(ms, total_ms):
     """`ms` as S.mmm, M:SS.mmm or H:MM:SS.mmm, chosen by the video's length `total_ms`."""
     hours, remainder = divmod(ms, 3600000)
@@ -1724,7 +1750,8 @@ class LabelingApp(tk.Tk):
             self._frame_extraction_job = None
 
     def _run_export_with_progress(self, export_fn):
-        """Run a full export off the Tk thread while a modal stays responsive."""
+        """Run a full export off the Tk thread while a modal stays responsive.
+        Returns what `export_fn` returned; re-raises what it raised."""
         self._assert_ui_thread()
         win = tk.Toplevel(self)   # hidden until settled and centred (gui.window_reveal)
         win.title("Saving Data")
@@ -1761,7 +1788,7 @@ class LabelingApp(tk.Tk):
 
         def worker():
             try:
-                export_fn()
+                result["value"] = export_fn()
             except Exception as exc:
                 result["error"] = exc
             finally:
@@ -1782,6 +1809,7 @@ class LabelingApp(tk.Tk):
         win.wait_window()
         if "error" in result:
             raise result["error"]
+        return result.get("value")
 
     def _prepare_video_copy(self, source_path):
         """Ensure the video lives inside the project videos folder; returns the
@@ -2339,94 +2367,116 @@ class LabelingApp(tk.Tk):
         )
         return True
 
-    def save_data(self):
+    def save_from_button(self):
+        """The Save button: save, then report anything that did not reach disk.
+        Pose reports its own failure inside `save_data`."""
+        outcome = self.save_data()
+        if getattr(self, "annotation_type", "Touch") != "Pose":
+            _report_save_outcome(self, outcome)
+
+    def save_data(self) -> SaveOutcome:
+        """Save the open project and return what reached disk.
+
+        Touch never raises and shows no dialog here: each caller decides how
+        to tell the user (`save_from_button`, `on_close`, `analysis`, ...).
+        The state DB is written first and is the source of truth, so a failed
+        export alone is `EXPORT_STALE`, not a lost save.
+        """
         if not self.video or not self.video.frames_dir:
             logger.info("save skipped: no video loaded")
-            return True
+            return SaveOutcome.SAVED
         if self.state_repo is None:
             logger.error("save skipped: no state database is open")
-            return False
+            return SaveOutcome.NOT_SAVED
         if getattr(self, "annotation_type", "Touch") == "Pose":
             try:
                 saved = self._save_pose_workspace()
             except Exception as exc:
                 logger.exception("Pose workspace save failed; session retained for retry")
                 messagebox.showerror("Save failed", f"The Pose project remains open for retry.\n{exc}", parent=self)
-                return False
+                return SaveOutcome.NOT_SAVED
             logger.info("Pose workspace saved for %s", self.video_name)
-            return saved
+            return SaveOutcome.SAVED if saved else SaveOutcome.NOT_SAVED
         started = time.perf_counter()
+        video = self.video
         dirty_count = sum(
-            1 for bundle in self.video.frames.values()
+            1 for bundle in video.frames.values()
             if isinstance(bundle, dict) and bundle.get("Changed")
         )
-        self._persist_video_time()
-        self.preview_before_save(changed_only=True)
-        logger.info("saving %s changed frames", dirty_count)
-
         paths = ProjectPaths(self.video_name)
-        os.makedirs(paths.state_dir, exist_ok=True)
-        os.makedirs(paths.export_dir, exist_ok=True)
+        logger.info("saving %s changed frames", dirty_count)
         logger.debug(
             "save paths: video=%s state=%s export=%s frames=%s",
             paths.video_dir,
             paths.state_db,
             paths.export_csv,
-            self.video.frames_dir,
+            video.frames_dir,
         )
 
         # 1) Dirty frames -> state DB, one transaction. UI thread (the repo
         #    enforces that itself); this is the source of truth.
-        save_service.persist_state(
-            self.state_repo, self.video.total_frames, self.video.frames
-        )
+        try:
+            self._persist_video_time()
+            self.preview_before_save(changed_only=True)
+            os.makedirs(paths.state_dir, exist_ok=True)
+            save_service.persist_state(self.state_repo, video.total_frames, video.frames)
+        except Exception:
+            logger.exception("save failed: the state database was not updated")
+            return SaveOutcome.NOT_SAVED
 
-        logger.debug("writing export dataset: %s", paths.export_csv)
-
-        # Non-tabular inputs gathered here: the button labels are Tk reads and
-        # the labeling clock must be sampled on the UI thread.
-        metadata = save_service.MetadataInputs(
-            program_version=self.video.program_version,
-            video_name=self.video_name,
-            labeling_mode=self.labeling_mode,
-            special_zones_list=save_service.load_special_zones(self.state_repo),
-            special_zones_note=save_service.load_special_zones_note(self.state_repo),
-            param_labels={
-                "Parameter_1": (self.par1_btn.cget("text") or "Par1"),
-                "Parameter_2": (self.par2_btn.cget("text") or "Par2"),
-                "Parameter_3": (self.par3_btn.cget("text") or "Par3"),
-            },
-            limb_param_labels=self._limb_param_labels_for_export(),
-            labeling_time_seconds=self._current_video_time_s(),
-            template=self.state_repo.load_template().template,
-            zone_labels=dict(self.zone_display.labels),
-            coding_setup=getattr(self, "coding_setup", None),
-        )
-
-        # 2) Snapshot BEFORE the worker-thread export so concurrent edits can
-        #    neither tear the export nor be wrongly marked clean afterwards.
-        snapshot = save_service.build_save_snapshot(self.video.frames)
-        total_frames = self.video.total_frames
-        frame_rate = self.frame_rate
-
-        # 3) Export (metadata sidecar + full CSV) on a worker thread while a
-        #    modal progress dialog keeps the UI responsive.
-        self._run_export_with_progress(
-            lambda: save_service.run_export(
-                snapshot, paths, frame_rate, metadata, total_frames
+        # Only a successful export below may vouch for the published CSV again.
+        published_csv, video.published_export_csv = video.published_export_csv, None
+        try:
+            # Non-tabular inputs gathered here: the button labels are Tk reads and
+            # the labeling clock must be sampled on the UI thread.
+            metadata = save_service.MetadataInputs(
+                program_version=video.program_version,
+                video_name=self.video_name,
+                labeling_mode=self.labeling_mode,
+                special_zones_list=save_service.load_special_zones(self.state_repo),
+                special_zones_note=save_service.load_special_zones_note(self.state_repo),
+                param_labels={
+                    "Parameter_1": (self.par1_btn.cget("text") or "Par1"),
+                    "Parameter_2": (self.par2_btn.cget("text") or "Par2"),
+                    "Parameter_3": (self.par3_btn.cget("text") or "Par3"),
+                },
+                limb_param_labels=self._limb_param_labels_for_export(),
+                labeling_time_seconds=self._current_video_time_s(),
+                template=self.state_repo.load_template().template,
+                zone_labels=dict(self.zone_display.labels),
+                coding_setup=getattr(self, "coding_setup", None),
             )
-        )
+
+            # 2) Snapshot BEFORE the worker-thread export so concurrent edits can
+            #    neither tear the export nor be wrongly marked clean afterwards.
+            snapshot = save_service.build_save_snapshot(video.frames)
+            total_frames = video.total_frames
+            frame_rate = self.frame_rate
+
+            # 3) Export (metadata, diagram, and the CSV unless it is unchanged)
+            #    on a worker thread while a modal progress dialog keeps the UI
+            #    responsive.
+            stamp = self._run_export_with_progress(
+                lambda: save_service.run_export(
+                    snapshot, paths, frame_rate, metadata, total_frames,
+                    published_csv=published_csv,
+                )
+            )
+        except Exception:
+            logger.exception("annotations saved to the state database, but the export was NOT updated")
+            return SaveOutcome.EXPORT_STALE
+        video.published_export_csv = stamp
         logger.info(
             "save complete: changed_frames=%s export_rows=%s duration=%.2fs",
             dirty_count,
-            self.video.total_frames + 1,
+            total_frames + 1,
             time.perf_counter() - started,
         )
 
         # 4) Clear Changed ONLY where the live bundle still equals its snapshot:
         #    a frame edited DURING the export stays dirty for the next save.
-        save_service.clear_clean_flags(self.video.frames, snapshot)
-        return True
+        save_service.clear_clean_flags(video.frames, snapshot)
+        return SaveOutcome.SAVED
 
     def _limb_param_labels_for_export(self):
         """Limb-parameter button labels for the export metadata, or None when
@@ -2452,7 +2502,14 @@ class LabelingApp(tk.Tk):
             return
         if not self._resolve_open_touches_before_analysis():
             return
-        self.save_data()
+        outcome = self.save_data()
+        if outcome is not SaveOutcome.SAVED:
+            # Analysis reads the export files; never report on an outdated one.
+            reason = (EXPORT_STALE_MESSAGE if outcome is SaveOutcome.EXPORT_STALE
+                      else NOT_SAVED_MESSAGE)
+            messagebox.showerror("Analysis not run",
+                                 f"Analysis was not run.\n\n{reason}", parent=self)
+            return
         paths = ProjectPaths(self.video_name)
         try:
             result = analysis_service.run_analysis(
@@ -2617,12 +2674,7 @@ class LabelingApp(tk.Tk):
         if self._special_zones_app and self._special_zones_app.top_level.winfo_exists():
             self._special_zones_app.set_zone_display(settings, self._zone_label_positions)
         # The DB is authoritative; a failed export is retryable via Save.
-        try:
-            if self.save_data() is False:
-                messagebox.showerror("Export not updated", "Zone names were saved. Retry Save to update the export.", parent=self)
-        except Exception:
-            logger.exception("Zone names saved, but export failed")
-            messagebox.showerror("Export not updated", "Zone names were saved. Retry Save to update the export.", parent=self)
+        _report_save_outcome(self, self.save_data())
         return True
 
     def edit_project_zone_names(self):
@@ -2664,7 +2716,7 @@ class LabelingApp(tk.Tk):
             messagebox.showerror("Template locked", str(exc), parent=self)
             return
         self._apply_active_template(selected)
-        self.save_data()
+        _report_save_outcome(self, self.save_data())
         if getattr(self, "_settings_win", None) and self._settings_win.winfo_exists():
             self._settings_win.destroy()
             self.open_settings()
@@ -2676,8 +2728,9 @@ class LabelingApp(tk.Tk):
     def _unload_current_video(self) -> bool:
         """Persist and fully detach the open project — the same writes
         `on_close` performs, without tearing the Tk app down. Returns False
-        when the final save failed; the project is then left open untouched
-        so nothing can be lost.
+        when the final save failed (after telling the user) or when the user
+        chose to keep the video open because its export is out of date; the
+        project is then left open untouched so nothing can be lost.
 
         ORDERING (the data-mixing guard): every writer runs against the OLD
         repo first; then `self.video` drops to None, which idles the
@@ -2699,18 +2752,27 @@ class LabelingApp(tk.Tk):
         if self._special_zones_app and self._special_zones_app.top_level.winfo_exists():
             logger.debug("closing Special Zones window before unloading")
             if self._special_zones_app.on_close() is False:
+                messagebox.showerror("Save Failed", UNLOAD_SAVE_FAILED_MESSAGE, parent=self)
                 return False
         self._special_zones_app = None
 
         try:
-            ok = self.save_data()
+            outcome = self.save_data()
         except Exception:
             logger.exception("final save failed while unloading %r", self.video_name)
-            ok = False
-        if not ok:
+            outcome = SaveOutcome.NOT_SAVED
+        if outcome is SaveOutcome.NOT_SAVED:
             logger.error(
                 "unload aborted: final save failed; keeping current video open"
             )
+            messagebox.showerror("Save Failed", UNLOAD_SAVE_FAILED_MESSAGE, parent=self)
+            return False
+        if outcome is SaveOutcome.EXPORT_STALE and not messagebox.askyesno(
+            "Export not updated",
+            f"{EXPORT_STALE_MESSAGE}\n\nOpen the other video anyway?",
+            parent=self,
+        ):
+            logger.info("unload cancelled: export out of date; keeping current video open")
             return False
         self.save_last_position()
         self._finalize_video_time()
@@ -2849,12 +2911,7 @@ class LabelingApp(tk.Tk):
         #    From here on the app is in the clean "no video" state; any later
         #    failure aborts back to it instead of leaving a half-loaded mix.
         if not self._unload_current_video():
-            messagebox.showerror(
-                "Save Failed",
-                "Saving the current video failed (see the console).\n"
-                "The new video was NOT loaded, so nothing is lost.",
-            )
-            return
+            return  # the user was already told why the current video stays open
 
         # Commit the mode only now that the load is actually going ahead.
         self.annotation_type = annotation_type
@@ -3132,7 +3189,7 @@ class LabelingApp(tk.Tk):
             session.special_note = note
             session.special_scale = scale
             try:
-                if self.save_data() is False:
+                if self.save_data() is not SaveOutcome.SAVED:
                     return False
             except Exception as exc:
                 logger.exception("Pose Special Zones save failed")
@@ -3197,17 +3254,24 @@ class LabelingApp(tk.Tk):
         self._closing = True
         if self.video is not None:
             try:
-                ok = self.save_data()
+                outcome = self.save_data()
             except Exception:
                 logger.exception("final save failed while closing")
-                ok = False
-            if not ok and getattr(self, "annotation_type", "Touch") == "Pose":
+                outcome = SaveOutcome.NOT_SAVED
+            if outcome is not SaveOutcome.SAVED and getattr(self, "annotation_type", "Touch") == "Pose":
                 self._closing = False
                 messagebox.showerror("Save failed", "The Pose project remains open. Retry Save before closing.", parent=self)
                 return
-            if not ok and not messagebox.askyesno(
+            if outcome is SaveOutcome.EXPORT_STALE and not messagebox.askyesno(
+                "Export not updated",
+                f"{EXPORT_STALE_MESSAGE}\n\nClose anyway? The export files stay out of date "
+                "until the next save of this video.",
+            ):
+                self._closing = False
+                return
+            if outcome is SaveOutcome.NOT_SAVED and not messagebox.askyesno(
                 "Save failed",
-                "Saving failed - your latest changes are NOT on disk (see the console).\n"
+                "Saving failed - your latest changes are NOT on disk (see the log).\n"
                 "Close anyway and lose them?",
             ):
                 self._closing = False

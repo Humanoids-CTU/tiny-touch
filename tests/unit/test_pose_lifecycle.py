@@ -4,6 +4,7 @@ import pytest
 
 import labeling_app
 from labeling_app import LabelingApp
+from service_layer.save_service import SaveOutcome
 from gui.special_zones_app import SpecialZonesApp
 from service_layer import annotation_service
 
@@ -31,12 +32,12 @@ def test_pose_save_routes_only_to_workspace_and_reports_retry(monkeypatch):
     app = SimpleNamespace(annotation_type="Pose", video_name="pose",
                           video=SimpleNamespace(frames_dir="frames"), state_repo=object(),
                           _save_pose_workspace=lambda: True)
-    assert LabelingApp.save_data(app) is True
+    assert LabelingApp.save_data(app) is SaveOutcome.SAVED
     def fail():
         raise OSError("disk full")
     app._save_pose_workspace = fail
     monkeypatch.setattr(labeling_app.messagebox, "showerror", lambda *a, **kw: errors.append(a))
-    assert LabelingApp.save_data(app) is False
+    assert LabelingApp.save_data(app) is SaveOutcome.NOT_SAVED
     assert app.video is not None and app.state_repo is not None
     assert "disk full" in errors[0][1]
 
@@ -71,7 +72,7 @@ def test_close_pose_save_failure_keeps_active_session(monkeypatch):
     monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda app: True)
     monkeypatch.setattr(labeling_app, "find_open_touches", lambda *a: pytest.fail("Touch scan"))
     monkeypatch.setattr(labeling_app.messagebox, "showerror", lambda *a, **kw: None)
-    app = SimpleNamespace(annotation_type="Pose", video=object(), save_data=lambda: False)
+    app = SimpleNamespace(annotation_type="Pose", video=object(), save_data=lambda: SaveOutcome.NOT_SAVED)
     LabelingApp.on_close(app)
     assert app.video is not None
     assert not app._closing

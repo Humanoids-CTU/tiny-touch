@@ -24,6 +24,7 @@ from PIL import Image
 import labeling_app
 from adapters.frame_buffer import BufferContext, FrameBuffer
 from labeling_app import LabelingApp
+from service_layer.save_service import SaveOutcome
 
 
 # === 1. _unload_current_video ordering ========================================
@@ -33,7 +34,7 @@ class _FrameBufferStub:
         self.buffer_ready = True
 
 
-def _app(events, save_result=True, special_zones_app=None):
+def _app(events, save_result=SaveOutcome.SAVED, special_zones_app=None):
     app = SimpleNamespace(
         video=object(),
         video_name="old_video",
@@ -106,14 +107,18 @@ def test_unload_closes_the_special_zones_window_before_saving(monkeypatch):
 
 def test_unload_aborts_on_save_failure_and_keeps_the_session(monkeypatch):
     events = []
-    app = _app(events, save_result=False)
+    app = _app(events, save_result=SaveOutcome.NOT_SAVED)
     monkeypatch.setattr(labeling_app.theme, "set_button_state", lambda *a: None)
+    monkeypatch.setattr(labeling_app.messagebox, "showerror",
+                        lambda title, message, **kw: events.append(("error", message)))
     original_video = app.video
 
     assert LabelingApp._unload_current_video(app) is False
 
-    # Nothing was torn down: no detach, no buffer reset, no repo close.
-    assert events == ["stop_play", "cancel_hold", "save"]
+    # Nothing was torn down: no detach, no buffer reset, no repo close. The
+    # user is told the new video was not loaded.
+    assert events == ["stop_play", "cancel_hold", "save",
+                      ("error", labeling_app.UNLOAD_SAVE_FAILED_MESSAGE)]
     assert app.video is original_video
     assert app.video_name == "old_video"
 

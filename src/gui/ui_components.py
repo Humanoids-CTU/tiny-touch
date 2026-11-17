@@ -380,7 +380,7 @@ def _build_controls(app):
     )
     app.analysis_btn.pack(side="left", padx=(0, gap))
     app.save_btn = ttk.Button(
-        left_top, text="Save", command=app.save_data, style="Tool.TButton", takefocus=0,
+        left_top, text="Save", command=app.save_from_button, style="Tool.TButton", takefocus=0,
         state="disabled",   # enabled once a video has finished loading
     )
     app.save_btn.pack(side="left")

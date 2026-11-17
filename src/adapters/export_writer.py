@@ -1,12 +1,13 @@
 """Version 2 research exports. SQLite storage keys remain private to the app."""
+import csv
+import io
 import json
 import logging
 import math
+import os
 from decimal import Decimal
 from dataclasses import replace
 from typing import Dict
-
-import pandas as pd
 
 from adapters.atomic_io import atomic_write
 from adapters.export_diagram import write_export_diagram
@@ -18,6 +19,15 @@ from domain.touch_stats import fps_is_usable
 
 logger = logging.getLogger(__name__)
 EXPORT_FORMAT_VERSION = 2
+# The platform line end, as pandas' `to_csv` wrote it: CRLF on Windows, LF elsewhere.
+CSV_LINE_TERMINATOR = os.linesep
+EXPORT_COLUMNS = (
+    'Frame', 'Time_ms',
+    *(f'{channel}_{suffix}' for channel in PORTABLE_CHANNELS for suffix in ('XY', 'Onset', 'Zones')),
+    *(f'Parameter_{i}' for i in (1, 2, 3)),
+    *(f'{channel}_Parameter_{i}' for channel in PORTABLE_CHANNELS for i in (1, 2, 3)),
+    'Note',
+)
 
 
 def write_export_metadata(meta_path, program_version, video_name, labeling_mode,
@@ -84,28 +94,54 @@ def _paired_annotations(rec, frame, channel):
     return list(map(list, zip(xs,ys))), zones
 
 
+def _annotation_cells(bundle, frame):
+    """Every cell after `Frame` and `Time_ms`, in `EXPORT_COLUMNS` order.
+
+    Raises ValueError for misaligned or non-finite annotations, so a bad frame
+    stops the export before anything is published.
+    """
+    cells = []
+    for channel, key in PORTABLE_CHANNELS.items():
+        rec = bundle.get(key) or {}
+        xy, zones = _paired_annotations(rec, frame, channel)
+        cells += [json.dumps(xy, ensure_ascii=False, allow_nan=False),
+                  rec.get('Onset') or '',
+                  json.dumps(zones, ensure_ascii=False)]
+    params = bundle.get('Params') or {}
+    cells += [_normalize_param_state(params.get(f'Par{i}')) or '' for i in (1, 2, 3)]
+    for key in PORTABLE_CHANNELS.values():
+        limb_params = (bundle.get(key) or {}).get('LimbParams') or {}
+        cells += [_normalize_param_state(limb_params.get(f'Par{i}')) or '' for i in (1, 2, 3)]
+    cells.append(bundle.get('Note') or '')
+    return cells
+
+
 def export_from_unified(frames: Dict[int, FrameBundle], out_csv, program_version,
                         video_name, labeling_mode, frame_rate, special_zones_list,
                         total_frames, param_labels=None, limb_param_labels=None):
-    """Write one row per zero-based frame, including the last frame index."""
-    rows = []
+    """Write one row per zero-based frame, including the last frame index.
+
+    The bytes are those `pd.DataFrame(rows).to_csv(f, index=False)` produced
+    (csv QUOTE_MINIMAL, `os.linesep` line ends), pinned by the golden master.
+    Most frames of a long video are absent from `frames`; their cells are
+    always the same, so they are encoded once and reused as one text tail.
+    """
     fps = Decimal(str(frame_rate)) if fps_is_usable(frame_rate) else None
-    for frame in range(total_frames + 1):
-        bundle = frames.get(frame, empty_bundle())
-        row = {'Frame':frame, 'Time_ms': f'{Decimal(frame)*1000/fps:.3f}' if fps else ''}
-        for channel, key in PORTABLE_CHANNELS.items():
-            rec = bundle.get(key) or {}
-            xy, zones = _paired_annotations(rec, frame, channel)
-            row[f'{channel}_XY'] = json.dumps(xy, ensure_ascii=False, allow_nan=False)
-            row[f'{channel}_Onset'] = rec.get('Onset') or ''
-            row[f'{channel}_Zones'] = json.dumps(zones, ensure_ascii=False)
-        for i in (1,2,3):
-            row[f'Parameter_{i}'] = _normalize_param_state((bundle.get('Params') or {}).get(f'Par{i}')) or ''
-        for channel,key in PORTABLE_CHANNELS.items():
-            params = (bundle.get(key) or {}).get('LimbParams') or {}
-            for i in (1,2,3):
-                row[f'{channel}_Parameter_{i}'] = _normalize_param_state(params.get(f'Par{i}')) or ''
-        row['Note'] = bundle.get('Note') or ''
-        rows.append(row)
-    atomic_write(out_csv, lambda f: pd.DataFrame(rows).to_csv(f, index=False))
-    logger.debug('Export v2 -> %s (rows=%d)', out_csv, len(rows))
+
+    def write(stream):
+        writer = csv.writer(stream, lineterminator=CSV_LINE_TERMINATOR)
+        writer.writerow(EXPORT_COLUMNS)
+        tail = io.StringIO()
+        csv.writer(tail, lineterminator=CSV_LINE_TERMINATOR).writerow(
+            ['', *_annotation_cells(empty_bundle(), 0)])
+        absent_tail = tail.getvalue()  # ",[],,[],...,\r\n": leading comma joins Time_ms
+        for frame in range(total_frames + 1):
+            time_ms = f'{Decimal(frame)*1000/fps:.3f}' if fps else ''
+            bundle = frames.get(frame)
+            if bundle is None:
+                stream.write(f'{frame},{time_ms}{absent_tail}')
+            else:
+                writer.writerow([frame, time_ms, *_annotation_cells(bundle, frame)])
+
+    atomic_write(out_csv, write)
+    logger.debug('Export v2 -> %s (rows=%d)', out_csv, max(total_frames + 1, 0))
