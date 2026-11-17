@@ -9,11 +9,11 @@ import os
 import sys
 import tempfile
 
-from PIL import Image, ImageDraw, ImageFont, ImageTk
+from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageTk
 
 ICON_SIZES = (16, 20, 24, 32, 40, 48, 64, 256)   # incl. 125%/150% title-bar sizes
 # Cached .ico for the Windows window icon; bump the suffix when the design changes.
-ICO_CACHE_NAME = "TinyTouch-icon-v1.ico"
+ICO_CACHE_NAME = "TinyTouch-icon-v2.ico"
 ICON_FILL = "#e5e5ea"             # light grey tile, close to the window colour
 ICON_TEXT = "#8e8e93"             # mid-grey letters
 ICON_RADIUS = 0.24                # corner radius, fraction of the size
@@ -36,7 +36,9 @@ def render_icon(size):
     """RGBA icon `size` px square."""
     s = SUPERSAMPLE
     n = size * s
-    img = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+    # Transparent pixels carry the tile colour, so the anti-aliased rim blends
+    # to the tile colour instead of a light or dark halo.
+    img = Image.new("RGBA", (n, n), ImageColor.getrgb(ICON_FILL) + (0,))
     draw = ImageDraw.Draw(img)
     draw.rounded_rectangle([0, 0, n - 1, n - 1], radius=round(n * ICON_RADIUS), fill=ICON_FILL)
     # Size the font so the capital T is ICON_TEXT_HEIGHT of the icon.
@@ -51,7 +53,9 @@ def render_icon(size):
     y = (n - t_h) / 2 - top
     draw.text((x, y), "T", font=font, fill=ICON_TEXT)
     draw.text((x + t_w + gap, y), "T", font=font, fill=ICON_TEXT)
-    return img.resize((size, size), Image.Resampling.LANCZOS)
+    # Area-average the supersampled image: LANCZOS overshoots at the rounded
+    # corners and left pixels brighter than the tile (a white fringe).
+    return img.resize((size, size), Image.Resampling.BOX)
 
 
 def write_ico(path):
