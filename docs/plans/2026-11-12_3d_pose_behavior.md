@@ -142,7 +142,9 @@ during planning. Retain them unless explicitly revised:
 - Forward single-frame stepping (including a single forward mouse-wheel step)
   and forward arrow holding apply scale carry on
   each actually displayed frame. A skipped/unvisited frame is never filled.
-- Ordinary Play, backward navigation, timeline jumps/seeks and refreshes only
+- **Superseded 2026-11-17:** forward Play now carries like forward arrow
+  holding, on each actually painted frame; frames playback skips stay unfilled.
+- Backward navigation, timeline jumps/seeks and refreshes only
   view recorded labels. They do not write labels or change session carry, even
   when displaying a manual value different from the current carry.
 - A manual value reached by eligible forward navigation is protected and adopted

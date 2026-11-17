@@ -41,6 +41,10 @@ class Navigation(Enum):
     REFRESH = "refresh"
 
 
+# Forward navigation that carries head/body scale onto each painted frame.
+CARRY_NAVIGATION = (Navigation.FORWARD_STEP, Navigation.FORWARD_HOLD, Navigation.PLAY)
+
+
 def _frame(frame: int) -> None:
     if type(frame) is not int or frame < 0:
         raise ValueError("Frame must be a non-negative integer")
@@ -247,7 +251,7 @@ class PoseScaleSession:
 
     def arrive(self, previous_frame: int, frame: int, navigation: Navigation,
                *, displayed_frame: int | None) -> None:
-        """Call after a successful paint; only forward step/hold can write.
+        """Call after a successful paint; only forward step/hold/play can write.
 
         Only this displayed destination is considered, never skipped frames.
         Manual labels are barriers that update carry independently per scale.
@@ -255,7 +259,7 @@ class PoseScaleSession:
         _frame(previous_frame)
         _frame(frame)
         _enum(navigation, Navigation)
-        if navigation not in (Navigation.FORWARD_STEP, Navigation.FORWARD_HOLD):
+        if navigation not in CARRY_NAVIGATION:
             return
         _painted(frame, displayed_frame)
         if frame <= previous_frame:

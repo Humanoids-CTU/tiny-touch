@@ -79,8 +79,19 @@ def test_s6_existing_carried_value_can_be_replaced():
     assert labels.scale(101, BODY) == ScaleLabel(1.2, CARRIED)
 
 
+def test_forward_play_carries_onto_each_painted_frame_only():
+    labels = PoseLabels()
+    session = PoseScaleSession(labels)
+    edit(session, 100, 1.2)
+    advance(session, 100, 101, Navigation.PLAY)
+    advance(session, 101, 103, Navigation.PLAY)   # 102 was skipped by playback
+    assert labels.scale(101, BODY) == ScaleLabel(1.2, CARRIED)
+    assert labels.scale(102, BODY) is None
+    assert labels.scale(103, BODY) == ScaleLabel(1.2, CARRIED)
+
+
 @pytest.mark.parametrize("navigation", [
-    Navigation.PLAY, Navigation.BACKWARD, Navigation.JUMP, Navigation.REFRESH,
+    Navigation.BACKWARD, Navigation.JUMP, Navigation.REFRESH,
 ])
 def test_s8_view_only_navigation_neither_writes_nor_changes_carry(navigation):
     labels = PoseLabels()

@@ -47,6 +47,8 @@ PROGRESS_THICKNESS = 6
 INDICATOR_SIZE = 16   # check / radio indicator box
 INDICATOR_GAP = 7     # space between the indicator and its text
 PROGRESS_BLOCK_W = 80  # moving block of an indeterminate progress bar
+SLIDER_KNOB = 18      # round slider knob diameter
+SLIDER_TRACK = 4      # slider track thickness
 # Pillow image cache size (entries); generated images are small.
 IMAGE_CACHE_SIZE = 512
 
@@ -342,6 +344,13 @@ def _button_styles(style):
         _image_button(style, prefix + "StateOff.TButton", OFF, OFF_HOVER, OFF_HOVER, BTN_DISABLED, OFF_TEXT,
                       border=OFF, bg=bg)
     _image_button(style, "TButton", BTN, BTN_HOVER, BTN_PRESSED, BTN_DISABLED, TEXT)
+    # A quiet text-only button on cards (Pose's Reset / Clear): muted, accent on hover.
+    style.layout("CardLink.TButton", [("Button.padding", {"sticky": "nsew", "children": [
+        ("Button.label", {"sticky": "nsew"})]})])
+    style.configure("CardLink.TButton", background=CARD, foreground=MUTED, font=FONT_SMALL,
+                    padding=(px(2), 0), borderwidth=0, relief="flat", focuscolor=CARD, anchor="e")
+    style.map("CardLink.TButton", foreground=[("disabled", LINE), ("pressed", ACCENT_HOVER), ("active", ACCENT)],
+              background=[("active", CARD), ("pressed", CARD)])
 
 
 def _field_styles(style):
@@ -424,6 +433,37 @@ def _progress_styles(style):
                     bordercolor=TRACK, lightcolor=ACCENT, darkcolor=ACCENT, thickness=h)
 
 
+def _scale_styles(style):
+    """Horizontal sliders: a thin rounded track and a round raised knob."""
+    margin, knob = px(SHADOW_MARGIN), px(SLIDER_KNOB)
+    size, track = knob + 2 * margin, px(SLIDER_TRACK)
+    r = track // 2
+    for prefix, bg in (("", WIN), ("Card.", CARD)):
+        def trough_image(bg=bg):
+            # The track sits centred in an image as tall as the knob, so the
+            # knob never changes the row height and the track ends stay round.
+            img = Image.new("RGBA", (ELEMENT_IMAGE_PX, size), bg)
+            bar = rounded_image(ELEMENT_IMAGE_PX - 2 * margin, track, r, LINE_SOFT, under=bg)
+            img.paste(bar, (margin, (size - track) // 2))
+            return img
+
+        def knob_photo(fill, border):
+            # Transparent around the circle: an opaque square would cut the track.
+            return _photo(("knob", fill, border, knob, margin),
+                          lambda: rounded_image(size, size, knob // 2, fill, border, "raised", margin))
+
+        name = f"{prefix}Horizontal.TScale"
+        trough = _element(style, name + ".trough", _photo(("trough", bg, size, track), trough_image),
+                          slice_px=(margin + r + 1, 0), width=2 * (margin + r + 1), height=size, sticky="ew")
+        slider = _element(style, name + ".slider", knob_photo(BTN, BTN_LINE),
+                          (("disabled", knob_photo(BTN_DISABLED, LINE_SOFT)),
+                           ("pressed", knob_photo(BTN_PRESSED, BTN_LINE)),
+                           ("active", knob_photo(BTN_HOVER, BTN_LINE))),
+                          slice_px=0, width=size, height=size, sticky="")
+        style.layout(name, [(trough, {"sticky": "ew", "children": [(slider, {"side": "left", "sticky": ""})]})])
+        style.configure(name, background=bg, troughcolor=bg, borderwidth=0, sliderlength=size)
+
+
 def _text_styles(style):
     style.configure(".", background=WIN, foreground=TEXT, font=FONT_BASE, bordercolor=LINE,
                     lightcolor=CARD, darkcolor=CARD, troughcolor=TRACK, selectbackground=ACCENT,
@@ -435,6 +475,7 @@ def _text_styles(style):
     style.configure("Card.TLabel", background=CARD, foreground=TEXT)
     style.configure("CardMuted.TLabel", background=CARD, foreground=MUTED, font=FONT_SMALL)
     style.configure("CardHead.TLabel", background=CARD, foreground=TEXT, font=FONT_SMALL_MEDIUM)
+    style.configure("CardSmall.TLabel", background=CARD, foreground=TEXT, font=FONT_SMALL)
     style.configure("Card.Link.TLabel", background=CARD, foreground=ACCENT, font=FONT_BASE)
     style.configure("Muted.TLabel", background=WIN, foreground=MUTED)
     style.configure("Status.TLabel", background=WIN, foreground=MUTED, font=FONT_SMALL)
@@ -535,6 +576,7 @@ def apply_appearance(root, style, appearance):
     _field_styles(style)
     _scrollbar_styles(style)
     _progress_styles(style)
+    _scale_styles(style)
     _refresh_colors(root)
 
 
