@@ -647,6 +647,7 @@ survive a Settings round-trip (`AppConfig.raw` keeps the full parsed dict). Keys
 | `log_keep_files` | no | Number of newest session log files retained (default 20). |
 | `max_display_width` / `max_display_height` | no | Optional hard caps on the rendered video size (`0` = unlimited). |
 | `last_labeling_mode` | no | Last-chosen `Normal` / `Reliability`; written by the mode dialog. |
+| `last_project` | no | `{"name", "annotation_type"}` of the project open when the app last closed, or `null`. `main.py` writes it after the main loop (only after a completed close) and, once the main window is shown, calls `LabelingApp.open_startup_project`: that project is resumed on its saved frame, or the video library opens when there was none or it is no longer prepared with its source present (`project_catalog.find_resumable`). |
 
 Defaults for every key live in `adapters.config.CONFIG_DEFAULTS`, so a missing or corrupt
 `config.json` degrades to defaults with a WARN instead of failing. When the app is run from

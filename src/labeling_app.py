@@ -54,7 +54,7 @@ from gui.video_library import choose_video, choose_existing_video
 from service_layer.project_copy import next_copy_project
 from gui.coding_setup_wizard import configure_video
 from gui.pose_setup_wizard import configure_pose_video, choose_annotation_type
-from adapters.project_catalog import list_projects, SOURCE_META
+from adapters.project_catalog import find_resumable, list_projects, SOURCE_META
 from adapters.sqlite_repo import SqliteRepository
 from gui.zone_names_dialog import edit_zone_names
 from gui.zone_labels import draw_zone_labels
@@ -2836,8 +2836,17 @@ class LabelingApp(tk.Tk):
         self.update_frame_counter()
         self._set_mode_button_states()
 
-    def load_video(self):
-        """Load Video button. Suspends the buffer/playback workers until the
+    def open_startup_project(self, last_project):
+        """What the app shows first: the project that was open at the last
+        close (`(name, annotation type)`, resumed on its saved frame), or the
+        video library when there was none or it can no longer be resumed."""
+        entry = find_resumable(list_projects(), last_project)
+        if last_project is not None and entry is None:
+            logger.info("last project %r cannot be resumed; opening the library", last_project)
+        self.load_video(entry)
+
+    def load_video(self, choice=None):
+        """Load Video button (`choice` None: ask in the library). Suspends the buffer/playback workers until the
         new video is fully published so they can never observe a
         half-published one (_publish_loaded_video wakes them itself, so the
         first frame can be painted while the content swap still covers the
@@ -2845,13 +2854,14 @@ class LabelingApp(tk.Tk):
         an aborted load ends with video=None, which keeps them idle anyway)."""
         self._suspend_frame_workers = True
         try:
-            self._load_video_flow()
+            self._load_video_flow(choice)
         finally:
             self._suspend_frame_workers = False
             self.frame_buffer.poke()
 
-    def _load_video_flow(self):
-        choice = choose_video(self, list_projects(), center=center_over_parent)
+    def _load_video_flow(self, choice=None):
+        if choice is None:
+            choice = choose_video(self, list_projects(), center=center_over_parent)
         if choice is None:
             return
         if choice == "new":
@@ -3326,6 +3336,10 @@ class LabelingApp(tk.Tk):
                 self.after(FRAME_PREPARATION_POLL_MS, finish_close)
                 return
             # Every DB writer and the extraction worker have now finished.
+            # main.py stores this, so the next start reopens the same project.
+            self.project_at_close = (
+                (getattr(self, "video_name", None), getattr(self, "annotation_type", "Touch"))
+                if self.video is not None else None)
             self._close_state_repo()
             try:
                 self.frame_buffer.shutdown(wait=False, cancel_futures=True)

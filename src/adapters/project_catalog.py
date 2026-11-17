@@ -80,6 +80,19 @@ def list_projects(base_dir=DATA_DIR, videos_dir=VIDEOS_DIR):
     return entries
 
 
+def find_resumable(entries, project):
+    """The entry for `(project name, annotation type)` if it can be resumed
+    without any question to the user: prepared, with its source video present."""
+    if project is None:
+        return None
+    name, annotation_type = project
+    for entry in entries:
+        if (entry.title == name and entry.annotation_type == annotation_type
+                and entry.source and entry.preparation_state == "ready"):
+            return entry
+    return None
+
+
 def _touch_metadata(path):
     connection = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
     try:

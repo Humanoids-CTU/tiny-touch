@@ -1,3 +1,4 @@
+import logging
 import sys
 
 import startup_splash
@@ -58,6 +59,7 @@ def main() -> None:
     startup_splash.set_status("Loading")
     from labeling_app import LabelingApp
     from gui import window_reveal
+    from adapters import config
 
     enable_dpi_awareness()
     set_windows_app_id()
@@ -69,6 +71,12 @@ def main() -> None:
         raise
     # Close the splash when the main window appears (now, if already visible).
     window_reveal.on_reveal(app, startup_splash.close)
+    # Then continue where the coder stopped: the project open at the last close
+    # on its saved frame, or the video library. Queued, not called, because the
+    # load runs modal windows and must not hold up the reveal itself.
+    last_project = config.load_last_project()
+    window_reveal.on_reveal(
+        app, lambda: app.after_idle(lambda: app.open_startup_project(last_project)))
     # On Windows the root is still withdrawn (gui.window_reveal): it now maps
     # maximized directly, without a restore step or the maximize animation.
     # X11 uses a window attribute for the same maximized state as Windows.
@@ -84,6 +92,13 @@ def main() -> None:
         app_dir=app_dir,
     )
     app.mainloop()
+    # Set only by a completed close; a crash keeps the previous value.
+    if hasattr(app, "project_at_close"):
+        try:
+            config.save_last_project(app.project_at_close)
+        except OSError:
+            logging.getLogger(__name__).warning(
+                "could not remember the open project", exc_info=True)
     startup_splash.close()   # fallback if the window was never revealed
     log_setup.log_session_footer()
 

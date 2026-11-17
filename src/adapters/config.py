@@ -86,6 +86,32 @@ def save_config(config: dict) -> None:
     )
 
 
+# The project that was open when the app last closed, as
+# {"name": <project folder>, "annotation_type": "Touch" | "Pose"}; null or absent
+# when no video was open. Written by main.py after the main loop ends.
+LAST_PROJECT_KEY = 'last_project'
+
+
+def load_last_project():
+    """(project name, annotation type) open at the last close, or None."""
+    value = load_config().get(LAST_PROJECT_KEY)
+    if not isinstance(value, dict):
+        return None
+    name, annotation_type = value.get('name'), value.get('annotation_type')
+    if not isinstance(name, str) or not name or annotation_type not in ('Touch', 'Pose'):
+        return None
+    return name, annotation_type
+
+
+def save_last_project(project) -> None:
+    """Remember `(project name, annotation type)`, or None for "no video open"."""
+    config = load_config()
+    config[LAST_PROJECT_KEY] = (
+        None if project is None or not project[0]
+        else {'name': project[0], 'annotation_type': project[1]})
+    save_config(config)
+
+
 def load_perf_config():
     config = load_config()
     enabled = bool(config.get('perf_enabled', CONFIG_DEFAULTS['perf_enabled']))
