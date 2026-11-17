@@ -84,16 +84,16 @@ class PoseProjectSession:
         for frame in snapshot:
             if _nonnegative_frame(frame) > total_frames:
                 raise ValueError("Shared frame exceeds video length")
-        labels = self.labels.snapshot()
-        if any(frame > total_frames for frame, *_ in (*labels.events, *labels.quality, *labels.scales)):
-            raise ValueError("Pose annotation exceeds video length")
         points = tuple(tuple(point) for point in special_zones)
         metadata = {"last_frame": str(last_frame), "total_frames": str(total_frames),
                     "labeling_time_seconds": str(labeling_time_seconds),
                     "special_zones_note": special_note or "",
                     "special_zones_diagram_scale": str(special_scale)}
+        # Labels past the video end are rejected inside the save transaction,
+        # against the stored result, so unchanged labels need no in-memory scan.
         self._repo.save_workspace(self.labels, shared_frames=snapshot,
-                                  special_zones=points, metadata=metadata)
+                                  special_zones=points, metadata=metadata,
+                                  max_frame=total_frames)
         for frame, saved in snapshot.items():
             if frames.get(frame) == saved:
                 frames[frame]["Changed"] = False

@@ -126,17 +126,127 @@ class PoseSnapshot:
             scale_keys.add((frame, kind))
 
 
+def _scale_order(key):
+    frame, kind = key
+    return frame, kind.value
+
+
+@dataclass(frozen=True)
+class PoseChanges:
+    """Labels edited since a tracked baseline: current values plus removed keys.
+
+    `upserts` is a validated `PoseSnapshot` of the changed labels that still
+    exist; the `deleted_*` tuples name keys that no longer exist. A key never
+    appears in both.
+    """
+
+    upserts: PoseSnapshot = PoseSnapshot()
+    deleted_events: tuple[tuple[int, str], ...] = ()
+    deleted_quality: tuple[int, ...] = ()
+    deleted_scales: tuple[tuple[int, ScaleKind], ...] = ()
+
+    def __post_init__(self):
+        if not isinstance(self.upserts, PoseSnapshot):
+            raise ValueError("Expected a PoseSnapshot")
+        for keys in (self.deleted_events, self.deleted_quality, self.deleted_scales):
+            if type(keys) is not tuple:
+                raise ValueError("Deleted keys must be immutable tuples")
+        for frame, zone in self.deleted_events:
+            _frame(frame)
+            _zone(zone)
+        for frame in self.deleted_quality:
+            _frame(frame)
+        for frame, kind in self.deleted_scales:
+            _frame(frame)
+            _enum(kind, ScaleKind)
+        if (set(self.deleted_events) & {row[:2] for row in self.upserts.events}
+                or set(self.deleted_quality) & {row[0] for row in self.upserts.quality}
+                or set(self.deleted_scales) & {row[:2] for row in self.upserts.scales}):
+            raise ValueError("A changed label cannot be both written and deleted")
+
+    @property
+    def is_empty(self) -> bool:
+        upserts = self.upserts
+        return not (upserts.events or upserts.quality or upserts.scales
+                    or self.deleted_events or self.deleted_quality or self.deleted_scales)
+
+
 class PoseLabels:
     """Sparse recorded labels. Reads do not create records or infer defaults.
 
     Read methods return immutable values. Clearing one kind of label never
     deletes another kind at the same frame/zone.
+
+    Change tracking: every setter remembers the key it touched. A storage
+    adapter calls `start_tracking()` once its store holds exactly these labels
+    and keeps the returned token. Later, `pending_changes()` lists what differs
+    from that baseline, and `mark_saved()` forgets it after a commit. The token
+    lets the adapter tell whether this object's baseline is its own store: a new
+    `start_tracking()` (for example by another store) issues a different token.
     """
 
     def __init__(self):
         self._events: dict[tuple[int, str], ZoneEvent] = {}
         self._quality: dict[int, float] = {}
         self._scales: dict[tuple[int, ScaleKind], ScaleLabel] = {}
+        self._changed_events: set[tuple[int, str]] = set()
+        self._changed_quality: set[int] = set()
+        self._changed_scales: set[tuple[int, ScaleKind]] = set()
+        self._tracking_token: object | None = None
+
+    @property
+    def tracking_token(self) -> object | None:
+        """Opaque baseline identity; None until a store starts tracking."""
+        return self._tracking_token
+
+    def start_tracking(self) -> object:
+        """Declare the current labels a store's baseline; forget older edits."""
+        self._changed_events.clear()
+        self._changed_quality.clear()
+        self._changed_scales.clear()
+        self._tracking_token = object()
+        return self._tracking_token
+
+    def pending_changes(self) -> PoseChanges:
+        """Edits since the baseline, in key order; cost follows the edit count."""
+        events, quality, scales = self._events, self._quality, self._scales
+        changed_events = sorted(self._changed_events)
+        changed_quality = sorted(self._changed_quality)
+        changed_scales = sorted(self._changed_scales, key=_scale_order)
+        return PoseChanges(
+            upserts=PoseSnapshot(
+                events=tuple((frame, zone, events[frame, zone])
+                             for frame, zone in changed_events if (frame, zone) in events),
+                quality=tuple((frame, quality[frame])
+                              for frame in changed_quality if frame in quality),
+                scales=tuple((frame, kind, scales[frame, kind])
+                             for frame, kind in changed_scales if (frame, kind) in scales),
+            ),
+            deleted_events=tuple(key for key in changed_events if key not in events),
+            deleted_quality=tuple(frame for frame in changed_quality if frame not in quality),
+            deleted_scales=tuple(key for key in changed_scales if key not in scales),
+        )
+
+    def mark_saved(self, changes: PoseChanges) -> None:
+        """Forget saved changes, keeping keys edited again after their capture."""
+        for frame, zone, event in changes.upserts.events:
+            if self._events.get((frame, zone)) == event:
+                self._changed_events.discard((frame, zone))
+        for frame, value in changes.upserts.quality:
+            if self._quality.get(frame) == value:
+                self._changed_quality.discard(frame)
+        for frame, kind, label in changes.upserts.scales:
+            if self._scales.get((frame, kind)) == label:
+                self._changed_scales.discard((frame, kind))
+        for key in changes.deleted_events:
+            if key not in self._events:
+                self._changed_events.discard(key)
+        for frame in changes.deleted_quality:
+            if frame not in self._quality:
+                self._changed_quality.discard(frame)
+        for key in changes.deleted_scales:
+            if key not in self._scales:
+                self._changed_scales.discard(key)
 
     def snapshot(self) -> PoseSnapshot:
         """Capture labels independently of the active editing session."""
@@ -146,7 +256,7 @@ class PoseLabels:
             quality=tuple(sorted(self._quality.items())),
             scales=tuple((frame, kind, label) for (frame, kind), label
                          in sorted(self._scales.items(),
-                                   key=lambda item: (item[0][0], item[0][1].value))),
+                                   key=lambda item: _scale_order(item[0]))),
         )
 
     @classmethod
@@ -193,7 +303,9 @@ class PoseLabels:
             for target in POSE_ZONES:
                 if (frame, target) in self._events:
                     self._events[frame, target] = event
+                    self._changed_events.add((frame, target))
             self._events[frame, zone] = event
+        self._changed_events.add((frame, zone))
 
     def set_quality(self, frame: int, value: float | None,
                     *, displayed_frame: int | None) -> None:
@@ -204,6 +316,7 @@ class PoseLabels:
         else:
             _number(value, 0.0, 1.0)
             self._quality[frame] = float(value)
+        self._changed_quality.add(frame)
 
     def set_scale(self, frame: int, kind: ScaleKind, label: ScaleLabel | None,
                   *, displayed_frame: int | None) -> None:
@@ -215,6 +328,7 @@ class PoseLabels:
             raise ValueError("Expected a ScaleLabel or None")
         else:
             self._scales[frame, kind] = label
+        self._changed_scales.add((frame, kind))
 
     def active_zones(self, frame: int) -> frozenset[str]:
         """Any OFF closes the global interval, regardless of its clicked zone."""

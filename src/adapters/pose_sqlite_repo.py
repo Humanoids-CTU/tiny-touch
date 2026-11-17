@@ -1,7 +1,10 @@
 """Versioned Pose-only SQLite state, confined to the creating thread.
 
-Existing files are preflighted read-only before opening for writing. Saves replace
-all sparse labels in one transaction; deletions cannot leave stale rows behind.
+Existing files are preflighted read-only before opening for writing. Each save is
+one transaction. Labels are written incrementally (only keys changed since the
+last load or successful save) when the repository can prove the labels object
+and the database still share that baseline; otherwise every label row is
+replaced. Either way deletions cannot leave stale rows behind.
 """
 
 from contextlib import closing
@@ -44,6 +47,46 @@ _SCHEMA = (
 
 class PoseStorageError(ValueError):
     """The database format or saved annotations are invalid/unsupported."""
+
+
+def _write_label_changes(connection, changes):
+    """Apply validated changes; each statement touches only its own keys."""
+    upserts = changes.upserts
+    connection.executemany("DELETE FROM zone_events WHERE frame=? AND zone=?",
+                           changes.deleted_events)
+    connection.executemany("DELETE FROM frame_quality WHERE frame=?",
+                           ((frame,) for frame in changes.deleted_quality))
+    connection.executemany("DELETE FROM scale_labels WHERE frame=? AND kind=?", (
+        (frame, kind.value) for frame, kind in changes.deleted_scales))
+    connection.executemany("INSERT OR REPLACE INTO zone_events VALUES (?, ?, ?)", (
+        (frame, zone, event.value) for frame, zone, event in upserts.events))
+    connection.executemany("INSERT OR REPLACE INTO frame_quality VALUES (?, ?)",
+                           upserts.quality)
+    connection.executemany("INSERT OR REPLACE INTO scale_labels VALUES (?, ?, ?, ?)", (
+        (frame, kind.value, label.value, label.source.value)
+        for frame, kind, label in upserts.scales))
+
+
+def _replace_all_labels(connection, snapshot):
+    for table in ("zone_events", "frame_quality", "scale_labels"):
+        connection.execute(f"DELETE FROM {table}")
+    connection.executemany("INSERT INTO zone_events VALUES (?, ?, ?)", (
+        (frame, zone, event.value) for frame, zone, event in snapshot.events))
+    connection.executemany("INSERT INTO frame_quality VALUES (?, ?)", snapshot.quality)
+    connection.executemany("INSERT INTO scale_labels VALUES (?, ?, ?, ?)", (
+        (frame, kind.value, label.value, label.source.value)
+        for frame, kind, label in snapshot.scales))
+
+
+def _check_label_frames(connection, max_frame):
+    """Every stored label, changed or not, must lie inside the video."""
+    if max_frame is None:
+        return
+    for table in ("zone_events", "frame_quality", "scale_labels"):
+        # Each table's primary key starts with frame, so MAX uses the index.
+        last = connection.execute(f"SELECT MAX(frame) FROM {table}").fetchone()[0]
+        if last is not None and last > max_frame:
+            raise ValueError("Pose annotation exceeds video length")
 
 
 def _validate_shared_frame(frame, note, params):
@@ -97,6 +140,11 @@ class PoseSqliteRepository:
     def __init__(self, path: str | Path):
         self._owner = threading.get_ident()
         self._connection = None
+        # Baseline shared by one PoseLabels object and this database: the token
+        # that object holds, and PRAGMA data_version when it was last confirmed.
+        # data_version changes only when another connection commits.
+        self._labels_token = None
+        self._data_version = None
         path = Path(path).absolute()
         existed = path.exists()
         if existed:
@@ -157,16 +205,41 @@ class PoseSqliteRepository:
                                  for frame, kind, value, source in connection.execute(
                                      "SELECT * FROM scale_labels ORDER BY frame, kind")),
                 )
+                data_version = self._read_data_version()
         except (sqlite3.DatabaseError, ValueError, TypeError) as error:
             raise PoseStorageError("Invalid Pose saved state") from error
-        return PoseLabels.from_snapshot(snapshot)
+        labels = PoseLabels.from_snapshot(snapshot)
+        self._track(labels, data_version)
+        return labels
+
+    def _read_data_version(self):
+        return self._connection.execute("PRAGMA data_version").fetchone()[0]
+
+    def _track(self, labels, data_version):
+        """Remember `labels` as matching this database right now."""
+        self._labels_token = labels.start_tracking()
+        self._data_version = data_version
+
+    def _is_baseline(self, labels):
+        """Only the object this repository last loaded or saved is trusted.
+
+        A fresh, rehydrated or foreign PoseLabels, or one re-tracked by another
+        repository since, has a different token and gets a full replace.
+        """
+        return (self._labels_token is not None
+                and labels.tracking_token is self._labels_token)
 
     def save(self, labels: PoseLabels) -> None:
         """Compatibility API for a labels-only atomic save."""
         self._save(labels)
 
-    def save_workspace(self, labels, *, shared_frames, special_zones, metadata):
-        """Encode a validated complete workspace inside the labels transaction."""
+    def save_workspace(self, labels, *, shared_frames, special_zones, metadata,
+                       max_frame=None):
+        """Encode a validated complete workspace inside the labels transaction.
+
+        With `max_frame`, the commit is refused if any stored label frame,
+        including unchanged ones, would exceed it.
+        """
         self._check_thread()
         rows = []
         for frame, bundle in shared_frames.items():
@@ -177,33 +250,51 @@ class PoseSqliteRepository:
             rows.append((frame, note, json.dumps(params)))
         points = tuple(tuple(row) for row in special_zones)
         _validate_special_points(points)
-        self._save(labels, workspace=(rows, points, dict(metadata)))
+        self._save(labels, workspace=(rows, points, dict(metadata)), max_frame=max_frame)
 
-    def _save(self, labels: PoseLabels, *, workspace=None) -> None:
-        """Atomically replace sparse labels; failed writes retain previous state."""
+    def _save(self, labels: PoseLabels, *, workspace=None, max_frame=None) -> None:
+        """Atomically write labels; failed writes retain previous state.
+
+        Incremental when `labels` is this repository's baseline and no other
+        connection has committed since; otherwise a full replace, after which
+        `labels` becomes the baseline. Any failure drops the baseline, so the
+        next save is a full replace that writes everything still pending.
+        """
         self._check_thread()
-        snapshot = labels.snapshot()
+        if not isinstance(labels, PoseLabels):
+            raise ValueError("Expected PoseLabels")
+        # Validated before writing; the cost follows the number of edits.
+        changes = labels.pending_changes() if self._is_baseline(labels) else None
         connection = self._connection
-        with connection:
-            connection.execute("BEGIN IMMEDIATE")
-            _validate_format(connection)
-            for table in ("zone_events", "frame_quality", "scale_labels"):
-                connection.execute(f"DELETE FROM {table}")
-            connection.executemany("INSERT INTO zone_events VALUES (?, ?, ?)", (
-                (frame, zone, event.value) for frame, zone, event in snapshot.events
-            ))
-            connection.executemany("INSERT INTO frame_quality VALUES (?, ?)", snapshot.quality)
-            connection.executemany("INSERT INTO scale_labels VALUES (?, ?, ?, ?)", (
-                (frame, kind.value, label.value, label.source.value)
-                for frame, kind, label in snapshot.scales
-            ))
-            if workspace is not None:
-                frames, points, metadata = workspace
-                connection.execute("DELETE FROM shared_frames")
-                connection.executemany("INSERT INTO shared_frames VALUES (?, ?, ?)", frames)
-                connection.execute("DELETE FROM special_zone_points")
-                connection.executemany("INSERT INTO special_zone_points VALUES (?, ?, ?, ?)", points)
-                connection.executemany("INSERT OR REPLACE INTO project_meta VALUES (?, ?)", metadata.items())
+        try:
+            with connection:
+                connection.execute("BEGIN IMMEDIATE")
+                _validate_format(connection)
+                data_version = self._read_data_version()
+                if changes is not None and data_version == self._data_version:
+                    _write_label_changes(connection, changes)
+                else:
+                    changes = None
+                    _replace_all_labels(connection, labels.snapshot())
+                _check_label_frames(connection, max_frame)
+                if workspace is not None:
+                    # Shared frames and Special Zones are sparse, user-made rows;
+                    # replacing them keeps the save simple at negligible cost.
+                    frames, points, metadata = workspace
+                    connection.execute("DELETE FROM shared_frames")
+                    connection.executemany("INSERT INTO shared_frames VALUES (?, ?, ?)", frames)
+                    connection.execute("DELETE FROM special_zone_points")
+                    connection.executemany("INSERT INTO special_zone_points VALUES (?, ?, ?, ?)", points)
+                    connection.executemany("INSERT OR REPLACE INTO project_meta VALUES (?, ?)",
+                                           metadata.items())
+        except BaseException:
+            # Rolled back, but trust nothing about the baseline after a failure.
+            self._labels_token = None
+            raise
+        if changes is None:
+            self._track(labels, data_version)
+        else:
+            labels.mark_saved(changes)
 
     def close(self) -> None:
         self._check_thread()
