@@ -77,3 +77,7 @@ TinyTouch_env/
 
 /surprise.txt
 /release-test/*
+
+# Local experiments and design scratch, kept out of the repo
+/cat-touch-demo/
+/docs/design/

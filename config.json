@@ -1,5 +1,5 @@
 {
-  "diagram_scale": 0.5,
+  "diagram_scale": 0.698,
   "dot_size": 10.0,
   "minimal_touch_length": 280,
   "parameter1": "P1",
@@ -10,11 +10,14 @@
   "limb_parameter3": "LP3",
   "video_downscale": 1.0,
   "jump_seconds": 0.28,
-  "realtime_arrow_hold": false,
+  "realtime_arrow_hold": true,
   "perf_enabled": false,
   "perf_log_every_s": 2.0,
   "perf_log_top_n": 10,
   "log_level_console": "INFO",
   "log_keep_files": 20,
-  "last_labeling_mode": "Reliability"
+  "last_labeling_mode": "Normal",
+  "appearance": "light",
+  "video_renderer": "auto",
+  "diagram_hover_effects": true
 }
