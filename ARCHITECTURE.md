@@ -783,6 +783,8 @@ Produces a standalone executable in `dist/`. The spec bundles two `datas` entrie
 
 `resource_path` resolves distribution-root files; `asset_path` resolves the bundled runtime-asset tree (`src/resources/` from source, `<_MEIPASS>/resources/` when frozen). Change one and you must change the other.
 
+The executable is windowed (`console=False`): it opens no console, so console log output is dropped and the session log file is the only record. A PyInstaller `Splash` ([assets/splash.png](assets/splash.png)) appears as soon as the executable starts and covers the onefile unpacking. [src/startup_splash.py](src/startup_splash.py) animates its status line and closes it when the main window is revealed. When the app runs from source there is no splash, and the module does nothing. On Windows the spec also renders the "TT" logo from [src/gui/app_icon.py](src/gui/app_icon.py) into the build folder as `TinyTouch.ico` and embeds it as the executable's icon.
+
 ## Releasing a New Version
 
 A GitHub Actions workflow ([.github/workflows/build.yml](.github/workflows/build.yml)) builds and publishes Windows x64 and Linux x64 (Ubuntu 24.04 / Python 3.12) artifacts on every non-legacy `v*` tag push, then creates a GitHub Release with the zips attached.

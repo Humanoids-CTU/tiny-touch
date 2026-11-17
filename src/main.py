@@ -1,5 +1,9 @@
 import sys
 
+import startup_splash
+
+startup_splash.start()
+
 import log_setup
 from app_info import PROGRAM_VERSION
 from gui.resource_utils import get_app_dir
@@ -8,6 +12,9 @@ from gui.resource_utils import get_app_dir
 # reports the real DPI and theme.SCALE sizes every control to match.
 WINDOWS_DPI_AWARE = True
 PROCESS_PER_MONITOR_DPI_AWARE = 2
+# Own taskbar identity on Windows, so the taskbar shows the TinyTouch icon
+# (gui.app_icon) instead of grouping the window under python.exe.
+WINDOWS_APP_USER_MODEL_ID = "CTU.TinyTouch"
 
 
 def enable_dpi_awareness() -> None:
@@ -23,6 +30,18 @@ def enable_dpi_awareness() -> None:
         pass
 
 
+def set_windows_app_id() -> None:
+    """Give the process its own taskbar identity before any window exists (Windows only)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(WINDOWS_APP_USER_MODEL_ID)
+    except Exception:
+        pass   # Cosmetic: the window still works under the default taskbar group.
+
+
 def main() -> None:
     app_dir = get_app_dir()
     log_setup.configure_logging(app_dir)
@@ -30,10 +49,20 @@ def main() -> None:
 
     # Import after the process hooks exist so import/startup failures are also
     # captured in the session log.
+    startup_splash.set_status("Loading")
     from labeling_app import LabelingApp
+    from gui import window_reveal
 
     enable_dpi_awareness()
-    app = LabelingApp()
+    set_windows_app_id()
+    startup_splash.set_status("Building the interface")
+    try:
+        app = LabelingApp()
+    except BaseException:
+        startup_splash.close()   # never leave the splash over an error dialog
+        raise
+    # Close the splash when the main window appears (now, if already visible).
+    window_reveal.on_reveal(app, startup_splash.close)
     # On Windows the root is still withdrawn (gui.window_reveal): it now maps
     # maximized directly, without a restore step or the maximize animation.
     # X11 uses a window attribute for the same maximized state as Windows.
@@ -49,6 +78,7 @@ def main() -> None:
         app_dir=app_dir,
     )
     app.mainloop()
+    startup_splash.close()   # fallback if the window was never revealed
     log_setup.log_session_footer()
 
 

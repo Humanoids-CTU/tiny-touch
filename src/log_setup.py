@@ -48,6 +48,8 @@ class _LazyStdoutHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             stream = sys.stdout
+            if stream is None:
+                return   # windowed build (console=False): no console to write to
             message = self.format(record) + self.terminator
             try:
                 stream.write(message)
