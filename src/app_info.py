@@ -1,3 +1,3 @@
 """Application-level metadata for TinyTouch."""
 
-PROGRAM_VERSION = "9.3.0"
+PROGRAM_VERSION = "9.4.0"

@@ -8,6 +8,27 @@ events and observations.
 
 
 
+## New in 9.4.0
+
+- **3D Pose mode:** a second annotation type next to Touch. Mark when body zones
+  start and stop on the Alternate diagram (left click ON, right click OFF), set
+  body and head size with sliders that carry forward as you step through frames,
+  and rate each frame's quality. Pose labels are saved separately from Touch and
+  saved incrementally. Pose export and Analysis come in a later release.
+- **Pick up where you left off:** TinyTouch reopens the last project on its saved
+  frame, or shows the video library, which is now sorted by last use.
+- **Smoother coding:** Touch and Pose playback runs in real time at up to 100 FPS,
+  windows open without flicker, and the diagram resizes through a live preview.
+- **Safer work:** warns about touches without an offset before closing, resumes
+  interrupted video preparation, and reports export failures separately from saves.
+  Touch export is faster.
+- **New look:** a baby-hand app icon, a loading screen at startup, no console
+  window, and only one TinyTouch per folder (opening it again brings the running
+  window to the front).
+
+**Linux:** the 9.4.0 Linux build is coming soon. Until then, use the
+[9.3.0 Linux release](https://github.com/Humanoids-CTU/tiny-touch/releases/tag/v9.3.0).
+
 ## New in 9.3.0
 
 - **Video library and guided setup:** resume a labeled video or prepare a new one
@@ -42,15 +63,15 @@ Download TinyTouch from the
 [Releases page](https://github.com/Humanoids-CTU/tiny-touch/releases).
 
 **Windows 10/11 (64-bit):** download **windows-x64.zip**, extract it, and
-double-click **TinyTouch-v9.3.0.exe** (the version number matches your download).
+double-click **TinyTouch-v9.4.0.exe** (the version number matches your download).
 
 **Linux (Ubuntu 24.04 or newer, Intel/AMD 64-bit):** download **linux-x64.zip**
 and extract it. Open a terminal in the extracted folder and run
 (use the version number you downloaded):
 
 ```bash
-chmod +x TinyTouch-v9.3.0
-./TinyTouch-v9.3.0
+chmod +x TinyTouch-v9.4.0
+./TinyTouch-v9.4.0
 ```
 
 ## Label a video
