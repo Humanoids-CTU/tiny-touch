@@ -8,8 +8,8 @@ dialog says, without touching the data.
 from types import SimpleNamespace
 
 import labeling_app
-from domain.touch import OpenTouch, find_open_touches
-from gui.open_touches_dialog import ANALYZE_ANYWAY, GO_TO_ONSET, describe_open_touch
+from domain.touch import STRAY_OFFSET, OpenTouch, find_open_touches
+from gui.open_touches_dialog import ANALYZE_ANYWAY, GO_TO_ONSET, describe_open_touch, describe_title
 from labeling_app import LabelingApp
 
 LIMBS = ["LH", "RH", "LL", "RL"]
@@ -24,7 +24,38 @@ def _rec(onset, x=None, zones=None):
 
 def test_no_annotations_means_nothing_open():
     assert find_open_touches({}, LIMBS) == []
-    assert find_open_touches({3: {"RH": _rec("OFF", 1)}}, LIMBS) == []  # stray OFF
+
+
+def test_offset_without_any_onset_is_reported():
+    assert find_open_touches({3: {"RH": _rec("OFF", 1)}}, LIMBS) == [
+        OpenTouch("RH", 3, 3, kind=STRAY_OFFSET),
+    ]
+
+
+def test_each_offset_after_a_closed_touch_is_reported_once_per_mark():
+    frames = {
+        1: {"RH": _rec("ON", 1)},
+        4: {"RH": _rec("OFF", 1)},     # closes the touch
+        6: {"RH": _rec("OFF", 2)},     # stray
+        9: {"RH": _rec("OFF", 3)},     # stray
+    }
+    assert find_open_touches(frames, LIMBS) == [
+        OpenTouch("RH", 6, 6, kind=STRAY_OFFSET),
+        OpenTouch("RH", 9, 9, kind=STRAY_OFFSET),
+    ]
+
+
+def test_stray_offsets_and_open_onsets_mix_in_frame_order():
+    frames = {
+        2: {"LH": _rec("OFF", 1)},     # stray
+        5: {"RH": _rec("ON", 1)},      # open
+        7: {"LL": _rec("OFF", 1)},     # stray
+    }
+    assert find_open_touches(frames, LIMBS) == [
+        OpenTouch("LH", 2, 2, kind=STRAY_OFFSET),
+        OpenTouch("RH", 5, 5),
+        OpenTouch("LL", 7, 7, kind=STRAY_OFFSET),
+    ]
 
 
 def test_closed_touch_is_not_reported():
@@ -52,6 +83,26 @@ def test_reopened_touch_after_close_is_reported_once():
 
 def test_description_is_channel_and_frame_only():
     assert describe_open_touch(OpenTouch("RH", 120, 125), "Right hand") == "Right hand: onset at frame 120"
+    assert (describe_open_touch(OpenTouch("RH", 130, 130, kind=STRAY_OFFSET), "Right hand")
+            == "Right hand: offset at frame 130 without an onset")
+
+
+def test_title_names_the_kinds_present():
+    onset, offset = OpenTouch("RH", 1, 1), OpenTouch("RH", 2, 2, kind=STRAY_OFFSET)
+    assert describe_title([onset]) == "1 touch without an offset."
+    assert describe_title([offset, offset]) == "2 offsets without an onset."
+    assert describe_title([onset, onset, offset]) == (
+        "2 touches without an offset, 1 offset without an onset."
+    )
+
+
+def test_go_to_frame_jumps_to_a_stray_offset(monkeypatch):
+    events, seen = [], []
+    _stub_dialog(monkeypatch, (GO_TO_ONSET, 0), seen)
+    frames = {2: {"RH": _rec("ON", 1)}, 4: {"RH": _rec("OFF", 1)}, 9: {"RH": _rec("OFF", 1)}}
+    app = _app(frames, events, current_frame=3)
+    assert LabelingApp._resolve_open_touches_before_analysis(app) is False
+    assert events == ["stop", ("next_frame", 6)]
 
 
 # --- the Analysis-button decision, with the Tk dialog replaced by a stub --------

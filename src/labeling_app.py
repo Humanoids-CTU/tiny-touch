@@ -2555,13 +2555,14 @@ class LabelingApp(tk.Tk):
         return key
 
     def _resolve_open_touches_before_analysis(self) -> bool:
-        """Surface every onset without an offset before analysis runs.
+        """Surface every onset without an offset, and every offset without an
+        onset, before analysis runs.
 
-        Returns True when analysis should proceed (nothing open, or "Skip and
-        analyze") and False when the coder cancelled or chose to go and fix an
-        onset by hand. An open touch is not an error for the analysis (it is
-        censored and reported as unterminated), but the coder should see it
-        first and decide.
+        Returns True when analysis should proceed (nothing unpaired, or "Skip
+        and analyze") and False when the coder cancelled or chose to go and fix
+        a mark by hand. Neither is an error for the analysis (an open touch is
+        censored and reported as unterminated, a stray offset is ignored), but
+        the coder should see them first and decide.
         """
         touches = find_open_touches(self.video.frames, LIMBS)
         return self._resolve_open_touches(touches)
@@ -2575,8 +2576,8 @@ class LabelingApp(tk.Tk):
         self._cancel_arrow_hold_state()
         self._cancel_wheel_scroll()
         logger.info(
-            "%s: %d open touch(es): %s", operation, len(touches),
-            ", ".join(f"{t.limb}@{t.start_frame}" for t in touches),
+            "%s: %d unpaired onset/offset mark(s): %s", operation, len(touches),
+            ", ".join(f"{t.kind} {t.limb}@{t.start_frame}" for t in touches),
         )
         result = OpenTouchesDialog(
             self, touches, self._channel_display_label, closing=closing,
@@ -2588,13 +2589,14 @@ class LabelingApp(tk.Tk):
         action, index = result
         if action == GO_TO_ONSET:
             target = touches[index].start_frame
-            logger.info("%s postponed: jumping to open onset %s@%s", operation, touches[index].limb, target)
+            logger.info("%s postponed: jumping to unpaired %s %s@%s",
+                        operation, touches[index].kind, touches[index].limb, target)
             if target != self.video.current_frame:
                 self.next_frame(target - self.video.current_frame)
             return False
         proceed = action == (SAVE_AND_CLOSE if closing else ANALYZE_ANYWAY)
         if proceed:
-            logger.info("%s proceeding with %d open touch(es) left open", operation, len(touches))
+            logger.info("%s proceeding with %d unpaired mark(s) left as they are", operation, len(touches))
         return proceed
 
     def play_video(self):

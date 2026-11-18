@@ -123,30 +123,46 @@ def find_last_open_onset(frames, limb, current_frame, known=None):
     return list(fallback)
 
 
+#: `OpenTouch.kind` values.
+OPEN_ONSET = "onset"     # an `ON` that no later `OFF` closes
+STRAY_OFFSET = "offset"  # an `OFF` with no open `ON` before it
+
+
 @dataclass(frozen=True)
 class OpenTouch:
-    """An `ON` for `limb` at `start_frame` that no later `OFF` closes.
+    """An unpaired onset/offset mark for `limb` at `start_frame`.
 
-    `last_click_frame` is the last frame at or after the onset where the limb
-    has a click (the onset itself when nothing followed), so the UI can report
-    where the touch was last seen and so a synthetic offset can reuse that
-    position. `extra_onsets` counts further `ON` marks inside the open touch.
+    `kind` is OPEN_ONSET (default) for an `ON` that no later `OFF` closes, or
+    STRAY_OFFSET for an `OFF` that closes nothing (it follows another `OFF`,
+    or no `ON` at all). Either way `start_frame` is the frame of the mark, the
+    frame the UI jumps to.
+
+    For an open onset, `last_click_frame` is the last frame at or after the
+    onset where the limb has a click (the onset itself when nothing followed),
+    so the UI can report where the touch was last seen and so a synthetic
+    offset can reuse that position. `extra_onsets` counts further `ON` marks
+    inside the open touch. For a stray offset `last_click_frame` equals
+    `start_frame` and `extra_onsets` is 0.
     """
 
     limb: str
     start_frame: int
     last_click_frame: int
     extra_onsets: int = 0
+    kind: str = OPEN_ONSET
 
 
 def find_open_touches(frames, limbs) -> list:
-    """Return every still-open touch in the in-memory `frames`, in frame order.
+    """Return every unpaired onset/offset in the in-memory `frames`, in frame
+    order: each still-open touch (`ON` without an `OFF`) and each stray `OFF`.
 
     Same state machine as the analysis episode builder (`ON` opens, a further
-    `ON` is an extra onset, `OFF` closes, a stray `OFF` is ignored), applied to
-    the labeler's FrameBundle dict rather than to an export row stream. The GUI
-    runs this BEFORE analysis so the annotator sees the open onset and can fix
-    it, instead of learning about it from the report's censored-touch warning.
+    `ON` is an extra onset, `OFF` closes, a stray `OFF` closes nothing),
+    applied to the labeler's FrameBundle dict rather than to an export row
+    stream. The analysis ignores a stray `OFF`; it is reported here, one entry
+    per mark, so the annotator sees it. The GUI runs this BEFORE analysis so
+    the annotator can fix the marks, instead of learning about an open touch
+    from the report's censored-touch warning.
     """
     found = []
     order = sorted(f for f in frames.keys() if isinstance(f, int))
@@ -167,6 +183,8 @@ def find_open_touches(frames, limbs) -> list:
                     extra += 1
                     last_click = f if has_click else last_click
             elif onset == "OFF":
+                if start is None:
+                    found.append(OpenTouch(limb, f, f, kind=STRAY_OFFSET))
                 start = None
             elif start is not None and has_click:
                 last_click = f

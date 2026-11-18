@@ -1,19 +1,21 @@
-"""Analysis and app-close prompt for touches whose onset has no offset.
+"""Analysis and app-close prompt for unpaired onsets and offsets.
 
 Shown by the Analysis button when `domain.touch.find_open_touches` finds an
-`ON` with no later `OFF`. The analysis never fails on such a touch (it is
-censored and reported as "open (unterminated)"), but the coder should see it
-before the report does. Deliberately minimal: one line, the list, three
-buttons. "Go to onset" jumps to the selected onset so the coder can place the
-offset by hand; "Skip and analyze" runs the analysis with the touch left out.
+`ON` with no later `OFF`, or an `OFF` with no open `ON` before it. The
+analysis never fails on either (an open touch is censored and reported as
+"open (unterminated)", a stray offset is ignored), but the coder should see
+them before the report does. Deliberately minimal: one line, the list, three
+buttons. "Go to frame" jumps to the selected mark so the coder can fix it by
+hand; "Skip and analyze" runs the analysis with the marks left as they are.
 """
 import tkinter as tk
 from tkinter import ttk
 
+from domain.touch import STRAY_OFFSET
 from gui import theme, window_reveal
 from gui.widgets import RoundedCard
 
-GO_TO_ONSET = "goto"
+GO_TO_ONSET = "goto"   # jump to the selected mark (onset or stray offset)
 ANALYZE_ANYWAY = "analyze"
 SAVE_AND_CLOSE = "close"
 
@@ -24,8 +26,24 @@ LIST_FIELD_PAD = 6    # design px between the field outline and the list
 
 
 def describe_open_touch(touch, channel_label: str) -> str:
-    """One listbox row: channel and onset frame."""
+    """One listbox row: channel, mark kind and frame."""
+    if touch.kind == STRAY_OFFSET:
+        return f"{channel_label}: offset at frame {touch.start_frame} without an onset"
     return f"{channel_label}: onset at frame {touch.start_frame}"
+
+
+def describe_title(touches) -> str:
+    """Headline: names the one kind present, or both when mixed."""
+    offsets = sum(1 for t in touches if t.kind == STRAY_OFFSET)
+    onsets = len(touches) - offsets
+
+    open_text = f"{onsets} touch{'es' if onsets != 1 else ''} without an offset"
+    stray_text = f"{offsets} offset{'s' if offsets != 1 else ''} without an onset"
+    if not offsets:
+        return f"{open_text}."
+    if not onsets:
+        return f"{stray_text}."
+    return f"{open_text}, {stray_text}."
 
 
 class OpenTouchesDialog:
@@ -36,7 +54,7 @@ class OpenTouchesDialog:
         self.result = None
         self.touches = list(touches)
         win = self.win = tk.Toplevel(parent)   # hidden until settled and centred
-        win.title("Open touches")
+        win.title("Unpaired onsets and offsets")
         win.resizable(False, False)
         win.transient(parent)
         theme.bind_colors(win, bg="WIN")
@@ -47,13 +65,20 @@ class OpenTouchesDialog:
         count = len(self.touches)
         ttk.Label(
             content,
-            text=f"{count} touch{'es' if count != 1 else ''} without an offset.",
+            text=describe_title(self.touches),
             style="Title.TLabel",
+            wraplength=px(TEXT_WRAP),
         ).pack(anchor="w")
         if closing:
             ttk.Label(
                 content,
-                text="You can save with open touches and continue labeling later.",
+                text="You can save now and fix them when you continue labeling.",
+                wraplength=px(TEXT_WRAP),
+            ).pack(anchor="w", pady=(px(6), 0))
+        elif any(t.kind == STRAY_OFFSET for t in self.touches):
+            ttk.Label(
+                content,
+                text="Offsets without an onset are ignored by the analysis.",
                 wraplength=px(TEXT_WRAP),
             ).pack(anchor="w", pady=(px(6), 0))
 
@@ -82,11 +107,11 @@ class OpenTouchesDialog:
         buttons = ttk.Frame(content)
         buttons.pack(pady=(px(14), 0))
         for text, action in (
-            ("Go to onset", GO_TO_ONSET),
+            ("Go to frame", GO_TO_ONSET),
             ("Save and close", SAVE_AND_CLOSE) if closing else ("Skip and analyze", ANALYZE_ANYWAY),
             ("Cancel", None),
         ):
-            # Enter runs "Go to onset", so it is the primary action.
+            # Enter runs "Go to frame", so it is the primary action.
             ttk.Button(
                 buttons, text=text, style="Primary.TButton" if action == GO_TO_ONSET else "Tool.TButton",
                 takefocus=0, command=lambda a=action: self._finish(a),
