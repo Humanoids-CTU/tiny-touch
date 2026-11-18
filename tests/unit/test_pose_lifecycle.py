@@ -69,10 +69,11 @@ def test_special_zone_failed_close_preserves_window_and_dots():
 
 
 def test_close_pose_save_failure_keeps_active_session(monkeypatch):
-    monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda app: True)
+    monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda app, **kw: True)
     monkeypatch.setattr(labeling_app, "find_open_touches", lambda *a: pytest.fail("Touch scan"))
     monkeypatch.setattr(labeling_app.messagebox, "showerror", lambda *a, **kw: None)
     app = SimpleNamespace(annotation_type="Pose", video=object(), save_data=lambda: SaveOutcome.NOT_SAVED)
+    app._ask_how_to_close = lambda: LabelingApp._ask_how_to_close(app)
     LabelingApp.on_close(app)
     assert app.video is not None
     assert not app._closing

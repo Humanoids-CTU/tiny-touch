@@ -8,7 +8,8 @@ import pytest
 import labeling_app
 from labeling_app import LabelingApp
 from service_layer.save_service import SaveOutcome
-from gui.open_touches_dialog import GO_TO_ONSET, SAVE_AND_CLOSE
+from gui.app_dialogs import CLOSE_DISCARD
+from gui.open_touches_dialog import GO_TO_ONSET, SAVE_AND_CLOSE, DISCARD_AND_CLOSE
 
 
 class _Buffer:
@@ -93,7 +94,7 @@ def test_video_picker_is_owned_by_main_window(monkeypatch):
 
 
 def _app(events, save_result=SaveOutcome.SAVED):
-    return SimpleNamespace(
+    app = SimpleNamespace(
         video=SimpleNamespace(frames={}),
         save_data=lambda: events.append("save") or save_result,
         save_last_position=lambda: events.append("last_position"),
@@ -107,6 +108,9 @@ def _app(events, save_result=SaveOutcome.SAVED):
         _cancel_pending_timers=lambda: events.append("cancel_timers"),
         destroy=lambda: events.append("destroy"),
     )
+    app._ask_how_to_close = lambda: LabelingApp._ask_how_to_close(app)
+    app._confirm_discard = lambda unsaved: events.append(("confirm_discard", unsaved)) or True
+    return app
 
 
 def test_M9_cancel_has_zero_save_or_teardown_side_effects(monkeypatch):
@@ -115,7 +119,7 @@ def test_M9_cancel_has_zero_save_or_teardown_side_effects(monkeypatch):
     monkeypatch.setattr(
         labeling_app,
         "custom_confirm_close",
-        lambda root: events.append("confirm") or False,
+        lambda root, **kw: events.append("confirm") or False,
     )
 
     LabelingApp.on_close(app)
@@ -132,7 +136,7 @@ def test_M9_confirm_saves_before_teardown(monkeypatch):
     monkeypatch.setattr(
         labeling_app,
         "custom_confirm_close",
-        lambda root: events.append("confirm") or True,
+        lambda root, **kw: events.append("confirm") or True,
     )
 
     LabelingApp.on_close(app)
@@ -153,7 +157,7 @@ def test_M9_confirm_saves_before_teardown(monkeypatch):
 def test_M9_rejected_close_anyway_keeps_session_alive(monkeypatch):
     events = []
     app = _app(events, save_result=SaveOutcome.NOT_SAVED)
-    monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda root: True)
+    monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda root, **kw: True)
     monkeypatch.setattr(
         labeling_app.messagebox,
         "askyesno",
@@ -174,7 +178,7 @@ def test_close_waits_for_extraction_cleanup_without_blocking_tk(monkeypatch):
     app._frame_extraction_cancel = SimpleNamespace(set=lambda: events.append("cancel_extraction"))
     app._frame_extraction_job = SimpleNamespace(thread=SimpleNamespace(is_alive=lambda: worker["alive"]))
     app.after = lambda delay, callback: pending.append(callback)
-    monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda root: True)
+    monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda root, **kw: True)
 
     LabelingApp.on_close(app)
 
@@ -210,7 +214,7 @@ def test_close_with_open_touches_offers_navigation_or_save(monkeypatch, result):
         return SimpleNamespace(result=result)
 
     monkeypatch.setattr(labeling_app, "OpenTouchesDialog", dialog)
-    monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda root: pytest.fail("Duplicate close prompt"))
+    monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda root, **kw: pytest.fail("Duplicate close prompt"))
 
     LabelingApp.on_close(app)
 
@@ -230,6 +234,80 @@ def test_close_without_video_uses_normal_confirmation(monkeypatch):
     events = []
     app = _app(events)
     app.video = None
-    monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda root: False)
+    monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda root, **kw: False)
     LabelingApp.on_close(app)
     assert events == []
+
+
+# --- close without saving -----------------------------------------------------
+
+def test_unsaved_frame_count_reads_the_dirty_flag():
+    frames = {1: {"Changed": True}, 2: {"Changed": False}, 3: {}, 4: {"Changed": True}, 5: None}
+    assert labeling_app.count_unsaved_frames(frames) == 2
+
+
+def test_discard_skips_the_save_but_keeps_position_and_time(monkeypatch):
+    events, offered = [], []
+    app = _app(events)
+    app.video = SimpleNamespace(frames={3: {"Changed": True}, 7: {"Changed": True}, 8: {}})
+    monkeypatch.setattr(labeling_app, "custom_confirm_close",
+                        lambda root, **kw: offered.append(kw) or CLOSE_DISCARD)
+
+    LabelingApp.on_close(app)
+
+    assert offered == [{"unsaved_changes": 2}]
+    assert "save" not in events
+    assert events == [
+        ("confirm_discard", 2), "last_position", "finalize_time", "close_state_repo",
+        ("shutdown", False, True), "cancel_timers", "destroy",
+    ]
+
+
+def test_declining_the_discard_confirmation_keeps_the_app_open(monkeypatch):
+    events = []
+    app = _app(events)
+    app.video = SimpleNamespace(frames={3: {"Changed": True}})
+    app._confirm_discard = lambda unsaved: events.append("confirm_discard") or False
+    monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda root, **kw: CLOSE_DISCARD)
+
+    LabelingApp.on_close(app)
+
+    assert events == ["confirm_discard"]
+    assert not getattr(app, "_closing", False)
+
+
+def test_pose_discard_confirms_with_an_unknown_count(monkeypatch):
+    events, offered = [], []
+    app = _app(events)
+    app.annotation_type = "Pose"
+    monkeypatch.setattr(labeling_app, "find_open_touches", lambda *a: pytest.fail("Touch scan"))
+    monkeypatch.setattr(labeling_app, "custom_confirm_close",
+                        lambda root, **kw: offered.append(kw) or CLOSE_DISCARD)
+
+    LabelingApp.on_close(app)
+
+    assert offered == [{"unsaved_changes": None}]
+    assert "save" not in events and events[0] == ("confirm_discard", None)
+    assert events[-1] == "destroy"
+
+
+def test_open_touch_prompt_offers_discard_on_close(monkeypatch):
+    events = []
+    app = _app(events)
+    app.video = SimpleNamespace(frames={2: {"RH": {"Onset": "ON"}, "Changed": True}}, current_frame=0)
+    app.stop_video = lambda: events.append("stop")
+    app._cancel_arrow_hold_state = lambda: None
+    app._cancel_wheel_scroll = lambda: None
+    app.focus_set = lambda: None
+    app._channel_display_label = lambda key: key
+    app._resolve_open_touches = lambda touches, **kwargs: LabelingApp._resolve_open_touches(app, touches, **kwargs)
+    monkeypatch.setattr(labeling_app, "OpenTouchesDialog",
+                        lambda *a, **kw: SimpleNamespace(result=(DISCARD_AND_CLOSE, 0)))
+    monkeypatch.setattr(labeling_app, "custom_confirm_close",
+                        lambda root, **kw: pytest.fail("Duplicate close prompt"))
+
+    LabelingApp.on_close(app)
+
+    assert "save" not in events
+    assert events[:2] == ["stop", ("confirm_discard", 1)]
+    assert events[-1] == "destroy"

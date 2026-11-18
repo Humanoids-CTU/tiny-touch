@@ -7,6 +7,8 @@ analysis never fails on either (an open touch is censored and reported as
 them before the report does. Deliberately minimal: one line, the list, three
 buttons. "Go to frame" jumps to the selected mark so the coder can fix it by
 hand; "Skip and analyze" runs the analysis with the marks left as they are.
+On app close it replaces the close confirmation, so it also offers "Save and
+close" and "Don't save".
 """
 import tkinter as tk
 from tkinter import ttk
@@ -18,6 +20,7 @@ from gui.widgets import RoundedCard
 GO_TO_ONSET = "goto"   # jump to the selected mark (onset or stray offset)
 ANALYZE_ANYWAY = "analyze"
 SAVE_AND_CLOSE = "close"
+DISCARD_AND_CLOSE = "discard"   # close without saving (closing only)
 
 LIST_ROWS = 6
 LIST_WIDTH_CHARS = 44
@@ -106,11 +109,12 @@ class OpenTouchesDialog:
 
         buttons = ttk.Frame(content)
         buttons.pack(pady=(px(14), 0))
-        for text, action in (
-            ("Go to frame", GO_TO_ONSET),
-            ("Save and close", SAVE_AND_CLOSE) if closing else ("Skip and analyze", ANALYZE_ANYWAY),
-            ("Cancel", None),
-        ):
+        if closing:
+            choices = (("Go to frame", GO_TO_ONSET), ("Save and close", SAVE_AND_CLOSE),
+                       ("Don't save", DISCARD_AND_CLOSE), ("Cancel", None))
+        else:
+            choices = (("Go to frame", GO_TO_ONSET), ("Skip and analyze", ANALYZE_ANYWAY), ("Cancel", None))
+        for text, action in choices:
             # Enter runs "Go to frame", so it is the primary action.
             ttk.Button(
                 buttons, text=text, style="Primary.TButton" if action == GO_TO_ONSET else "Tool.TButton",

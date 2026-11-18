@@ -44,11 +44,13 @@ from gui import widgets
 from gui import window_reveal
 from gui import content_swap
 from gui import app_dialogs
-from gui.app_dialogs import center_over_parent, custom_confirm_close
+from gui.app_dialogs import center_over_parent, custom_confirm_close, CLOSE_SAVE, CLOSE_DISCARD
 from gui.video_surface import GpuVideoSurface, VideoRendererError, rounded_corner_mask
 from gui.special_zones_app import SpecialZonesApp, DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE
 from gui.frame_dialog import FrameDialog
-from gui.open_touches_dialog import OpenTouchesDialog, GO_TO_ONSET, ANALYZE_ANYWAY, SAVE_AND_CLOSE
+from gui.open_touches_dialog import (
+    OpenTouchesDialog, GO_TO_ONSET, ANALYZE_ANYWAY, SAVE_AND_CLOSE, DISCARD_AND_CLOSE,
+)
 from gui.template_dialog import choose_template, template_diagram
 from gui.video_library import choose_video, choose_existing_video
 from service_layer.project_copy import next_copy_project
@@ -148,6 +150,11 @@ def _report_save_outcome(parent, outcome):
         messagebox.showwarning("Export not updated", EXPORT_STALE_MESSAGE, parent=parent)
     elif outcome is SaveOutcome.NOT_SAVED:
         messagebox.showerror("Save failed", NOT_SAVED_MESSAGE, parent=parent)
+
+
+def count_unsaved_frames(frames) -> int:
+    """Frames edited since the last save (`Changed` is the dirty tracker)."""
+    return sum(1 for bundle in frames.values() if isinstance(bundle, dict) and bundle.get("Changed"))
 
 
 def format_counter_time(ms, total_ms):
@@ -2413,10 +2420,7 @@ class LabelingApp(tk.Tk):
             return SaveOutcome.SAVED if saved else SaveOutcome.NOT_SAVED
         started = time.perf_counter()
         video = self.video
-        dirty_count = sum(
-            1 for bundle in video.frames.values()
-            if isinstance(bundle, dict) and bundle.get("Changed")
-        )
+        dirty_count = count_unsaved_frames(video.frames)
         paths = ProjectPaths(self.video_name)
         logger.info("saving %s changed frames", dirty_count)
         logger.debug(
@@ -2565,12 +2569,16 @@ class LabelingApp(tk.Tk):
         the coder should see them first and decide.
         """
         touches = find_open_touches(self.video.frames, LIMBS)
-        return self._resolve_open_touches(touches)
+        return self._resolve_open_touches(touches) is not None
 
-    def _resolve_open_touches(self, touches, *, closing=False) -> bool:
-        """Let the coder navigate, cancel, or continue with touches left open."""
+    def _resolve_open_touches(self, touches, *, closing=False):
+        """Let the coder navigate, cancel, or continue with touches left open.
+
+        Returns how to continue (ANALYZE_ANYWAY; SAVE_AND_CLOSE or
+        DISCARD_AND_CLOSE when closing), or None to stay where we are.
+        """
         if not touches:
-            return True
+            return SAVE_AND_CLOSE if closing else ANALYZE_ANYWAY
         operation = "close" if closing else "analysis"
         self.stop_video()
         self._cancel_arrow_hold_state()
@@ -2585,7 +2593,7 @@ class LabelingApp(tk.Tk):
         self.focus_set()
         if result is None:
             logger.info("%s cancelled at the open-touch prompt", operation)
-            return False
+            return None
         action, index = result
         if action == GO_TO_ONSET:
             target = touches[index].start_frame
@@ -2593,11 +2601,12 @@ class LabelingApp(tk.Tk):
                         operation, touches[index].kind, touches[index].limb, target)
             if target != self.video.current_frame:
                 self.next_frame(target - self.video.current_frame)
-            return False
-        proceed = action == (SAVE_AND_CLOSE if closing else ANALYZE_ANYWAY)
-        if proceed:
-            logger.info("%s proceeding with %d unpaired mark(s) left as they are", operation, len(touches))
-        return proceed
+            return None
+        if action not in ((SAVE_AND_CLOSE, DISCARD_AND_CLOSE) if closing else (ANALYZE_ANYWAY,)):
+            return None
+        logger.info("%s proceeding (%s) with %d unpaired mark(s) left as they are",
+                    operation, action, len(touches))
+        return action
 
     def play_video(self):
         if self.video is None:
@@ -3293,15 +3302,17 @@ class LabelingApp(tk.Tk):
     def on_close(self):
         if getattr(self, "_closing", False):
             return
-        touches = (find_open_touches(self.video.frames, LIMBS)
-                   if self.video is not None and getattr(self, "annotation_type", "Touch") == "Touch" else [])
-        if touches:
-            if not self._resolve_open_touches(touches, closing=True):
-                return
-        elif not custom_confirm_close(self):
+        choice = self._ask_how_to_close()
+        if choice is None:
             return
         self._closing = True
-        if self.video is not None:
+        if self.video is not None and choice == CLOSE_DISCARD:
+            # The DB and the export files keep the last saved version. Position
+            # and labeling time are not labels, so they are still recorded.
+            logger.info("closing without saving: changes since the last save are discarded")
+            self.save_last_position()
+            self._finalize_video_time()
+        elif self.video is not None:
             try:
                 outcome = self.save_data()
             except Exception:
@@ -3351,6 +3362,45 @@ class LabelingApp(tk.Tk):
             self.destroy()
 
         finish_close()
+
+    def _ask_how_to_close(self):
+        """CLOSE_SAVE, CLOSE_DISCARD, or None when the app should stay open.
+
+        Exactly one prompt: the open-touch list when Touch marks are unpaired,
+        the close confirmation otherwise. A discard is confirmed separately.
+        """
+        if self.video is None:
+            unsaved = 0
+        elif getattr(self, "annotation_type", "Touch") == "Pose":
+            unsaved = None  # Pose labels live outside the frame bundles: count unknown
+        else:
+            unsaved = count_unsaved_frames(self.video.frames)
+        touches = (find_open_touches(self.video.frames, LIMBS)
+                   if self.video is not None and getattr(self, "annotation_type", "Touch") == "Touch" else [])
+        if touches:
+            action = self._resolve_open_touches(touches, closing=True)
+            if action is None:
+                return None
+            choice = CLOSE_DISCARD if action == DISCARD_AND_CLOSE else CLOSE_SAVE
+        else:
+            choice = custom_confirm_close(self, unsaved_changes=unsaved)
+            if not choice:
+                return None
+        if choice != CLOSE_DISCARD:
+            return CLOSE_SAVE
+        if unsaved != 0 and not self._confirm_discard(unsaved):
+            logger.info("close without saving cancelled at the discard confirmation")
+            return None
+        return CLOSE_DISCARD
+
+    def _confirm_discard(self, unsaved) -> bool:
+        what = ("all changes made since the last save" if unsaved is None
+                else f"the changes to {unsaved} frame{'s' if unsaved != 1 else ''} made since the last save")
+        return messagebox.askyesno(
+            "Close without saving",
+            f"Discard {what}?\n\nThis cannot be undone.",
+            icon=messagebox.WARNING, default=messagebox.NO, parent=self,
+        )
 
     def _cancel_pending_timers(self):
         """Cancel our own repeating `after()` timers before the root goes away.

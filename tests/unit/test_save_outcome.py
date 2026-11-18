@@ -183,7 +183,7 @@ def test_save_button_is_silent_on_success(monkeypatch):
 
 # === close / switch video after a stale export ================================
 def _closing_app(events, outcome):
-    return SimpleNamespace(
+    app = SimpleNamespace(
         video=SimpleNamespace(frames={}),
         save_data=lambda: events.append("save") or outcome,
         save_last_position=lambda: events.append("last_position"),
@@ -193,13 +193,15 @@ def _closing_app(events, outcome):
         _cancel_pending_timers=lambda: None,
         destroy=lambda: events.append("destroy"),
     )
+    app._ask_how_to_close = lambda: LabelingApp._ask_how_to_close(app)
+    return app
 
 
 @pytest.mark.parametrize("answer", [True, False])
 def test_close_after_stale_export_asks_without_data_loss_warning(monkeypatch, answer):
     events, questions = [], []
     app = _closing_app(events, SaveOutcome.EXPORT_STALE)
-    monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda root: True)
+    monkeypatch.setattr(labeling_app, "custom_confirm_close", lambda root, **kw: True)
     monkeypatch.setattr(labeling_app.messagebox, "askyesno",
                         lambda title, message, **kw: questions.append(message) or answer)
 

@@ -44,6 +44,10 @@ ROW_CONTROL_GAP = 16              # minimum space between a row's text and its c
 CONFIRM_WRAP = 340
 TOGGLE_MIN_SEG = 84              # two-option toggles: roomy segments, like the channel grid
 
+# custom_confirm_close results (None: keep the app open).
+CLOSE_SAVE = "save"
+CLOSE_DISCARD = "discard"
+
 
 def center_over_parent(window, parent) -> None:
     """Place a realized dialog in the center of its parent window.
@@ -80,7 +84,13 @@ def _footer(content, top_gap=FOOTER_GAP):
     return foot
 
 
-def custom_confirm_close(root) -> bool:
+def custom_confirm_close(root, unsaved_changes=0):
+    """Ask how to close. Returns CLOSE_SAVE, CLOSE_DISCARD, or None (Cancel).
+
+    `unsaved_changes` is the number of frames changed since the last save, or
+    None when unknown. "Don't save" is offered unless it is 0 (nothing to
+    discard). The caller confirms a discard before acting on it.
+    """
     px = theme.px
     win = tk.Toplevel(root)   # hidden until settled and centred (gui.window_reveal)
     win.title("Close Application")
@@ -89,29 +99,36 @@ def custom_confirm_close(root) -> bool:
     theme.bind_colors(win, bg="WIN")
     win.minsize(px(SMALL_DIALOG_MIN_W), 1)
 
-    confirmed = False
+    can_discard = unsaved_changes != 0
+    choice = None
 
     content = _dialog_frame(win)
     ttk.Label(content, text="Do you want to close the application?", style="Title.TLabel",
               wraplength=px(CONFIRM_WRAP)).pack(anchor="w", padx=px(SECTION_INDENT))
-    ttk.Label(content, text="Your progress will be saved.", style="Muted.TLabel",
+    detail = ("Save your changes, or close without saving to keep the last saved version."
+              if can_discard else "Your progress will be saved.")
+    ttk.Label(content, text=detail, style="Muted.TLabel",
               wraplength=px(CONFIRM_WRAP)).pack(anchor="w", padx=px(SECTION_INDENT), pady=(px(6), 0))
 
-    def on_yes():
-        nonlocal confirmed
-        confirmed = True
+    def finish(result):
+        nonlocal choice
+        choice = result
         win.destroy()
 
     foot = _footer(content, top_gap=18)
-    # Packed right-to-left: [Cancel] [OK]
-    ttk.Button(foot, text="OK", command=on_yes, style="Primary.TButton", takefocus=0).pack(side="right")
+    # Packed right-to-left: [Don't save]   [Cancel] [OK / Save and close]
+    ttk.Button(foot, text="Save and close" if can_discard else "OK", command=lambda: finish(CLOSE_SAVE),
+               style="Primary.TButton", takefocus=0).pack(side="right")
     ttk.Button(foot, text="Cancel", command=win.destroy, style="Tool.TButton", takefocus=0).pack(
         side="right", padx=(0, px(BUTTON_GAP)))
+    if can_discard:
+        ttk.Button(foot, text="Don't save", command=lambda: finish(CLOSE_DISCARD),
+                   style="Tool.TButton", takefocus=0).pack(side="left")
     win.protocol("WM_DELETE_WINDOW", win.destroy)
     window_reveal.place_on_reveal(win, lambda: center_over_parent(win, root))
     window_reveal.modal_grab(win)
     win.wait_window()
-    return confirmed
+    return choice
 
 
 def ask_labeling_mode(app):
