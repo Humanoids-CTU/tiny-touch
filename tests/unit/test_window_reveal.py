@@ -202,7 +202,9 @@ def _openers():
     entries = [SimpleNamespace(title=f"Video {i}", thumbnail=None, template=template, annotation_type="Touch",
                                preparation_state=("ready", "draft", None)[i % 3], setup_name="", source="x.mp4")
                for i in range(5)]
-    touches = [SimpleNamespace(start_frame=10 * i, limb="LH") for i in range(3)]
+    from domain.touch import OpenTouch
+    # The real record, so a field the dialog starts to read cannot be missing here.
+    touches = [OpenTouch("LH", 10 * i, 10 * i) for i in range(3)]
 
     def progress_copy(root):
         update, close = labeling_app.LabelingApp._open_progress_window(FakeApp(root), "Copying Video", "Copying...")
