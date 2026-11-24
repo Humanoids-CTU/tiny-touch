@@ -359,7 +359,7 @@ class Lab:
         head.pack(fill="x", padx=px(14), pady=(px(12), px(8)))
         ttk.Label(head, text="Channel", style="CardHead.TLabel").pack(side="left")
         chosen = tk.StringVar(value="Right Hand")
-        SegmentedControl(channel.inner, self, ("Right Hand", "Left Hand", "Right Leg", "Left Leg"),
+        SegmentedControl(channel.inner, self, ("Right Hand", "Left Hand", "Right Foot", "Left Foot"),
                          variable=chosen, columns=2, bg="CARD").pack(fill="x", padx=px(14), pady=(0, px(14)))
 
         params = RoundedCard(side, self)

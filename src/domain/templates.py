@@ -61,8 +61,8 @@ def _anatomical_template(label: str, masks_directory: str, image_suffix: str) ->
     labels = (
         ("RH", "Right Hand"),
         ("LH", "Left Hand"),
-        ("RL", "Right Leg"),
-        ("LL", "Left Leg"),
+        ("RL", "Right Foot"),
+        ("LL", "Left Foot"),
     )
     return TemplateDefinition(
         label=label,

@@ -31,7 +31,7 @@ def test_template_defaults_are_ready_for_the_diagram(template):
     setup = default_coding_setup(template)
     anatomical = template != "general"
     assert list(setup.channel_labels.values()) == (
-        ["Right Hand", "Left Hand", "Right Leg", "Left Leg"] if anatomical
+        ["Right Hand", "Left Hand", "Right Foot", "Left Foot"] if anatomical
         else [f"Channel {i}" for i in range(1, 5)]
     )
     prefix = "LP" if anatomical else "CP"

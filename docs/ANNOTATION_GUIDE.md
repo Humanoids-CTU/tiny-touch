@@ -24,7 +24,7 @@ the files it produces, read [DATA_FORMAT.md](DATA_FORMAT.md) instead.
 ## 1. What you are coding
 
 For each of the infant's four limbs — **RH** (right hand), **LH** (left hand), **RL**
-(right leg), **LL** (left leg) — you mark every episode in which that limb is in contact
+(right foot), **LL** (left foot) — you mark every episode in which that limb is in contact
 with the infant's own body, and where on the body the contact happens.
 
 An episode is two events:
@@ -194,7 +194,7 @@ the window saves the new state.
 ## 6. Coding a touch
 
 1. **Select the limb** with the radio buttons under the diagram (Right Hand, Left Hand,
-   Right Leg, Left Leg). The diagram redraws with that limb's zone map, and the timeline
+   Right Foot, Left Foot). The diagram redraws with that limb's zone map, and the timeline
    switches to that limb. Annotations for the other three limbs are untouched — you code
    one limb at a time, but all four coexist in the same project.
 2. **Find the first frame of the contact** with the arrow keys or the wheel.
@@ -465,7 +465,7 @@ notice than a missing offset. Work forward through the video in order rather tha
 around, and you will rarely create one.
 
 **Check the selected limb before you click.** Nothing stops you from coding a right-hand
-touch onto the left leg. The limb selector and the timeline are the only cues; get into the
+touch onto the left foot. The limb selector and the timeline are the only cues; get into the
 habit of coding one limb through the whole video before switching.
 
 **Do not left-click twice where you meant onset then offset.** The second left-click adds a

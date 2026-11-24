@@ -251,13 +251,13 @@ def test_limb_panels_are_mirrored_to_match_the_viewed_diagram(tmp_path):
 
     trajectory = (out / "touch_trajectory.html").read_text(encoding="utf-8")
     assert trajectory.index("Right Hand") < trajectory.index("Left Hand")
-    assert trajectory.index("Right Leg") < trajectory.index("Left Leg")
+    assert trajectory.index("Right Foot") < trajectory.index("Left Foot")
 
     page = (out / "master_cat3.html").read_text(encoding="utf-8")
     assert (page.index("Transition heatmap — Right Hand")
             < page.index("Transition heatmap — Left Hand")
-            < page.index("Transition heatmap — Right Leg")
-            < page.index("Transition heatmap — Left Leg"))
+            < page.index("Transition heatmap — Right Foot")
+            < page.index("Transition heatmap — Left Foot"))
 
 
 def test_trajectory_panels_are_pinned_to_the_diagram(tmp_path):

@@ -169,8 +169,8 @@ Touch-mode state for a frame is a **`FrameBundle`** (see [src/domain/model.py](s
 FrameBundle = {
     "LH": FrameRecord,  # left hand
     "RH": FrameRecord,  # right hand
-    "LL": FrameRecord,  # left leg
-    "RL": FrameRecord,  # right leg
+    "LL": FrameRecord,  # left foot
+    "RL": FrameRecord,  # right foot
     "Note": str | None,
     "Params": {"Par1": "ON"|"OFF"|None, "Par2": ..., "Par3": ...},  # global per-frame
     "Changed": bool,   # dirty flag, cleared after save

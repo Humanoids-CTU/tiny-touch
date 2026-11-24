@@ -22,7 +22,7 @@ def test_existing_template_assets_and_labels(template, label, folder, suffix):
     assert definition.label == label
     assert [(channel.key, channel.label) for channel in definition.channels] == [
         ("RH", "Right Hand"), ("LH", "Left Hand"),
-        ("RL", "Right Leg"), ("LL", "Left Leg"),
+        ("RL", "Right Foot"), ("LL", "Left Foot"),
     ]
     assert display_limb_order(template=template) == ["RH", "LH", "RL", "LL"]
     assert Path(zones_dir(template)) == Path(asset_path(f"icons/{folder}"))
