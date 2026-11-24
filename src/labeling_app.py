@@ -37,14 +37,16 @@ from domain.templates import DEFAULT_TEMPLATE, get_template
 from domain.pose import ZoneEvent, Navigation
 from gui.pose_panel import PosePanel
 from domain.pose_timeline import PoseTimelineIndex
-from gui.pose_timeline import PoseTimelineView, POSE_DETAIL_HEIGHT, POSE_OVERVIEW_HEIGHT
+from gui.pose_timeline import (PoseTimelineView, POSE_DETAIL_HEIGHT, POSE_OVERVIEW_HEIGHT,
+                               POSE_DETAIL_FLUSH_INTERVAL_S)
 from domain.zone_display import ZoneDisplaySettings
 from gui import theme
 from gui import widgets
 from gui import window_reveal
 from gui import content_swap
 from gui import app_dialogs
-from gui.app_dialogs import center_over_parent, custom_confirm_close, CLOSE_SAVE, CLOSE_DISCARD
+from gui.app_dialogs import (center_over_parent, custom_confirm_close, confirm_discard,
+                             CLOSE_SAVE, CLOSE_DISCARD)
 from gui.video_surface import GpuVideoSurface, VideoRendererError, rounded_corner_mask
 from gui.special_zones_app import SpecialZonesApp, DEFAULT_SPECIAL_ZONES_DIAGRAM_SCALE
 from gui.frame_dialog import FrameDialog
@@ -522,7 +524,7 @@ class LabelingApp(tk.Tk):
             return
 
         self._pose_timeline_index = None
-        self._pose_detail_timeline = PoseTimelineView(self.timeline_canvas)
+        self._pose_detail_timeline = PoseTimelineView(self.timeline_canvas, POSE_DETAIL_FLUSH_INTERVAL_S)
         self._pose_overview_timeline = PoseTimelineView(self.timeline2_canvas)
         pose = getattr(self, "annotation_type", "Touch") == "Pose"
         self.timeline_canvas.config(height=theme.px(POSE_DETAIL_HEIGHT if pose else TIMELINE_HEIGHT))
@@ -1560,7 +1562,7 @@ class LabelingApp(tk.Tk):
         index = self.__dict__.get("_pose_timeline_index")
         if index is None or index.labels is not labels:
             index = self._pose_timeline_index = PoseTimelineIndex(labels, self.video.frames)
-            self._pose_detail_timeline = PoseTimelineView(self.timeline_canvas)
+            self._pose_detail_timeline = PoseTimelineView(self.timeline_canvas, POSE_DETAIL_FLUSH_INTERVAL_S)
             self._pose_overview_timeline = PoseTimelineView(self.timeline2_canvas)
         return index
 
@@ -3396,11 +3398,7 @@ class LabelingApp(tk.Tk):
     def _confirm_discard(self, unsaved) -> bool:
         what = ("all changes made since the last save" if unsaved is None
                 else f"the changes to {unsaved} frame{'s' if unsaved != 1 else ''} made since the last save")
-        return messagebox.askyesno(
-            "Close without saving",
-            f"Discard {what}?\n\nThis cannot be undone.",
-            icon=messagebox.WARNING, default=messagebox.NO, parent=self,
-        )
+        return confirm_discard(self, "Close without saving", f"Discard {what}?")
 
     def _cancel_pending_timers(self):
         """Cancel our own repeating `after()` timers before the root goes away.

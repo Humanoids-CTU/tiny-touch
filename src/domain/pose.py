@@ -1,7 +1,7 @@
 """Independent Pose labels and painted-frame editing rules; no I/O or GUI.
 
 Quality is one global label per frame, independent of zone ON/OFF events. Scale
-carry belongs to a short-lived editing session, never to the saved labels.
+and quality carry belong to a short-lived editing session, never to the saved labels.
 """
 
 from dataclasses import dataclass
@@ -339,7 +339,7 @@ class PoseLabels:
 
 
 class PoseScaleSession:
-    """Independent body/head carry, initially inactive even for existing labels.
+    """Independent body/head/quality carry, initially inactive even for existing labels.
 
     Construct a fresh instance when opening a session. Control refreshes and
     view-only navigation must not initialize/change carry from displayed labels.
@@ -348,6 +348,10 @@ class PoseScaleSession:
     def __init__(self, labels: PoseLabels):
         self.labels = labels
         self._carry: dict[ScaleKind, float] = {}
+        self._quality_carry: float | None = None
+        # Quality has no stored provenance, so only frames this session carried
+        # onto may be overwritten by a later carry; every other value is a barrier.
+        self._quality_carried_frames: set[int] = set()
 
     def carried_value(self, kind: ScaleKind) -> float | None:
         _enum(kind, ScaleKind)
@@ -363,12 +367,29 @@ class PoseScaleSession:
               *, displayed_frame: int | None) -> None:
         self.edit(frame, kind, SCALE_NEUTRAL, displayed_frame=displayed_frame)
 
+    def carried_quality(self) -> float | None:
+        return self._quality_carry
+
+    def quality_was_carried(self, frame: int) -> bool:
+        """True when this session's carry wrote the frame's current quality."""
+        _frame(frame)
+        return frame in self._quality_carried_frames
+
+    def edit_quality(self, frame: int, value: float | None,
+                     *, displayed_frame: int | None) -> None:
+        """Set quality and carry it forward like scale; None clears and stops carry."""
+        self.labels.set_quality(frame, value, displayed_frame=displayed_frame)
+        self._quality_carried_frames.discard(frame)
+        self._quality_carry = None if value is None else float(value)
+
     def arrive(self, previous_frame: int, frame: int, navigation: Navigation,
                *, displayed_frame: int | None) -> None:
         """Call after a successful paint; only forward step/hold/play can write.
 
         Only this displayed destination is considered, never skipped frames.
         Manual labels are barriers that update carry independently per scale.
+        Quality follows the same rule; a value this session did not carry is a
+        barrier.
         """
         _frame(previous_frame)
         _frame(frame)
@@ -387,3 +408,9 @@ class PoseScaleSession:
                     frame, kind, ScaleLabel(self._carry[kind], ScaleSource.CARRIED),
                     displayed_frame=displayed_frame,
                 )
+        existing = self.labels.quality(frame)
+        if existing is not None and frame not in self._quality_carried_frames:
+            self._quality_carry = existing
+        elif self._quality_carry is not None:
+            self.labels.set_quality(frame, self._quality_carry, displayed_frame=displayed_frame)
+            self._quality_carried_frames.add(frame)

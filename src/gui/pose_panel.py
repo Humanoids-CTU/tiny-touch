@@ -165,7 +165,7 @@ class PosePanel:
             return
         frame = self.app.video.current_frame
         value = None if value is None else round(round(float(value) / QUALITY_STEP) * QUALITY_STEP, 10)
-        self.session.labels.set_quality(frame, value, displayed_frame=self.app.displayed_frame)
+        self.session.scales.edit_quality(frame, value, displayed_frame=self.app.displayed_frame)
         self.annotation_changed(frame)
 
     def click(self, x, y, event):
@@ -202,9 +202,12 @@ class PosePanel:
         # guard was just checked; lock storage directly without pausing playback.
         if not app._lock_before_annotation(pause_navigation=False):
             return
-        before = tuple(session.labels.scale(frame, kind) for kind in ScaleKind)
+        def labels():
+            return (*(session.labels.scale(frame, kind) for kind in ScaleKind),
+                    session.labels.quality(frame))
+        before = labels()
         session.scales.arrive(previous, frame, navigation, displayed_frame=frame)
-        after = tuple(session.labels.scale(frame, kind) for kind in ScaleKind)
+        after = labels()
         if before != after:
             # Runs inside display_first_frame, before its frame-control refresh
             # (every step; at most 25/s while playing). A full redraw here would
@@ -232,7 +235,8 @@ class PosePanel:
             quality = self.session.labels.quality(frame)
             if "quality" in self.values:
                 self._show("quality", quality if quality is not None else UNSET_QUALITY_POSITION)
-                self._show_readout("quality", "Quality · unset" if quality is None else f"Quality · {quality:.2f}")
+                carried = " · carried" if quality is not None and self.session.scales.quality_was_carried(frame) else ""
+                self._show_readout("quality", "Quality · unset" if quality is None else f"Quality · {quality:.2f}{carried}")
         finally:
             self.syncing = False
 
