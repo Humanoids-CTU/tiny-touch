@@ -61,7 +61,7 @@
   <text x="475" y="345" class="chip-sub">SQLite</text>
   <rect x="566" y="310" width="158" height="44" rx="5" class="chip" stroke="#cf9a55"/>
   <text x="645" y="328" class="chip-main">Export</text>
-  <text x="645" y="345" class="chip-sub">CSV · JSON</text>
+  <text x="645" y="345" class="chip-sub">CSV · JSON · PNG</text>
   <rect x="736" y="310" width="158" height="44" rx="5" class="chip" stroke="#cf9a55"/>
   <text x="815" y="328" class="chip-main">Reports</text>
   <text x="815" y="345" class="chip-sub">Plotly · HTML</text>
@@ -100,7 +100,7 @@
   <text x="475" y="471" class="chip-sub">SQLite database</text>
   <rect x="566" y="434" width="158" height="48" rx="5" fill="#fff3cf" stroke="#c98a00" stroke-width="2.6"/>
   <text x="645" y="453" class="chip-main" font-weight="bold">export/</text>
-  <text x="645" y="471" class="chip-sub" fill="#6b4a00">CSV + JSON metadata</text>
+  <text x="645" y="471" class="chip-sub" fill="#6b4a00">CSV · JSON · diagram PNG</text>
   <text x="645" y="500" class="flow-label" text-anchor="middle" font-weight="bold" fill="#9a6a00">main output</text>
   <rect x="736" y="434" width="158" height="48" rx="5" class="chip" stroke="#999"/>
   <text x="815" y="453" class="chip-main">plots/</text>

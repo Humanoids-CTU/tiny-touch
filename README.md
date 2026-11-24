@@ -12,6 +12,16 @@ green ring on the diagram shows where the selected channel's current touch
 started; the timelines shade that touch green from its start to its end.
 
 
+## New in 9.4.1
+
+- **Close without saving:** closing the app now offers **Save and close**,
+  **Don't save** or **Cancel**. Don't save asks once more before discarding the
+  changes made since the last save.
+- **Unpaired marks:** before Analysis and before closing, TinyTouch lists offsets
+  without an onset as well as onsets without an offset, and can jump to each one.
+- **Pose quality:** the quality rating carries forward as you step or play, like
+  body and head size, and appears as a red-to-green band on the Pose timeline.
+
 ## New in 9.4.0
 
 - **3D Pose mode:** a second annotation type next to Touch. Mark when body zones
@@ -30,8 +40,9 @@ started; the timelines shade that touch green from its start to its end.
   window, and only one TinyTouch per folder (opening it again brings the running
   window to the front).
 
-**Linux:** the 9.4.0 Linux build is coming soon. Until then, use the
-[9.3.0 Linux release](https://github.com/Humanoids-CTU/tiny-touch/releases/tag/v9.3.0).
+**Linux:** the latest Linux build is the
+[9.3.0 release](https://github.com/Humanoids-CTU/tiny-touch/releases/tag/v9.3.0).
+Newer versions are Windows only.
 
 ## New in 9.3.0
 
@@ -70,12 +81,12 @@ Download TinyTouch from the
 double-click **TinyTouch-v9.4.0.exe** (the version number matches your download).
 
 **Linux (Ubuntu 24.04 or newer, Intel/AMD 64-bit):** download **linux-x64.zip**
-and extract it. Open a terminal in the extracted folder and run
-(use the version number you downloaded):
+from the 9.3.0 release (the latest with a Linux build) and extract it. Open a
+terminal in the extracted folder and run:
 
 ```bash
-chmod +x TinyTouch-v9.4.0
-./TinyTouch-v9.4.0
+chmod +x TinyTouch-v9.3.0
+./TinyTouch-v9.3.0
 ```
 
 ## Label a video
@@ -105,7 +116,7 @@ chmod +x TinyTouch-v9.4.0
 | Click a timeline | Jump to that point |
 | Left-click on the body diagram | Mark touch start (onset, green dot) |
 | Right-click on the body diagram | Mark touch end (offset, red dot) |
-| Middle-click a dot | Delete a mark |
+| Middle-click a dot, or **D** with the pointer on it | Delete a mark |
 
 The boxes beside the body diagram can represent custom actions, such as touching
 or picking up an object; agree on what each box means before labeling.
