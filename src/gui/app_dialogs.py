@@ -1,4 +1,4 @@
-"""App-level dialogs: close confirmation, labeling-mode picker, Settings.
+"""App-level dialogs: close and discard confirmation, labeling-mode picker, Settings.
 
 The dialog functions take the ``LabelingApp`` as ``app``. Styled with the
 shared theme roles and ``gui.widgets`` (grouped list, segmented control,
@@ -129,6 +129,44 @@ def custom_confirm_close(root, unsaved_changes=0):
     window_reveal.modal_grab(win)
     win.wait_window()
     return choice
+
+
+def confirm_discard(root, title, message, detail="This cannot be undone."):
+    """Styled destructive confirmation; True only when Discard is pressed.
+
+    Cancel is the default (Enter/Escape/closing the window keep the changes).
+    """
+    px = theme.px
+    win = tk.Toplevel(root)   # hidden until settled and centred (gui.window_reveal)
+    win.title(title)
+    win.resizable(False, False)
+    win.transient(root)
+    theme.bind_colors(win, bg="WIN")
+    win.minsize(px(SMALL_DIALOG_MIN_W), 1)
+    confirmed = False
+
+    content = _dialog_frame(win)
+    ttk.Label(content, text=message, style="Title.TLabel",
+              wraplength=px(CONFIRM_WRAP)).pack(anchor="w", padx=px(SECTION_INDENT))
+    ttk.Label(content, text=detail, style="Muted.TLabel",
+              wraplength=px(CONFIRM_WRAP)).pack(anchor="w", padx=px(SECTION_INDENT), pady=(px(6), 0))
+
+    def discard():
+        nonlocal confirmed
+        confirmed = True
+        win.destroy()
+
+    foot = _footer(content, top_gap=18)
+    # [Cancel] is the safe, highlighted choice; [Discard] sits on the left like "Don't save".
+    ttk.Button(foot, text="Cancel", command=win.destroy, style="Primary.TButton", takefocus=0).pack(side="right")
+    ttk.Button(foot, text="Discard", command=discard, style="Tool.TButton", takefocus=0).pack(side="left")
+    win.bind("<Return>", lambda _e: win.destroy())
+    win.bind("<Escape>", lambda _e: win.destroy())
+    win.protocol("WM_DELETE_WINDOW", win.destroy)
+    window_reveal.place_on_reveal(win, lambda: center_over_parent(win, root))
+    window_reveal.modal_grab(win)
+    win.wait_window()
+    return confirmed
 
 
 def ask_labeling_mode(app):
