@@ -4,7 +4,7 @@ from tkinter import ttk
 from PIL import Image, ImageTk
 
 from domain.templates import TEMPLATE_LABELS, get_template, validate_template
-from gui.resource_utils import asset_path
+from resource_utils import asset_path
 from gui import theme, window_reveal
 from gui.widgets import RoundedCard
 

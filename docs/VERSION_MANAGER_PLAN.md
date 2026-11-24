@@ -42,10 +42,10 @@ version metadata is in `src/app_info.py`.
 
 Storage must be addressed before installing applications into version directories:
 
-- `src/gui/resource_utils.py`: `get_app_dir()` uses the executable directory when
+- `src/resource_utils.py`: `get_app_dir()` uses the executable directory when
   packaged; resource lookup distinguishes bundled files from writable files.
-- `src/adapters/config.py`: writes `config.json` beside the executable and currently
-  imports path helpers from the GUI package.
+- `src/adapters/config.py`: writes `config.json` beside the executable, using the
+  path helpers from `src/resource_utils.py`.
 - `src/main.py`: initializes logging using the application directory.
 - `src/domain/project.py`: `ProjectPaths` defaults to the relative `data/` directory.
 

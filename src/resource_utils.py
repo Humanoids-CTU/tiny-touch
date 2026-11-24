@@ -1,5 +1,5 @@
 """
-gui/resource_utils.py
+resource_utils.py
 Path resolution for the two kinds of files the app reads that are NOT user data.
 
   * `resource_path`  — files that sit at the ROOT of the distribution
@@ -23,14 +23,13 @@ RESOURCES_SUBDIR = "resources"
 
 
 def get_repo_root() -> str:
-    # This file lives at src/gui/resource_utils.py — the repo root is two
-    # levels up (was one level up before the gui/ package move).
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    # This file lives at src/resource_utils.py — the repo root is one level up.
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
 def get_src_root() -> str:
-    """The `src/` package root (one level up from `src/gui/`)."""
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    """The `src/` import root (the directory this file lives in)."""
+    return os.path.abspath(os.path.dirname(__file__))
 
 
 def get_app_dir() -> str:

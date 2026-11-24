@@ -3,7 +3,7 @@ from PIL import Image, ImageChops
 
 from adapters.zone_masks import load_zone_masks, zones_dir
 from domain.templates import get_template
-from gui.resource_utils import asset_path
+from resource_utils import asset_path
 
 CHANNEL_COLOR = (27, 175, 208)
 

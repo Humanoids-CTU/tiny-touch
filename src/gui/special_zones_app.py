@@ -3,7 +3,7 @@ import logging
 from tkinter import ttk
 from PIL import Image, ImageTk
 
-from gui.resource_utils import asset_path
+from resource_utils import asset_path
 from gui import theme, window_reveal
 from domain.touch import NO_ZONE
 from domain.zone_display import ZoneDisplaySettings

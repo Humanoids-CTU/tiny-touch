@@ -16,7 +16,7 @@ import shutil
 from dataclasses import dataclass, field
 
 from adapters.atomic_io import atomic_write
-from gui.resource_utils import get_app_dir, resource_path
+from resource_utils import get_app_dir, resource_path
 
 
 logger = logging.getLogger(__name__)

@@ -227,7 +227,7 @@ def test_controller_explicit_one_frame_jump_does_not_carry(intent, expected):
 
 def test_neutral_pose_preserves_exact_alternate_artwork():
     from PIL import Image, ImageChops
-    from gui.resource_utils import asset_path
+    from resource_utils import asset_path
     from domain.pose_geometry import ORIGINAL_OFFSET
     with Image.open(asset_path(get_template("alternate").diagram)) as original:
         x, y = ORIGINAL_OFFSET

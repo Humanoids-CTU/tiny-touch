@@ -9,7 +9,7 @@ from PIL import Image
 from adapters import plotting
 from domain.model import LIMBS, empty_bundle
 from domain.project import ProjectPaths
-from gui.resource_utils import asset_path
+from resource_utils import asset_path
 from service_layer.analysis_service import run_analysis
 from service_layer.save_service import MetadataInputs, run_export
 

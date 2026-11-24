@@ -9,7 +9,7 @@ spec_path = os.path.abspath(sys.argv[0]) if sys.argv else os.path.abspath("TinyT
 project_root = os.path.abspath(os.path.dirname(spec_path))
 src_root = os.path.join(project_root, "src")
 
-# Destinations MUST match gui/resource_utils:
+# Destinations MUST match src/resource_utils.py:
 #   resource_path("config.json")      -> <_MEIPASS>/config.json        (dest ".")
 #   asset_path("icons/<...>")         -> <_MEIPASS>/resources/icons/…  (dest "resources")
 datas = [

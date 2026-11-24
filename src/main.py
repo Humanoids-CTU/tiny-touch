@@ -8,7 +8,7 @@ startup_splash.start()
 import log_setup
 import single_instance
 from app_info import PROGRAM_VERSION
-from gui.resource_utils import get_app_dir
+from resource_utils import get_app_dir
 
 # Render crisply on scaled Windows displays (per-monitor DPI aware). Tk then
 # reports the real DPI and theme.SCALE sizes every control to match.

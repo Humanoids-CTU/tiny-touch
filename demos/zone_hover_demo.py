@@ -31,7 +31,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from adapters.zone_masks import load_zone_masks, zones_dir  # noqa: E402
 from domain.templates import TEMPLATES, get_template  # noqa: E402
 from domain.touch import LINE_ZONE, NO_ZONE, OUTSIDE_ZONE, zone_precedence  # noqa: E402
-from gui.resource_utils import asset_path  # noqa: E402
+from resource_utils import asset_path  # noqa: E402
 
 # --- configuration ---------------------------------------------------------
 TEMPLATE = "default"            # "default", "alternate" or "general"

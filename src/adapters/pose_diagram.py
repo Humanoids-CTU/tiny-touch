@@ -10,7 +10,7 @@ from domain.pose import POSE_ZONES
 from domain.pose_geometry import POSE_SIZE, ORIGINAL_OFFSET, diagram_transform, zone_group
 from domain.touch import zones_at, NO_ZONE
 from domain.templates import get_template
-from gui.resource_utils import asset_path
+from resource_utils import asset_path
 
 
 @lru_cache(maxsize=1)

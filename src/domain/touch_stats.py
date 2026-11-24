@@ -5,7 +5,7 @@ PURE touch-episode reconstruction and statistics over an export DataFrame.
 This is the analysis half of the old monolithic `analysis.py`: everything that
 turns `export/<name>_export.csv` rows into numbers lives here, and NOTHING that
 draws, writes or reads a file does. Concretely, this module must never import
-plotly, webbrowser, os-level writers, `gui.resource_utils` or `adapters.config`
+plotly, webbrowser, os-level writers, `resource_utils` or `adapters.config`
 (there is a test that greps `src/domain/` for exactly that). pandas is allowed
 — a DataFrame is the input shape — but only as a data container.
 

@@ -41,6 +41,7 @@ tiny-touch/
 │   ├── video_model.py            # Video entity (LimbView wrappers over frames)
 │   ├── perf_utils.py             # Optional perf timer + periodic summary logging
 │   ├── log_setup.py              # Session handlers, retention and exception hooks
+│   ├── resource_utils.py         # PyInstaller-aware asset path resolution (used by every layer above domain)
 │   ├── generate_zone_masks.py    # Offline tool: build per-zone PNG masks from a diagram
 │   ├── domain/                   # PURE rules: no I/O, no Tk, no plotting, no config
 │   │   ├── model.py              # FrameRecord / FrameBundle shapes, LIMBS, LimbView
@@ -74,8 +75,7 @@ tiny-touch/
 │   │   ├── native_title_bar.py   # Windows title-bar colors and DWM cloak; no-op on Linux
 │   │   ├── window_reveal.py      # Every window appears once, settled and placed
 │   │   ├── content_swap.py       # Rebuild a visible window behind a still cover
-│   │   ├── special_zones_app.py  # Special-zone selector + note dialog (Toplevel)
-│   │   └── resource_utils.py     # PyInstaller-aware asset path resolution
+│   │   └── special_zones_app.py  # Special-zone selector + note dialog (Toplevel)
 │   └── resources/                # RUNTIME assets -- everything here ships in the exe
 │       └── icons/                # Body diagrams, limb images, zone masks
 │           ├── diagram0.png      # Default touch diagram (rendered on canvas)
@@ -105,7 +105,9 @@ one-way dependency rule.
 
 The domain rule is enforced mechanically: `tests/unit/test_touch_stats.py`
 (`test_domain_layer_imports_nothing_from_the_outer_layers`) AST-parses every file under
-`src/domain/` and fails on a banned import. Two conventions ride on top of it: the services
+`src/domain/` and fails on a banned import; its sibling
+`test_adapters_and_services_import_nothing_from_the_gui` does the same for `src/adapters/`
+and `src/service_layer/`, which must not import `gui` or `labeling_app`. Two conventions ride on top of it: the services
 never read `config.json` (the GUI passes its `AppConfig` snapshot down as arguments), and
 `adapters.plotting` never computes a statistic — it receives finished domain objects, so
 the numbers are reproducible without plotly.
@@ -808,7 +810,7 @@ editing a preset after preparation cannot change an older video's exported label
 uv run pyinstaller TinyTouch.spec
 ```
 
-Produces a standalone executable in `dist/`. The spec bundles two `datas` entries, and their destinations must stay in step with [src/gui/resource_utils.py](src/gui/resource_utils.py):
+Produces a standalone executable in `dist/`. The spec bundles two `datas` entries, and their destinations must stay in step with [src/resource_utils.py](src/resource_utils.py):
 
 | Spec `datas` | Bundled at | Read via |
 | --- | --- | --- |

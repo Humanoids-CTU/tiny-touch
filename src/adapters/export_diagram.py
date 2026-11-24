@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 from adapters.zone_masks import load_zone_masks, zones_dir, zone_label_positions
 from domain.coding_setup import PORTABLE_CHANNELS, PARAMETER_KEYS
 from domain.templates import get_template
-from gui.resource_utils import asset_path
+from resource_utils import asset_path
 
 SCALE = 3
 MARGIN = 32

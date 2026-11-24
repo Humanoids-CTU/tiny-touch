@@ -15,7 +15,7 @@ import cv2
 from domain.touch_stats import NO_ZONE, zone_sort_key
 from domain.templates import DEFAULT_TEMPLATE, get_template
 from domain.touch import LINE_ZONE, zone_precedence
-from gui.resource_utils import asset_path
+from resource_utils import asset_path
 
 
 logger = logging.getLogger(__name__)

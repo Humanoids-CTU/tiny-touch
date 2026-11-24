@@ -2,5 +2,6 @@
 
 The working-state SQLite database (`sqlite_repo`), file I/O (export CSV read
 and write, config.json), cv2 probing/decoding, ffmpeg frame extraction. Adapters may import from `domain`, never from `gui`
-widgets (the `resource_utils` path helper is the one sanctioned exception).
+or `labeling_app` (the `resource_utils` path helper they use is a top-level
+module, not part of the GUI).
 """

@@ -56,7 +56,7 @@ from domain.touch_stats import (
     duration_histogram_buckets,
     fps_is_usable,
 )
-from gui.resource_utils import asset_path
+from resource_utils import asset_path
 
 
 logger = logging.getLogger(__name__)

@@ -15,7 +15,7 @@ from domain.zone_display import ZoneDisplaySettings
 from adapters.zone_masks import editable_zone_names, load_zone_masks, zone_label_positions, zones_dir
 from adapters.coding_configs import CodingConfigStore, validate_coding_setup
 from gui import content_swap, theme, window_reveal
-from gui.resource_utils import asset_path
+from resource_utils import asset_path
 from gui.zone_labels import draw_zone_labels
 from domain.templates import get_template
 from gui.template_dialog import add_custom_template_placeholder, set_tile_selected, template_diagram, template_tile

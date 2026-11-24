@@ -12,7 +12,7 @@ import labeling_app
 from gui import app_dialogs
 from PIL import Image, ImageChops, ImageTk
 
-from gui.resource_utils import asset_path
+from resource_utils import asset_path
 from adapters.sqlite_repo import SqliteRepository
 from gui_driver import (
     click, click_canvas, dismiss_dialog, find_button, find_toplevel, find_widget,

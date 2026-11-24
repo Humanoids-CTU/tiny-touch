@@ -66,7 +66,7 @@ preconditions in the `workspace` fixture, and a session-scoped guard
 ``Labeled_data/``, ``videos/`` and ``config.json`` before the first e2e test
 and re-checks them after the last one.
 
-`gui.resource_utils.asset_path` still resolves to the repo's ``src/resources``
+`resource_utils.asset_path` still resolves to the repo's ``src/resources``
 tree — that is READ-ONLY asset loading (diagrams, zone masks) and is exactly
 what the shipped app does.
 

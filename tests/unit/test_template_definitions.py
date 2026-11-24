@@ -9,7 +9,7 @@ from adapters.zone_masks import load_zone_masks, zones_dir
 from domain.model import LIMBS
 from domain.touch import zones_at
 from domain.templates import TEMPLATE_LABELS, general_footer_box, get_template
-from gui.resource_utils import asset_path
+from resource_utils import asset_path
 from gui.template_dialog import template_diagram
 
 

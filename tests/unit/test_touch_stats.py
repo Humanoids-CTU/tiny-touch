@@ -499,6 +499,34 @@ def test_domain_layer_imports_nothing_from_the_outer_layers():
     assert offenders == []
 
 
+GUI_MODULES = ("gui", "labeling_app")
+
+
+def test_adapters_and_services_import_nothing_from_the_gui():
+    """`src/adapters/` and `src/service_layer/` sit below the GUI: neither may
+    import the `gui` package or `labeling_app`, at module level or lazily.
+    """
+    import ast
+    import pathlib
+
+    src_dir = pathlib.Path(__file__).resolve().parents[2] / "src"
+    offenders = []
+    for layer in ("adapters", "service_layer"):
+        for source_file in sorted((src_dir / layer).rglob("*.py")):
+            tree = ast.parse(source_file.read_text(encoding="utf-8"))
+            names = []
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names.extend(alias.name for alias in node.names)
+                elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                    names.append(node.module or "")
+            for name in names:
+                if name.split(".")[0] in GUI_MODULES:
+                    offenders.append(f"{layer}/{source_file.name}: {name}")
+
+    assert offenders == []
+
+
 def test_episode_is_hashable_and_frozen():
     episode = Episode("RH", 1, 2, True, ("A",), (), ("B",), 1)
 

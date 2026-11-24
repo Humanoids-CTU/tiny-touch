@@ -63,7 +63,7 @@ from adapters.sqlite_repo import SqliteRepository
 from gui.zone_names_dialog import edit_zone_names
 from gui.zone_labels import draw_zone_labels
 from gui.diagram_highlight import DiagramHighlighter
-from gui.resource_utils import asset_path
+from resource_utils import asset_path
 from gui.ui_components import (CARD_CONTENT_PAD, build_ui, draw_startup_diagram, sync_play_control,
                                align_timeline_to_video, max_diagram_scale, TIMELINE_HEIGHT, TIMELINE2_HEIGHT,
                                diagram_native_size, fit_diagram_to_column)
