@@ -61,8 +61,8 @@ def _anatomical_template(label: str, masks_directory: str, image_suffix: str) ->
     labels = (
         ("RH", "Right Hand"),
         ("LH", "Left Hand"),
-        ("RL", "Right Foot"),
-        ("LL", "Left Foot"),
+        ("RF", "Right Foot"),
+        ("LF", "Left Foot"),
     )
     return TemplateDefinition(
         label=label,
@@ -84,7 +84,7 @@ TEMPLATES = MappingProxyType({
         masks_directory="icons/zones_general",
         channels=tuple(
             ChannelDefinition(key, f"Channel {index}", f"icons/general_{key}.png")
-            for index, key in enumerate(("RH", "LH", "RL", "LL"), start=1)
+            for index, key in enumerate(("RH", "LH", "RF", "LF"), start=1)
         ),
         startup_diagram="icons/general.png",
         channel_noun="Channel",
@@ -128,6 +128,6 @@ def bundle_has_annotation(bundle: dict) -> bool:
     return any(
         rec.get("X") or rec.get("Y") or rec.get("Zones") or rec.get("Onset")
         or any((rec.get("LimbParams") or {}).values())
-        for limb in ("LH", "RH", "LL", "RL")
+        for limb in ("LH", "RH", "LF", "RF")
         if isinstance(rec := bundle.get(limb), dict)
     )

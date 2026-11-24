@@ -23,7 +23,7 @@ def test_general_reopens_and_exports_all_four_channels_without_csv_changes(tmp_p
         frames[frame]["Note"] = "General session"
         frames[frame]["Params"]["Par1"] = onset
         frames[frame]["Changed"] = True
-        for index, key in enumerate(("RH", "LH", "RL", "LL")):
+        for index, key in enumerate(("RH", "LH", "RF", "LF")):
             frames[frame][key].update(
                 X=[137 + index % 2 * 176], Y=[102 + index // 2 * 164],
                 Zones=[[str(index + 1)]], Onset=onset, LimbParams={"Par2": onset},
@@ -48,7 +48,7 @@ def test_general_reopens_and_exports_all_four_channels_without_csv_changes(tmp_p
     for frame in frames:
         assert restored[frame]["Note"] == "General session"
         assert restored[frame]["Params"] == frames[frame]["Params"]
-        for key in ("RH", "LH", "RL", "LL"):
+        for key in ("RH", "LH", "RF", "LF"):
             for field in ("X", "Y", "Zones", "Onset", "LimbParams"):
                 assert restored[frame][key][field] == frames[frame][key][field]
 

@@ -196,7 +196,7 @@ def test_close_with_open_touches_offers_navigation_or_save(monkeypatch, result):
     events = []
     app = _app(events)
     app.video = SimpleNamespace(
-        frames={2: {"RH": {"Onset": "ON"}}, 9: {"LL": {"Onset": "ON"}}},
+        frames={2: {"RH": {"Onset": "ON"}}, 9: {"LF": {"Onset": "ON"}}},
         current_frame=4,
     )
     original = deepcopy(app.video.frames)

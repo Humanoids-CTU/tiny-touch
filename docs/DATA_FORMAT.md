@@ -4,13 +4,13 @@
 
 New saves write export format **2**. This is an intentional breaking change from
 unversioned anatomical-column exports. Keep the CSV together with its metadata JSON and labeled diagram PNG.
-SQLite working state still uses its established internal keys; no state migration occurs.
+SQLite working state uses private internal keys; older project databases are not migrated.
 
 Paths remain `data/<video>/export/<video>_export.csv` and
 `data/<video>/export/<video>_metadata.json`. Before the first version 2 save replaces
 an older export, both existing files are copied unchanged into a timestamped
-`export/legacy-<UTC timestamp>/` folder. Analysis can still read those older CSVs,
-including the pre-v8 six-line preamble, without modifying them.
+`export/legacy-<UTC timestamp>/` folder. Analysis no longer reads those older
+unversioned CSVs, including the pre-v8 six-line preamble layout, and rejects them with an error.
 
 The save service validates and stages all three files before replacing published
 files. Ordinary replacement failures restore the previous set. Separate files
@@ -32,8 +32,8 @@ included. The exact 30-column order is:
 5. `Note`
 
 Public channel IDs are stable and independent of editable study labels. Their
-private state mapping is RH -> Channel1, LH -> Channel2, RL -> Channel3,
-LL -> Channel4. No anatomical prefix is emitted in version 2 columns.
+private state mapping is RH -> Channel1, LH -> Channel2, RF -> Channel3,
+LF -> Channel4. No anatomical prefix is emitted in version 2 columns.
 
 `ChannelN_XY` is a JSON array of numeric coordinate pairs, for example
 `[[120, 130], [9, 0]]`. `ChannelN_Zones` is a matching array of zone buckets,
@@ -98,7 +98,7 @@ export from SQLite. Keep all three files together when sharing a dataset.
 
 Version 2 analysis tables use a `Channel` ID column and heatmap files use
 `heatmap_ChannelN.html`. Internal calculations retain their established keys.
-Old unversioned exports retain their legacy analysis filenames/table IDs.
+Old unversioned exports are not analysed.
 
 ## 3. Semantic conventions
 
@@ -251,7 +251,6 @@ for (x, y), zones in zip(points, buckets):
     print(x, y, zones)
 ```
 
-Existing unversioned datasets use separate comma-joined LH/LL/RH/RL X and Y
-columns and nested JSON Zones. They are archival inputs, not the current writer
-contract. The original legacy byte fixture remains in the test suite alongside
-the version 2 golden fixture.
+Existing unversioned datasets use separate comma-joined per-limb X and Y
+columns and nested JSON Zones. They are archives only, not the current writer
+contract, and TinyTouch analysis no longer reads them.

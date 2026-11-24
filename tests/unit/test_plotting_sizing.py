@@ -31,7 +31,7 @@ def test_monotonic_non_decreasing():
 
 def test_display_limb_order_mirrors_pairs():
     # The diagrams face the viewer: subject's right limbs on the viewer's left.
-    assert display_limb_order(("LH", "RH", "LL", "RL")) == ["RH", "LH", "RL", "LL"]
+    assert display_limb_order(("LH", "RH", "LF", "RF")) == ["RH", "LH", "RF", "LF"]
 
 
 def test_display_limb_order_keeps_unknown_limbs():

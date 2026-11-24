@@ -92,7 +92,7 @@ def test_reference_prints_saved_names_ids_and_settings_without_legend(tmp_path, 
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", text)
     monkeypatch.setattr(ImageDraw.ImageDraw, "multiline_text", multiline)
     setup = replace(default_coding_setup("general"), zone_labels={"1": "Caregiver touch"},
-                    channel_labels={"RH": "Probe", "LH": "Other probe", "RL": "Third", "LL": "Fourth"},
+                    channel_labels={"RH": "Probe", "LH": "Other probe", "RF": "Third", "LF": "Fourth"},
                     parameter_labels={"Par1": "Attention", "Par2": "Task", "Par3": "Trial"},
                     limb_parameter_labels={"Par1": "Pressure", "Par2": "Speed", "Par3": "Direction"})
     write_export_diagram(tmp_path / "reference.png", setup)

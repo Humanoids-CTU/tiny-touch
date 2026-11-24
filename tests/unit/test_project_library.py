@@ -44,7 +44,7 @@ def test_reliability_offers_local_setup_for_review(tmp_path):
     normal = ProjectPaths("clip", str(tmp_path))
     Path(normal.state_dir).mkdir(parents=True)
     repo = SqliteRepository(normal.state_db)
-    setup = replace(default_coding_setup(), channel_labels={"RH":"A", "LH":"B", "RL":"C", "LL":"D"})
+    setup = replace(default_coding_setup(), channel_labels={"RH":"A", "LH":"B", "RF":"C", "LF":"D"})
     repo.save_coding_setup(setup)
     repo.mark_prepared()
     repo.close()

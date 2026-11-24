@@ -45,12 +45,6 @@ def test_reader_rejects_malformed_v2_alignment(tmp_path):
     with pytest.raises(ValueError, match='align'):
         read_export_df(str(path))
 
-def test_legacy_reader_preserves_multizone_annotations():
-    from pathlib import Path
-    path = Path(__file__).parent / 'fixtures' / 'golden_export.csv'
-    df = read_export_df(str(path))
-    assert json.loads(df.loc[5, 'RL_Zones']) == [['L','I']]
-
 def test_save_failure_keeps_existing_pair_and_success_archives_legacy(tmp_path):
     from pathlib import Path
     from domain.project import ProjectPaths

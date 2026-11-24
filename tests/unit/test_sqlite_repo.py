@@ -70,7 +70,7 @@ def _rich_frames():
     b = empty_bundle()
     b["Params"] = {"Par1": "OFF", "Par2": "ON", "Par3": None}
     b["Note"] = "params only, with a comma"
-    b["LL"]["Zones"] = [["GHOST"]]
+    b["LF"]["Zones"] = [["GHOST"]]
     frames[7] = _dirty(b)
 
     # Completely empty bundle: its EXISTENCE is the only thing to preserve.
@@ -78,7 +78,7 @@ def _rich_frames():
 
     # Onset None (real archived data has it) and an empty-string note.
     b = empty_bundle()
-    b["RL"] = {"X": [], "Y": [], "Onset": None, "Bodypart": "RL",
+    b["RF"] = {"X": [], "Y": [], "Onset": None, "Bodypart": "RF",
                "Zones": [], "Touch": None}
     b["Note"] = ""
     frames[40] = _dirty(b)
@@ -173,11 +173,11 @@ def test_click_index_is_the_xy_zones_alignment(repo):
     `{limb}_X` / `{limb}_Y` / `{limb}_Zones` export cells depend on. Order and
     pairing must survive verbatim."""
     b = empty_bundle()
-    b["RL"] = {"X": [11, 22, 33], "Y": [44, 55, 66], "Onset": "ON",
-               "Bodypart": "RL", "Zones": [["A"], ["B", "C"], []], "Touch": None}
+    b["RF"] = {"X": [11, 22, 33], "Y": [44, 55, 66], "Onset": "ON",
+               "Bodypart": "RF", "Zones": [["A"], ["B", "C"], []], "Touch": None}
     repo.save_frames({4: _dirty(b)}, total_frames=5)
 
-    rec = repo.load_frames()[4]["RL"]
+    rec = repo.load_frames()[4]["RF"]
     assert rec["X"] == [11, 22, 33]
     assert rec["Y"] == [44, 55, 66]
     assert rec["Zones"] == [["A"], ["B", "C"], []]
@@ -188,10 +188,10 @@ def test_zone_bucket_without_a_click_survives(repo):
     preserved them (tests/integration/test_lifecycle.py pins that), so the DB
     must too — hence nullable `x`/`y` rather than a click-only table."""
     b = empty_bundle()
-    b["LL"]["Zones"] = [["GHOST"], ["ALSO_GHOST"]]
+    b["LF"]["Zones"] = [["GHOST"], ["ALSO_GHOST"]]
     repo.save_frames({6: _dirty(b)}, total_frames=8)
 
-    rec = repo.load_frames()[6]["LL"]
+    rec = repo.load_frames()[6]["LF"]
     assert rec["X"] == []
     assert rec["Y"] == []
     assert rec["Zones"] == [["GHOST"], ["ALSO_GHOST"]]
@@ -247,7 +247,7 @@ def test_missing_limb_row_loads_as_the_canonical_empty_record(repo):
     repo.save_frames({1: _dirty(empty_bundle())}, total_frames=2)
 
     bundle = repo.load_frames()[1]
-    for limb in ("LH", "RH", "LL", "RL"):
+    for limb in ("LH", "RH", "LF", "RF"):
         assert bundle[limb] == empty_record(limb)
 
 

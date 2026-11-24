@@ -1230,10 +1230,10 @@ class LabelingApp(tk.Tk):
             data = self.video.dataRH
         elif sel == "LH":
             data = self.video.dataLH
-        elif sel == "RL":
-            data = self.video.dataRL
-        elif sel == "LL":
-            data = self.video.dataLL
+        elif sel == "RF":
+            data = self.video.dataRF
+        elif sel == "LF":
+            data = self.video.dataLF
         else:
             data = {}
         self.find_last_green(data)
@@ -1351,7 +1351,7 @@ class LabelingApp(tk.Tk):
             self.video.last_green = [(None, None)]
             return
 
-        limb = self.option_var_1.get()  # "LH"/"RH"/"LL"/"RL"
+        limb = self.option_var_1.get()  # "LH"/"RH"/"LF"/"RF"
         frame = self.video.current_frame
         # Reuse the previous answer while video, limb and annotations are
         # unchanged: playback then scans one frame per step, not back to the

@@ -293,7 +293,7 @@ def test_episodes_are_isolated_per_limb():
 
     assert len(data.episodes["LH"]) == 1
     assert data.episodes["RH"] == []
-    assert data.episodes["LL"] == [] and data.episodes["RL"] == []
+    assert data.episodes["LF"] == [] and data.episodes["RF"] == []
 
 
 # --- summarize math --------------------------------------------------------

@@ -67,8 +67,8 @@ def test_diagram_dots_use_filled_and_hollow_sprites(monkeypatch):
         data=True,
         dataRH={4: frame},
         dataLH={},
-        dataRL={},
-        dataLL={},
+        dataRF={},
+        dataLF={},
         current_frame=4,
         last_green=[(30, 40)],
     )

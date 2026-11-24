@@ -103,7 +103,7 @@ def test_bad_labels_fail_before_creating_reports(tmp_path, key, value):
 def test_general_footer_highlights_only_the_owning_channel():
     with Image.open(asset_path("icons/general.png")) as image:
         neutral = image.convert("RGB")
-    for selected, key in enumerate(("RH", "LH", "RL", "LL")):
+    for selected, key in enumerate(("RH", "LH", "RF", "LF")):
         with Image.open(asset_path(f"icons/general_{key}.png")) as image:
             assert image.size == (450, 696)
             assert image.crop((0, 0, 450, 600)).tobytes() == neutral.crop((0, 0, 450, 600)).tobytes()

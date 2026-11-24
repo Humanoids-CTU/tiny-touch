@@ -84,7 +84,7 @@ _STATIC_FIGURE_CONFIG = {**FIGURE_CONFIG, "displayModeBar": False}
 
 # Categorical limb palette, in LIMBS order — a colorblind-validated adjacent
 # ordering (worst adjacent-pair CVD dE 9.1, normal-vision dE 22.9 on white).
-LIMB_COLORS = {"LH": "#2a78d6", "RH": "#eb6834", "LL": "#1baf7a", "RL": "#eda100"}
+LIMB_COLORS = {"LH": "#2a78d6", "RH": "#eb6834", "LF": "#1baf7a", "RF": "#eda100"}
 
 # Heatmap height follows the zone-axis length so a ~38-zone matrix gets
 # readable rows instead of being crammed into a fixed frame.

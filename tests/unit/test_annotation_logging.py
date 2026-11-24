@@ -92,7 +92,7 @@ def test_limb_selection_logs_only_a_real_change(caplog):
 
     with caplog.at_level(logging.INFO, logger="annot"):
         LabelingApp._on_limb_selected(app)
-        selected["value"] = "RL"
+        selected["value"] = "RF"
         LabelingApp._on_limb_selected(app)
 
-    assert _messages(caplog) == ["limb LH -> RL"]
+    assert _messages(caplog) == ["limb LH -> RF"]

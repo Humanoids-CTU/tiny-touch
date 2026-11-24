@@ -89,7 +89,7 @@ def legacy(paths):
         conn.execute("PRAGMA user_version=1")
 
 
-@pytest.mark.parametrize("schema", [0, 1, 2, 999])
+@pytest.mark.parametrize("schema", [0, 1, 2, 3, 999])
 def test_unsupported_schema_is_rejected_without_rewriting_or_backing_up(tmp_path, schema):
     paths = project(tmp_path)
     legacy(paths)

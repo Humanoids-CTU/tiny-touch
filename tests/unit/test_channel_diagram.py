@@ -17,7 +17,7 @@ def center(index):
 
 def test_general_mapping_can_highlight_multiple_zones_or_no_zones():
     setup = default_coding_setup("general")
-    setup = replace(setup, channel_zones={**setup.channel_zones, "RH": ("9", "11"), "LH": (), "RL": ()})
+    setup = replace(setup, channel_zones={**setup.channel_zones, "RH": ("9", "11"), "LH": (), "RF": ()})
     selected = render_channel_diagram(setup, "RH")
     neutral = render_channel_diagram(setup, "LH")
     for index in range(4):

@@ -39,7 +39,7 @@ class ReportLabels:
 
     def channel_id(self, key: str) -> str:
         if self.export_format_version >= 2:
-            return {"RH":"Channel1", "LH":"Channel2", "RL":"Channel3", "LL":"Channel4"}.get(key,key)
+            return {"RH":"Channel1", "LH":"Channel2", "RF":"Channel3", "LF":"Channel4"}.get(key,key)
         return key
 
     @property

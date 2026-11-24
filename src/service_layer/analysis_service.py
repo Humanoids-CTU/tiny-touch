@@ -179,7 +179,7 @@ def run_analysis(paths: ProjectPaths,
     `template` must agree with it. This service never reads config.json.
 
     Raises `adapters.export_reader.ExportReadError` when the CSV is unparseable
-    and `domain.touch_stats.ExportSchemaError` when required columns are absent.
+    or is not export format 2 (unversioned exports are rejected), and `domain.touch_stats.ExportSchemaError` when required columns are absent.
     Both are loud on purpose: the GUI shows the message in a dialog. Nothing is
     written before validation succeeds.
     """

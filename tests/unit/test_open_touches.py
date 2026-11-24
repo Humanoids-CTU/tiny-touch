@@ -12,7 +12,7 @@ from domain.touch import STRAY_OFFSET, OpenTouch, find_open_touches
 from gui.open_touches_dialog import ANALYZE_ANYWAY, GO_TO_ONSET, describe_open_touch, describe_title
 from labeling_app import LabelingApp
 
-LIMBS = ["LH", "RH", "LL", "RL"]
+LIMBS = ["LH", "RH", "LF", "RF"]
 
 
 def _rec(onset, x=None, zones=None):
@@ -49,12 +49,12 @@ def test_stray_offsets_and_open_onsets_mix_in_frame_order():
     frames = {
         2: {"LH": _rec("OFF", 1)},     # stray
         5: {"RH": _rec("ON", 1)},      # open
-        7: {"LL": _rec("OFF", 1)},     # stray
+        7: {"LF": _rec("OFF", 1)},     # stray
     }
     assert find_open_touches(frames, LIMBS) == [
         OpenTouch("LH", 2, 2, kind=STRAY_OFFSET),
         OpenTouch("RH", 5, 5),
-        OpenTouch("LL", 7, 7, kind=STRAY_OFFSET),
+        OpenTouch("LF", 7, 7, kind=STRAY_OFFSET),
     ]
 
 
@@ -149,7 +149,7 @@ def test_cancel_blocks_analysis(monkeypatch):
 def test_go_to_onset_jumps_to_the_selected_touch_and_blocks(monkeypatch):
     events, seen = [], []
     _stub_dialog(monkeypatch, (GO_TO_ONSET, 1), seen)
-    frames = {2: {"RH": _rec("ON", 1)}, 9: {"LL": _rec("ON", 1)}}
+    frames = {2: {"RH": _rec("ON", 1)}, 9: {"LF": _rec("ON", 1)}}
     app = _app(frames, events, current_frame=4)
     assert LabelingApp._resolve_open_touches_before_analysis(app) is False
     assert events == ["stop", ("next_frame", 5)]
@@ -169,5 +169,5 @@ def test_skip_leaves_data_alone_and_proceeds(monkeypatch):
 def test_channel_label_prefers_the_coding_setup_name():
     app = SimpleNamespace(coding_setup=SimpleNamespace(channel_labels={"RH": "Right hand"}))
     assert LabelingApp._channel_display_label(app, "RH") == "Right hand"
-    assert LabelingApp._channel_display_label(app, "LL") == "LL"
+    assert LabelingApp._channel_display_label(app, "LF") == "LF"
     assert LabelingApp._channel_display_label(SimpleNamespace(coding_setup=None), "LH") == "LH"

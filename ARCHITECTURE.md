@@ -1,6 +1,6 @@
 # TinyTouch architecture
 
-**TinyTouch** is a desktop annotation tool for behavioral researchers studying how infants learn to understand their own body through self-touch. It provides **Touch Labeling**: frame-by-frame annotation of which limb (LH / RH / LL / RL) touches which body zone, including onset/offset marking, gaze tracking, and customizable global / per-limb parameters.
+**TinyTouch** is a desktop annotation tool for behavioral researchers studying how infants learn to understand their own body through self-touch. It provides **Touch Labeling**: frame-by-frame annotation of which limb (LH / RH / LF / RF) touches which body zone, including onset/offset marking, gaze tracking, and customizable global / per-limb parameters.
 
 This is the developer-facing document. See also:
 
@@ -54,7 +54,7 @@ tiny-touch/
 │   │   ├── sqlite_repo.py        # Working-state DB per video (SOURCE OF TRUTH)
 │   │   ├── export_writer.py      # Versioned channel CSV + metadata snapshot (write)
 │   │   ├── pose_export_writer.py # Pose per-frame CSV + metadata (write)
-│   │   ├── export_reader.py      # Export CSV read, incl. legacy 6-line preamble
+│   │   ├── export_reader.py      # Export CSV read (format 2 only; unversioned rejected)
 │   │   ├── plotting.py           # Every plotly figure / CSV table (ReportFigure factory)
 │   │   ├── report_page.py        # master_<name>.html layout/CSS (inlines the figures)
 │   │   ├── config.py             # config.json read / write, AppConfig snapshot
@@ -169,8 +169,8 @@ Touch-mode state for a frame is a **`FrameBundle`** (see [src/domain/model.py](s
 FrameBundle = {
     "LH": FrameRecord,  # left hand
     "RH": FrameRecord,  # right hand
-    "LL": FrameRecord,  # left foot
-    "RL": FrameRecord,  # right foot
+    "LF": FrameRecord,  # left foot
+    "RF": FrameRecord,  # right foot
     "Note": str | None,
     "Params": {"Par1": "ON"|"OFF"|None, "Par2": ..., "Par3": ...},  # global per-frame
     "Changed": bool,   # dirty flag, cleared after save
@@ -179,7 +179,7 @@ FrameBundle = {
 
 Each `FrameRecord` holds aligned `X` / `Y` click lists, `Onset` (`"ON"`/`"OFF"`/`""`), `Bodypart`, `Zones` (one bucket per click), `Touch`, and a `LimbParams` dict (`Par1..3`). Gaze is captured by global `Params["Par1"]`, whose user-facing label is configurable (currently `Looking1`).
 
-`Video` exposes `dataLH / dataRH / dataLL / dataRL` as lightweight `LimbView` wrappers around the same shared `frames` dict, so legacy code that indexes a single limb still works.
+`Video` exposes `dataLH / dataRH / dataLF / dataRF` as lightweight `LimbView` wrappers around the same shared `frames` dict, so legacy code that indexes a single limb still works.
 
 ### Pose annotation workspace
 
@@ -440,8 +440,8 @@ ambiguous same-name sources must be rejected rather than silently reusing frames
 
 `domain.coding_setup.CodingSetup` is the immutable coding definition. Its portable
 JSON representation uses `Channel1` through `Channel4`; working-state adapters
-retain the established `RH`, `LH`, `RL`, `LL` keys in that order. This avoids
-reinterpreting existing annotation rows. Diagram geometry remains unchanged;
+use the internal `RH`, `LH`, `RF`, `LF` keys in that order. Schema 4 renamed the
+former foot keys `RL`/`LL` to `RF`/`LF` without migration. Diagram geometry remains unchanged;
 General uses numbered bottom zones for new setups and preserves historical IDs
 through the saved zone_layout discriminator. New selectors use Channel 1–4 with user-supplied labels.
 
@@ -476,7 +476,7 @@ adapters resolve assets through `asset_path`; all diagram and mask consumers use
 the active project's template. Switching a draft template clears its mask cache.
 
 General uses eight square zones (`1`-`8`). Portable channel order is Channel1 (`RH`),
-Channel2 (`LH`), Channel3 (`RL`), Channel4 (`LL`), independently of historical CSV
+Channel2 (`LH`), Channel3 (`RF`), Channel4 (`LF`), independently of historical CSV
 column order. New exports use these generic channel identifiers for every diagram.
 New General setups use bottom zones `9`–`12`, mapped to Channel1–4 by default.
 Historical snapshots keep the old bottom-zone IDs `Channel1`–`Channel4` using
@@ -560,7 +560,7 @@ them.
 
 ### Supported data layout (no migration path)
 
-The app resumes supported schema 3 databases with recorded template IDs and
+The app resumes supported schema 4 databases with recorded template IDs and
 adopts their coding labels as described above. Other working-state formats are
 not imported or converted.
 Project loading rejects existing exports with no working database, preventing them
@@ -618,9 +618,10 @@ then re-stamps the provenance meta (`video_name`, `fps`,
 self-describing. `repo.load_frames()` stays a separate step so the GUI can start
 its labeling timer between the two.
 
-`SCHEMA_VERSION` is 3. Existing databases must match exactly; the version is checked
+`SCHEMA_VERSION` is 4. Existing databases must match exactly; the version is checked
 before changing database settings or writing state. There is no migration or backup
-path for older projects. The template metadata uses the existing `meta` table, and
+path for older projects; schema 3 databases (foot keys `RL`/`LL`) are refused with
+the same "start a new project" message. The template metadata uses the existing `meta` table, and
 older app builds cannot open these databases and bypass the template lock.
 
 ### Touch export schema
@@ -742,7 +743,7 @@ half-populated `plots/`):
 
 ```
 adapters.export_reader.read_export_df   read export/<name>_export.csv
-        │                               (tolerates the legacy 6-line preamble)
+        │                               (format 2 only; unversioned CSVs are rejected)
         ▼
 domain.touch_stats.parse_export         validate schema, rebuild Episodes
         │  summarize / transitions      per-limb stats + zone transitions
@@ -774,8 +775,7 @@ These rules are also stated for external readers in
 [docs/DATA_FORMAT.md](docs/DATA_FORMAT.md#3-semantic-conventions); keep the two in step.
 
 The written artifacts and their file names are a contract too (the master page links
-them and users bookmark them): `heatmap_ChannelN.html` for version 2 (legacy
-exports retain `heatmap_<LIMB>.html`), `touch_trajectory.html`,
+them and users bookmark them): `heatmap_ChannelN.html`, `touch_trajectory.html`,
 `analysis_table_frames.csv`, `analysis_table_seconds.csv`, `table.html`, `histogram.html`,
 `histogram_2.html`, `master_<name>.html`. The additional `zone_table.html` shows zone
 touch counts with readable names and separate stable IDs.

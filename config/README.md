@@ -11,7 +11,7 @@ Zone labels are aliases keyed by existing zone IDs; they never change geometry.
 Omitted zone aliases display the original zone IDs.
 
 Portable channel names `Channel1`, `Channel2`, `Channel3`, and `Channel4` map to
-the stable internal keys `RH`, `LH`, `RL`, and `LL`, respectively. All four
+the stable internal keys `RH`, `LH`, `RF`, and `LF`, respectively. All four
 channel labels and all three `Par1`–`Par3` global and channel parameter labels
 must be present. Parameter labels describe the existing ON/OFF controls.
 New configurations use `P1`–`P3` for global parameters and `CP1`–`CP3` for

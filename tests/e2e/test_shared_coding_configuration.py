@@ -19,7 +19,7 @@ def test_shared_json_prefills_wizard_and_reopening_uses_frozen_copy(app, workspa
     setup = replace(
         default_coding_setup("general"), name="Coworker looking protocol",
         zone_labels={"1": "Target"},
-        channel_labels={"RH": "Observer", "LH": "Target", "RL": "Object", "LL": "Background"},
+        channel_labels={"RH": "Observer", "LH": "Target", "RF": "Object", "LF": "Background"},
         parameter_labels={"Par1": "Looking", "Par2": "P2", "Par3": "P3"},
     )
     store.save(setup, "coding_look.json")

@@ -22,9 +22,9 @@ def test_existing_template_assets_and_labels(template, label, folder, suffix):
     assert definition.label == label
     assert [(channel.key, channel.label) for channel in definition.channels] == [
         ("RH", "Right Hand"), ("LH", "Left Hand"),
-        ("RL", "Right Foot"), ("LL", "Left Foot"),
+        ("RF", "Right Foot"), ("LF", "Left Foot"),
     ]
-    assert display_limb_order(template=template) == ["RH", "LH", "RL", "LL"]
+    assert display_limb_order(template=template) == ["RH", "LH", "RF", "LF"]
     assert Path(zones_dir(template)) == Path(asset_path(f"icons/{folder}"))
     assert Path(template_diagram(template)) == Path(asset_path(f"icons/{folder}/LINE.png"))
     images = limb_image_paths(template)
@@ -44,9 +44,9 @@ def test_general_template_has_four_channels_and_twelve_clickable_zones():
     assert definition.channel_noun == "Channel"
     assert [(channel.key, channel.label) for channel in definition.channels] == [
         ("RH", "Channel 1"), ("LH", "Channel 2"),
-        ("RL", "Channel 3"), ("LL", "Channel 4"),
+        ("RF", "Channel 3"), ("LF", "Channel 4"),
     ]
-    assert display_limb_order(template="general") == ["RH", "LH", "RL", "LL"]
+    assert display_limb_order(template="general") == ["RH", "LH", "RF", "LF"]
     for path in [template_diagram("general"), *limb_image_paths("general")]:
         with Image.open(path) as image:
             assert image.size == definition.native_size == (450, 696)

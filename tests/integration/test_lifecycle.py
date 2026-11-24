@@ -58,7 +58,7 @@ def _build_frames_a():
     b = empty_bundle()
     b["LH"] = {"X": [125], "Y": [82], "Onset": "OFF", "Bodypart": "LH",
                "Zones": [["FACE"]], "Touch": None}
-    b["RL"] = {"X": [50], "Y": [400], "Onset": "ON", "Bodypart": "RL",
+    b["RF"] = {"X": [50], "Y": [400], "Onset": "ON", "Bodypart": "RF",
                "Zones": [["NN"]], "Touch": None,
                # Legacy artifact: the string "None" (pre-M1 saves).
                "LimbParams": {"Par1": "None", "Par2": "OFF", "Par3": None}}
@@ -70,7 +70,7 @@ def _build_frames_a():
     b["Note"] = "params only, with a comma"
     # Zones WITHOUT a click: survives the state-DB roundtrip but is LOST on
     # export->import (realigned to the empty click list) — see final stage.
-    b["LL"]["Zones"] = [["GHOST"]]
+    b["LF"]["Zones"] = [["GHOST"]]
     b["Changed"] = True
     frames[7] = b
 
@@ -84,7 +84,7 @@ def _expected_after_state_roundtrip(frames):
     expected = copy.deepcopy(frames)
     for bundle in expected.values():
         bundle.pop("Changed", None)
-        for limb in ("LH", "RH", "LL", "RL"):
+        for limb in ("LH", "RH", "LF", "RF"):
             lp = bundle[limb].get("LimbParams")
             if isinstance(lp, dict):
                 for k, v in lp.items():
@@ -112,7 +112,7 @@ def test_full_lifecycle_state_db_roundtrip_and_export(tmp_path):
     # Untouched frames were never written: the store holds only labeled frames.
     assert set(loaded_a) == {2, 5, 7}
     # PRESERVED by the state DB (unlike the export): a zone bucket with no click.
-    assert loaded_a[7]["LL"]["Zones"] == [["GHOST"]]
+    assert loaded_a[7]["LF"]["Zones"] == [["GHOST"]]
 
     # --- Stage 2: mutate one frame, save again, replace-in-place -------------
     _clear_changed(frames_a)  # the app clears Changed after a save
@@ -148,9 +148,9 @@ def test_full_lifecycle_state_db_roundtrip_and_export(tmp_path):
             labeling_mode="Normal", frame_rate=25.0, special_zones_list=None,
             total_frames=TOTAL_FRAMES,
         )
-    assert loaded_b[7]["LL"]["Zones"] == [["GHOST"]]
+    assert loaded_b[7]["LF"]["Zones"] == [["GHOST"]]
     exportable = copy.deepcopy(loaded_b)
-    exportable[7]["LL"]["Zones"] = []
+    exportable[7]["LF"]["Zones"] = []
     export_from_unified(
         exportable, export, program_version=8.0, video_name="vid",
         labeling_mode="Normal", frame_rate=25.0, special_zones_list=None,

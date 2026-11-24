@@ -57,7 +57,7 @@ def test_incomplete_or_future_configs_fail():
     with pytest.raises(ValueError):
         replace(default_coding_setup(), parameter_labels={"Par1": "Gaze"})
     with pytest.raises(ValueError):
-        replace(default_coding_setup(), channel_labels={"RH": "a" * 41, "LH": "2", "RL": "3", "LL": "4"})
+        replace(default_coding_setup(), channel_labels={"RH": "a" * 41, "LH": "2", "RF": "3", "LF": "4"})
 
 
 def test_portable_schema_uses_channel_parameters_and_reads_legacy_key():
@@ -225,7 +225,7 @@ def test_read_only_legacy_review_preserves_partial_historical_labels(repo):
 def test_read_only_legacy_review_accepts_actual_historical_metadata(repo):
     from service_layer.coding_setup_service import inspect_legacy_coding_setup
     repo.save_template(TemplateState("general"))
-    metadata = json.loads('''{"template":"general","Param Labels":{"Parameter_1":"Looking","Parameter_2":"Quiet","Parameter_3":"Awake"},"Limb Param Labels":{"XX_Parameter_1":"Grasp","XX_Parameter_2":"Reach","XX_Parameter_3":"Other"},"Channel Labels":{"RH":"Tool 1","LH":"Tool 2","RL":"Tool 3","LL":"Tool 4"},"Zone Labels":{"1":"Target"}}''')
+    metadata = json.loads('''{"template":"general","Param Labels":{"Parameter_1":"Looking","Parameter_2":"Quiet","Parameter_3":"Awake"},"Limb Param Labels":{"XX_Parameter_1":"Grasp","XX_Parameter_2":"Reach","XX_Parameter_3":"Other"},"Channel Labels":{"RH":"Tool 1","LH":"Tool 2","RF":"Tool 3","LF":"Tool 4"},"Zone Labels":{"1":"Target"}}''')
     review = inspect_legacy_coding_setup(repo, metadata)
     assert not review.needs_review
     assert review.warning == ""

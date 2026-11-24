@@ -196,7 +196,7 @@ def test_general_channels_annotate_all_squares_and_restore_across_diagrams(app, 
     assert app.limb_parameter_heading.cget("text") == "Channel parameters"
     assert find_widget(app.mode_controls_frame, text="Right Hand") is None
     scale = app.diagram_scale
-    for index, key in enumerate(("RH", "LH", "RL", "LL"), start=1):
+    for index, key in enumerate(("RH", "LH", "RF", "LF"), start=1):
         select_radio(app, f"Channel {index}")
         assert app.option_var_1.get() == key
         from adapters.channel_diagram import render_channel_diagram
@@ -230,7 +230,7 @@ def test_general_channels_annotate_all_squares_and_restore_across_diagrams(app, 
     assert app.template == "general"
     assert find_widget(app.mode_controls_frame, text="Channel 1") is not None
     assert _metadata(workspace.project())["template_locked"] == "1"
-    for key in ("RH", "LH", "RL", "LL"):
+    for key in ("RH", "LH", "RF", "LF"):
         assert app.video.frames[0][key]["Zones"] == [[str(n)] for n in range(1, 9)]
     save(app)
     exported = json.loads(Path(workspace.project().export_metadata).read_text())
@@ -240,7 +240,7 @@ def test_general_channels_annotate_all_squares_and_restore_across_diagrams(app, 
     assert not workspace.errors()
 
 
-@pytest.mark.parametrize("schema", [1, 2])
+@pytest.mark.parametrize("schema", [1, 2, 3])
 def test_unsupported_project_is_rejected_without_changing_active_session(
     loaded_app, workspace, tmp_path, schema,
 ):

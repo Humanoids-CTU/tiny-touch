@@ -32,7 +32,7 @@ def _df(rows, limb="LH"):
     records = []
     for frame, onset, zones in rows:
         rec = {"Frame": frame, "Time_ms": float(frame)}
-        for other in ("LH", "RH", "LL", "RL"):
+        for other in ("LH", "RH", "LF", "RF"):
             rec[f"{other}_X"] = ""
             rec[f"{other}_Y"] = ""
             rec[f"{other}_Onset"] = ""
@@ -100,7 +100,7 @@ def test_M12_reader_parse_failure_logged_and_chained(tmp_path, caplog):
     assert any(str(path) in record.getMessage() for record in warnings)
 
 
-def test_M12_reader_accepts_real_and_legacy_export(tmp_path):
+def test_M12_reader_accepts_real_and_rejects_preamble_export(tmp_path):
     current = tmp_path / "current.csv"
     legacy = tmp_path / "legacy.csv"
     export_from_unified(
@@ -121,7 +121,9 @@ def test_M12_reader_accepts_real_and_legacy_export(tmp_path):
     )
 
     assert "Frame" in read_export_df(str(current)).columns
-    assert "Frame" in read_export_df(str(legacy)).columns
+    # The pre-8.x 6-line preamble layout is no longer read.
+    with pytest.raises(ExportReadError):
+        read_export_df(str(legacy))
 
 
 def test_M12_multizone_pairwise_transitions():

@@ -134,7 +134,7 @@ def test_cat3_ground_truth_numbers(tmp_path):
 
     # The other three limbs are empty, and empty means empty (not "zeros with a
     # silent parse failure" — see test_analysis_validation.py).
-    for limb in ("LH", "LL", "RL"):
+    for limb in ("LH", "LF", "RF"):
         stats = next(s for s in result.stats if s.limb == limb)
         assert (stats.total_touches, stats.open_touches, stats.total_duration_frames) == (0, 0, 0)
         assert stats.mean_duration_frames is None
@@ -245,7 +245,7 @@ def test_wheel_zoom_disabled_everywhere(tmp_path):
 
 def test_limb_panels_are_mirrored_to_match_the_viewed_diagram(tmp_path):
     """The diagrams face the viewer, so the subject's right limbs render on the
-    viewer's left: RH before LH, RL before LL — in the trajectory subplot
+    viewer's left: RH before LH, RF before LF — in the trajectory subplot
     titles and in the heatmap cards on the master page."""
     out = _run_cat3(tmp_path)
 

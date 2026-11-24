@@ -10,14 +10,14 @@ from typing import TypedDict, NotRequired, List, Optional, Dict, Iterator
 
 # Canonical limb order used across the app (radio buttons, LimbViews, exports
 # use their own frozen per-column order — see adapters.export_writer).
-LIMBS = ["LH", "RH", "LL", "RL"]
+LIMBS = ["LH", "RH", "LF", "RF"]
 
 
 class FrameRecord(TypedDict):
     X: List[int]                 # 0+ points in X
     Y: List[int]                 # 0+ points in Y (aligned with X)
     Onset: str                   # "ON" | "OFF" | ""
-    Bodypart: str                # "LH"|"RH"|"LL"|"RL"|"" (for the owning limb CSV this is redundant, but present)
+    Bodypart: str                # "LH"|"RH"|"LF"|"RF"|"" (for the owning limb CSV this is redundant, but present)
     Zones: List[str]             # always list, may be []
     Touch: Optional[int]          # Parameter_1..3 states ("ON"/"OFF"/None)
     LimbParams: NotRequired[Dict[str, Optional[str]]]        # same, but limb-specific
@@ -26,8 +26,8 @@ class FrameRecord(TypedDict):
 class FrameBundle(TypedDict):
     LH: FrameRecord
     RH: FrameRecord
-    LL: FrameRecord
-    RL: FrameRecord
+    LF: FrameRecord
+    RF: FrameRecord
     Note: Optional[str]
     Params: Dict[str, Optional[str]]
     Changed: NotRequired[bool]   # per-frame (global) params
@@ -48,8 +48,8 @@ def empty_bundle() -> FrameBundle:
     return {
         "LH": empty_record("LH"),
         "RH": empty_record("RH"),
-        "LL": empty_record("LL"),
-        "RL": empty_record("RL"),
+        "LF": empty_record("LF"),
+        "RF": empty_record("RF"),
         "Note": None,
         "Params": {},
     }
@@ -76,8 +76,8 @@ def bundle_summary_dict(b):
         "Params": b.get("Params") or {},
         "LH": limb_view(b.get("LH"), "LH"),
         "RH": limb_view(b.get("RH"), "RH"),
-        "LL": limb_view(b.get("LL"), "LL"),
-        "RL": limb_view(b.get("RL"), "RL"),
+        "LF": limb_view(b.get("LF"), "LF"),
+        "RF": limb_view(b.get("RF"), "RF"),
     }
 
 
@@ -92,7 +92,7 @@ def bundle_summary_str(b, frame_index=None):
 def preview_lines_for_save(frames: Dict[int, FrameBundle],
                            total_frames: int,
                            changed_only: bool = True,
-                           limbs_order = ("LH","LL","RH","RL")) -> list[str]:
+                           limbs_order = ("LH","LF","RH","RF")) -> list[str]:
     """
     Build human-readable preview lines for frames that are about to be saved.
     Format per limb present: 'frame=23 | LH: On ["17L"] | RH: Off [] ...'
@@ -152,7 +152,7 @@ def preview_lines_for_save(frames: Dict[int, FrameBundle],
 
 
 class LimbView:
-    """Read/write view onto a single limb ('RH'/'LH'/'RL'/'LL') across the owning
+    """Read/write view onto a single limb ('RH'/'LH'/'RF'/'LF') across the owning
     Video's live `frames` dict. Reads never mutate; writes create the bundle on demand.
     `frames` is resolved lazily from the owner, so reassigning `video.frames` needs no rebind."""
     def __init__(self, video, limb: str):

@@ -121,8 +121,7 @@ def select_radio(root, text):
     Options are radiobuttons or segments of a SegmentedControl (the restyled
     mode picker, channel selector and appearance toggle).
     """
-    historical = {"Right Hand": "RH", "Left Hand": "LH", "Right Leg": "RL", "Left Leg": "LL",
-                  "Right Foot": "RL", "Left Foot": "LL"}
+    historical = {"Right Hand": "RH", "Left Hand": "LH", "Right Foot": "RF", "Left Foot": "LF"}
     for widget in walk(root):
         if SegmentedControl is not None and isinstance(widget, SegmentedControl):
             for value, label in zip(widget.values, widget._labels):

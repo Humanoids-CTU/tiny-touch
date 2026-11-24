@@ -7,7 +7,7 @@ from domain.templates import get_template
 from domain.zone_display import ZoneDisplaySettings
 
 SCHEMA_VERSION = 2
-CHANNEL_KEYS = ("RH", "LH", "RL", "LL")
+CHANNEL_KEYS = ("RH", "LH", "RF", "LF")
 PARAMETER_KEYS = ("Par1", "Par2", "Par3")
 PORTABLE_CHANNELS = dict(zip(("Channel1", "Channel2", "Channel3", "Channel4"), CHANNEL_KEYS))
 
@@ -25,7 +25,7 @@ def default_channel_zones(template, zone_layout="numbered"):
 
 def _channel_zones(value):
     if not isinstance(value, Mapping) or set(value) != set(CHANNEL_KEYS):
-        raise ValueError("Channel zones must contain exactly RH, LH, RL, LL")
+        raise ValueError("Channel zones must contain exactly RH, LH, RF, LF")
     result, claimed = {}, set()
     for key in CHANNEL_KEYS:
         zones = value[key]

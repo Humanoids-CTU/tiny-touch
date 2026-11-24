@@ -1,11 +1,11 @@
-"""Export-schema validation and legacy-format tolerance for Analysis.
+"""Export-schema validation and format tolerance for Analysis.
 
 Before the split, `_load_limb_rows` used `rec.get(f"{limb}_Onset", "")`, so ANY
 CSV with a `Frame` column "parsed" successfully and produced a complete
 dashboard of zeros with no warning whatsoever — an easy way to publish numbers
 for a file that never contained the limb data. Validation is now strict and up
-front, and these tests pin both the strictness and the two legacy shapes that
-must keep working (retired `Look` column, 6-line preamble).
+front, and these tests pin the strictness, the tolerance of extra columns
+(retired `Look` column), and the rejection of unversioned exports.
 """
 
 import json
@@ -14,7 +14,7 @@ import logging
 import pandas as pd
 import pytest
 
-from adapters.export_reader import LEGACY_PREAMBLE_LINES, ExportReadError, read_export_df
+from adapters.export_reader import ExportReadError, read_export_df
 from adapters.export_writer import export_from_unified
 from domain.model import LIMBS, empty_bundle
 from domain.touch_stats import (
@@ -97,21 +97,22 @@ def test_frame_only_csv_is_rejected_naming_every_missing_column():
 
 def test_single_missing_limb_column_is_named(tmp_path):
     path = write_real_export(tmp_path / "vid_export.csv", touch_frames())
-    df = read_export_df(str(path)).drop(columns=["LL_Zones"])
+    df = read_export_df(str(path)).drop(columns=["LF_Zones"])
 
     with pytest.raises(ExportSchemaError) as caught:
         parse_export(df)
 
     # The message names the missing column(s) first, then lists what WAS found.
     missing_part = str(caught.value).split("(found:")[0]
-    assert "LL_Zones" in missing_part
+    assert "LF_Zones" in missing_part
     assert "RH_Zones" not in missing_part  # only the missing ones are blamed
 
 
 def test_service_aborts_on_missing_columns_without_writing_anything(tmp_path, caplog):
     paths = ProjectPaths(video_name="vid", base_dir=str(tmp_path / "data"))
     (tmp_path / "data" / "vid" / "export").mkdir(parents=True)
-    pd.DataFrame({"Frame": [0, 1]}).to_csv(paths.export_csv, index=False)
+    write_real_export(paths.export_csv, touch_frames())
+    pd.read_csv(paths.export_csv).drop(columns=["Time_ms"]).to_csv(paths.export_csv, index=False)
     out_dir = tmp_path / "plots"
 
     with pytest.raises(ExportSchemaError):
@@ -150,32 +151,51 @@ def test_legacy_look_column_is_tolerated_and_ignored(tmp_path):
     assert episode.zones_start == ("A",) and episode.zones_end == ("B",)
 
 
-def test_legacy_six_line_preamble_is_parsed(tmp_path):
+def _write_unversioned_export(path):
+    """A pre-format-2 export: anatomical per-limb columns, no Channel columns."""
+    columns = {"Frame": [0], "Time_ms": [0.0]}
+    for limb in ("LH", "RH"):
+        columns.update({f"{limb}_X": [""], f"{limb}_Y": [""],
+                        f"{limb}_Onset": [""], f"{limb}_Zones": ["[]"]})
+    pd.DataFrame(columns).to_csv(path, index=False)
+    return path
+
+
+def test_unversioned_export_is_rejected_with_one_clear_error(tmp_path):
+    """Unversioned exports are no longer analysed: one ExportReadError, never a
+    silently empty or misattributed result."""
+    path = _write_unversioned_export(tmp_path / "unversioned.csv")
+
+    with pytest.raises(ExportReadError, match="no longer be analysed"):
+        read_export_df(str(path))
+
+
+def test_old_six_line_preamble_export_is_rejected(tmp_path):
     current = write_real_export(tmp_path / "current.csv", touch_frames())
     legacy = tmp_path / "legacy.csv"
-    preamble = "\n".join(
-        [
-            "Program Version: 7.8",
-            "Video Name: vid",
-            "Labeling Mode: Normal",
-            "Frame Rate: 25.0",
-            "Zones Covered With Clothes: []",
-            "",
-        ]
-    )
+    preamble = "\n".join(f"Program Version: 7.8 line {i}" for i in range(6))
     legacy.write_text(preamble + "\n" + current.read_text(encoding="utf-8"), encoding="utf-8")
 
-    assert LEGACY_PREAMBLE_LINES == 6
-    df = read_export_df(str(legacy))
+    with pytest.raises(ExportReadError):
+        read_export_df(str(legacy))
 
-    assert validate_export_columns(df) == []
-    assert len(parse_export(df).episodes["RH"]) == 1
+
+def test_service_rejects_unversioned_export_without_writing_anything(tmp_path):
+    paths = ProjectPaths(video_name="vid", base_dir=str(tmp_path / "data"))
+    (tmp_path / "data" / "vid" / "export").mkdir(parents=True)
+    _write_unversioned_export(paths.export_csv)
+    out_dir = tmp_path / "plots"
+
+    with pytest.raises(ExportReadError, match="no longer be analysed"):
+        analysis_service.run_analysis(paths, frame_rate=25.0, output_folder=str(out_dir))
+    assert not out_dir.exists()
 
 
 def test_header_only_export_is_handled(tmp_path):
     """An export with no rows analyses to an all-zero dashboard, legitimately."""
+    real = write_real_export(tmp_path / "real_export.csv", total_frames=0)
     path = tmp_path / "empty_export.csv"
-    path.write_text(",".join(required_columns() + optional_columns()) + "\n", encoding="utf-8")
+    path.write_text(real.read_text(encoding="utf-8").splitlines()[0] + "\n", encoding="utf-8")
 
     df = read_export_df(str(path))
     data = parse_export(df)

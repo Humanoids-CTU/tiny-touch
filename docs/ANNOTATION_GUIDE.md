@@ -23,8 +23,8 @@ the files it produces, read [DATA_FORMAT.md](DATA_FORMAT.md) instead.
 
 ## 1. What you are coding
 
-For each of the infant's four limbs — **RH** (right hand), **LH** (left hand), **RL**
-(right foot), **LL** (left foot) — you mark every episode in which that limb is in contact
+For each of the infant's four limbs — **RH** (right hand), **LH** (left hand), **RF**
+(right foot), **LF** (left foot) — you mark every episode in which that limb is in contact
 with the infant's own body, and where on the body the contact happens.
 
 An episode is two events:

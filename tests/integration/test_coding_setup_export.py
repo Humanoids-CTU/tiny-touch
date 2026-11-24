@@ -16,7 +16,7 @@ def test_prepared_video_exports_its_snapshot_after_shared_config_changes(tmp_pat
     store = CodingConfigStore(tmp_path / "config")
     original = replace(
         default_coding_setup("general"), name="Shared looking study",
-        channel_labels={"RH": "Observer A", "LH": "Observer B", "RL": "Target A", "LL": "Target B"},
+        channel_labels={"RH": "Observer A", "LH": "Observer B", "RF": "Target A", "LF": "Target B"},
         zone_labels={"1": "Left target", "2": "Right target"},
         parameter_labels={"Par1": "Looking", "Par2": "Vocalizing", "Par3": "Moving"},
     )
@@ -60,7 +60,7 @@ def test_prepared_video_exports_its_snapshot_after_shared_config_changes(tmp_pat
     assert row["Time_ms"] == "8040.000"
     assert json.loads(row["Channel1_XY"]) == [[120, 130], [9, 0]]
     assert json.loads(row["Channel1_Zones"]) == [["1", "2"], ["OUTSIDE"]]
-    assert not any(key.startswith(("RH_", "LH_", "RL_", "LL_")) for key in row)
+    assert not any(key.startswith(("RH_", "LH_", "RF_", "LF_")) for key in row)
     with open(paths.export_metadata, encoding="utf-8") as stream:
         metadata = json.load(stream)
     assert type(original).from_dict(metadata["Coding Setup"]) == original

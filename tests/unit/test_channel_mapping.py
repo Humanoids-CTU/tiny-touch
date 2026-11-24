@@ -9,7 +9,7 @@ from domain.coding_setup import CodingSetup, default_coding_setup
 
 def test_mapping_is_immutable_and_portable(tmp_path):
     setup = replace(default_coding_setup('general'), channel_zones={
-        'RH': ['1', '9'], 'LH': [], 'RL': ['11'], 'LL': ['12']})
+        'RH': ['1', '9'], 'LH': [], 'RF': ['11'], 'LF': ['12']})
     assert setup.channel_zones['RH'] == ('1', '9')
     with pytest.raises(TypeError):
         setup.channel_zones['RH'] = ('2',)
@@ -44,10 +44,10 @@ def test_template_channel_mapping(template, expected):
 
 
 @pytest.mark.parametrize('zones', [
-    {'RH': ['1'], 'LH': ['1'], 'RL': [], 'LL': []},
-    {'RH': ['1', '1'], 'LH': [], 'RL': [], 'LL': []},
-    {'RH': '1', 'LH': [], 'RL': [], 'LL': []},
-    {'RH': [], 'LH': [], 'RL': []},
+    {'RH': ['1'], 'LH': ['1'], 'RF': [], 'LF': []},
+    {'RH': ['1', '1'], 'LH': [], 'RF': [], 'LF': []},
+    {'RH': '1', 'LH': [], 'RF': [], 'LF': []},
+    {'RH': [], 'LH': [], 'RF': []},
 ])
 def test_invalid_mapping_is_rejected(zones):
     with pytest.raises(ValueError):
@@ -57,7 +57,7 @@ def test_invalid_mapping_is_rejected(zones):
 @pytest.mark.parametrize('zone', ['unknown', 'NN', 'LINE', 'Channel1'])
 def test_adapter_rejects_non_target_mapping(zone):
     setup = replace(default_coding_setup('general'), channel_zones={
-        'RH': [zone], 'LH': [], 'RL': [], 'LL': []})
+        'RH': [zone], 'LH': [], 'RF': [], 'LF': []})
     with pytest.raises(ValueError):
         validate_coding_setup(setup)
 

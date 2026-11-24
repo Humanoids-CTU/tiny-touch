@@ -116,8 +116,8 @@ def validate_export_columns(df: pd.DataFrame, limbs: Sequence[str] = LIMBS) -> L
     """Raise `ExportSchemaError` naming every missing required column.
 
     Returns the list of MISSING OPTIONAL columns so the caller can warn about
-    a degraded trajectory plot. Extra columns are always fine — legacy exports
-    still carry the retired per-limb `Look` column and it is simply ignored.
+    a degraded trajectory plot. Extra columns are always fine and are
+    simply ignored.
     """
     present = set(df.columns)
     missing = [c for c in required_columns(limbs) if c not in present]

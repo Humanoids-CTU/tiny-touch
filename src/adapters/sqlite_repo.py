@@ -92,9 +92,9 @@ from adapters.coding_configs import validate_coding_setup
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
-LIMB_KEYS = ("LH", "RH", "LL", "RL")
+LIMB_KEYS = ("LH", "RH", "LF", "RF")
 
 # Canonical values, used for observability only — never as a CHECK constraint.
 # A hand-edited export or a pre-M1 blob can carry anything, and a repository
@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS frame_params (
 
 CREATE TABLE IF NOT EXISTS limb_records (
     frame            INTEGER NOT NULL REFERENCES frames(frame) ON DELETE CASCADE,
-    limb             TEXT    NOT NULL CHECK (limb IN ('LH','RH','LL','RL')),
+    limb             TEXT    NOT NULL CHECK (limb IN ('LH','RH','LF','RF')),
     onset            TEXT,           -- NULL / '' / 'ON' / 'OFF'
     has_limb_params  INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (frame, limb)
@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS limb_records (
 -- click; zones NULL = click without a bucket; zones '[]' = an empty bucket.
 CREATE TABLE IF NOT EXISTS clicks (
     frame       INTEGER NOT NULL REFERENCES frames(frame) ON DELETE CASCADE,
-    limb        TEXT    NOT NULL CHECK (limb IN ('LH','RH','LL','RL')),
+    limb        TEXT    NOT NULL CHECK (limb IN ('LH','RH','LF','RF')),
     click_index INTEGER NOT NULL,
     x           INTEGER,
     y           INTEGER,
@@ -146,7 +146,7 @@ CREATE TABLE IF NOT EXISTS clicks (
 
 CREATE TABLE IF NOT EXISTS limb_params (
     frame INTEGER NOT NULL REFERENCES frames(frame) ON DELETE CASCADE,
-    limb  TEXT    NOT NULL CHECK (limb IN ('LH','RH','LL','RL')),
+    limb  TEXT    NOT NULL CHECK (limb IN ('LH','RH','LF','RF')),
     key   TEXT    NOT NULL,
     state TEXT,                      -- NULL = key present, value None
     PRIMARY KEY (frame, limb, key)
@@ -456,7 +456,7 @@ class SqliteRepository:
         report_every = max(5000, total // 20) if total else 5000
         for index, row in enumerate(rows):
             frames[row["frame"]] = {
-                "LH": None, "RH": None, "LL": None, "RL": None,  # filled below
+                "LH": None, "RH": None, "LF": None, "RF": None,  # filled below
                 "Note": row["note"],
                 "Params": {},
             }

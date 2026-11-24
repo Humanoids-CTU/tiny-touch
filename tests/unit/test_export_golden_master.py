@@ -49,7 +49,7 @@ def build_golden_frames():
     b = empty_bundle()
     b["LH"] = {"X": [10, 20], "Y": [30, 40], "Onset": "ON", "Bodypart": "LH",
                "Zones": [["L"], ["I"]], "Touch": None}
-    b["RL"] = {"X": [5], "Y": [6], "Onset": "OFF", "Bodypart": "RL",
+    b["RF"] = {"X": [5], "Y": [6], "Onset": "OFF", "Bodypart": "RF",
                "Zones": [["17L"]], "Touch": None}
     frames[1] = b
 
@@ -64,7 +64,7 @@ def build_golden_frames():
     # (old toggle_limb_parameter artifact) must be normalized to an empty cell.
     b = empty_bundle()
     b["Params"] = {"Par1": "ON", "Par2": None, "Par3": "OFF"}
-    b["LL"]["LimbParams"] = {"Par1": "None", "Par2": "ON"}
+    b["LF"]["LimbParams"] = {"Par1": "None", "Par2": "ON"}
     b["RH"]["LimbParams"] = {"Par3": "OFF"}
     frames[4] = b
 
@@ -72,7 +72,7 @@ def build_golden_frames():
     # plus a click with a 2-element zone bucket and an EMPTY Onset.
     b = empty_bundle()
     b["Note"] = "chlapec ěšč, poznámka"
-    b["RL"] = {"X": [7], "Y": [8], "Onset": "", "Bodypart": "RL",
+    b["RF"] = {"X": [7], "Y": [8], "Onset": "", "Bodypart": "RF",
                "Zones": [["L", "I"]], "Touch": None}
     frames[5] = b
 
@@ -128,7 +128,7 @@ def test_export_zone_cells_keep_json_dumps_quoting(tmp_path):
 
     # Two single-zone buckets (frame 1, LH):
     assert b'"[[""L""], [""I""]]"' in raw
-    # One 2-element bucket — space after the comma INSIDE the bucket too (frame 5, RL):
+    # One 2-element bucket — space after the comma INSIDE the bucket too (frame 5, RF):
     assert b'"[[""L"", ""I""]]"' in raw
     # Empty zones are an UNQUOTED two-byte [] cell:
     assert b",[]," in raw

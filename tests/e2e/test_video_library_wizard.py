@@ -169,7 +169,7 @@ def test_general_zone_names_do_not_change_channel_names(app):
     click(wizard.win, "Next")
     assert wizard.variables["RH"].get() == "Channel 1"
     assert wizard.variables["LH"].get() == "Channel 2"
-    assert wizard.variables["RL"].get() == "Channel 3"
+    assert wizard.variables["RF"].get() == "Channel 3"
     wizard.variables["LH"].set("Favourite toy")  # typed by hand: must survive
     click(wizard.win, "Back")
     wizard.variables["9"].set("Father")

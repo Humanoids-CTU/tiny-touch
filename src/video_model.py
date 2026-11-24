@@ -31,16 +31,16 @@ class Video:
         # pose_export_service.run_pose_export); None = unknown, so the next save
         # rewrites the CSV. A new Video per load resets it.
         self.published_export_csv = None
-        # Expose limb views so existing code (dataRH/LH/RL/LL) keeps working:
+        # Expose limb views so existing code (dataRH/LH/RF/LF) keeps working:
         self.dataRH = LimbView(self, "RH")
         self.dataLH = LimbView(self, "LH")
-        self.dataRL = LimbView(self, "RL")
-        self.dataLL = LimbView(self, "LL")
+        self.dataRF = LimbView(self, "RF")
+        self.dataLF = LimbView(self, "LF")
 
         self.is_touchRH = False
         self.is_touchLH = False
-        self.is_touchRL = False
-        self.is_touchLL = False
+        self.is_touchRF = False
+        self.is_touchLF = False
         self.touch_to_next_zone = [False for _ in range(self.number_zones)]
         self.last_green = [(10, 10),(5, 5),(50, 50)]
         self.play = False
