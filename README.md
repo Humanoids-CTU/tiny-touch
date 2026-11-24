@@ -6,6 +6,10 @@ events and observations.
 
 ![TinyTouch main window](assets/readme_images/showcase.png)
 
+The main window in Touch mode (9.4.0): the video with its two timelines on the
+left; the body diagram, Channel Selector, Parameters and Notes on the right. The
+green ring on the diagram shows where the selected channel's current touch
+started; the timelines shade that touch green from its start to its end.
 
 
 ## New in 9.4.0
@@ -89,7 +93,8 @@ chmod +x TinyTouch-v9.4.0
    A red dot marks the end.
 6. Use the global or channel-specific parameter buttons to label additional
    observations as **ON** or **OFF**.
-7. Add text notes to individual frames as needed.
+7. Add text notes to individual frames as needed: type in **Notes** and click
+   **Save Note**.
 
 | Control | Action |
 | --- | --- |
@@ -129,6 +134,8 @@ Appearance, playback preferences, and annotations remain editable.
 | Dot size | Changes the size of the marks on the diagram. |
 | Fast-jump seconds | Sets how far **<< / >>** and **Shift + arrow** jump. |
 | Hold arrows to play | Steps once on key-down, starts playback after a 150 ms hold, and stops on release. Targets the video's frame rate without skipping frames; slower rendering slows playback. Disable for keyboard-repeat stepping. **< / >** always step one frame. |
+| Highlight the zone under the pointer | Tints the zone under the mouse on the diagram and shows its name, so you see which zone a click will record. Visual only. |
+| Show zone names on diagrams | Draws each zone's name on the body diagram. |
 | Coding setup | Shows the prepared project's fixed diagram and naming configuration. Set these names in the new-video wizard. |
 
 Newly generated video frames fit within **1920 × 1080**, preserving aspect ratio
