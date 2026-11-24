@@ -6,7 +6,7 @@ events and observations.
 
 ![TinyTouch main window](assets/readme_images/showcase.png)
 
-The main window in Touch mode (9.4.0): the video with its two timelines on the
+The main window in Touch mode: the video with its two timelines on the
 left; the body diagram, Channel Selector, Parameters and Notes on the right. The
 green ring on the diagram shows where the selected channel's current touch
 started; the timelines shade that touch green from its start to its end.
