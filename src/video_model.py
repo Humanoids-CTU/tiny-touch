@@ -27,7 +27,8 @@ class Video:
         self.dots = []
         self.frames: Dict[int, FrameBundle] = {}
         # Stamp of the export CSV the last successful save of THIS session
-        # published (save_service.run_export); None = unknown, so the next save
+        # published (save_service.run_export, or for a Pose project
+        # pose_export_service.run_pose_export); None = unknown, so the next save
         # rewrites the CSV. A new Video per load resets it.
         self.published_export_csv = None
         # Expose limb views so existing code (dataRH/LH/RL/LL) keeps working:

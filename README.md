@@ -12,7 +12,7 @@ green ring on the diagram shows where the selected channel's current touch
 started; the timelines shade that touch green from its start to its end.
 
 
-## New in 9.4.1
+## New in 9.5.0
 
 - **Close without saving:** closing the app now offers **Save and close**,
   **Don't save** or **Cancel**. Don't save asks once more before discarding the
@@ -21,6 +21,13 @@ started; the timelines shade that touch green from its start to its end.
   without an onset as well as onsets without an offset, and can jump to each one.
 - **Pose quality:** the quality rating carries forward as you step or play, like
   body and head size, and appears as a red-to-green band on the Pose timeline.
+- **Pose export:** every Pose save now also writes a CSV with one row per frame
+  (zone ON/OFF events, body and head size, quality, parameters and notes) and a
+  metadata JSON, described in [POSE_DATA_FORMAT.md](docs/POSE_DATA_FORMAT.md).
+
+**Linux:** Linux is not supported for now. Versions 9.4.0 and newer are Windows
+only; the last Linux build is the
+[9.3.0 release](https://github.com/Humanoids-CTU/tiny-touch/releases/tag/v9.3.0).
 
 ## New in 9.4.0
 
@@ -39,10 +46,6 @@ started; the timelines shade that touch green from its start to its end.
 - **New look:** a baby-hand app icon, a loading screen at startup, no console
   window, and only one TinyTouch per folder (opening it again brings the running
   window to the front).
-
-**Linux:** the latest Linux build is the
-[9.3.0 release](https://github.com/Humanoids-CTU/tiny-touch/releases/tag/v9.3.0).
-Newer versions are Windows only.
 
 ## New in 9.3.0
 
@@ -181,6 +184,17 @@ Each channel's `XY` cell contains JSON coordinate pairs and its `Zones` cell
 contains matching zone groups, preserving multiple points and multiple zones
 per point. Standard CSV quoting is expected when viewing the raw file. See
 [DATA_FORMAT.md](docs/DATA_FORMAT.md) before updating an analysis script.
+
+A 3D Pose project saves its own pair of files in the same folder:
+
+```text
+data/infant_042/export/infant_042_pose_metadata.json
+data/infant_042/export/infant_042_pose_export.csv
+```
+The Pose CSV also has one row for each video frame: the zones switched ON and
+OFF, body and head size, quality, global parameters and notes. See
+[POSE_DATA_FORMAT.md](docs/POSE_DATA_FORMAT.md). Analysis is not available for
+Pose projects yet.
 
 For a quick overview, click **Analysis** to open a report in your browser with
 touch counts, durations and charts.

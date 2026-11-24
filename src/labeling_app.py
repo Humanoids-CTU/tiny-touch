@@ -35,6 +35,7 @@ from domain.project import ProjectPaths
 from domain.touch import NO_ZONE, find_last_open_onset, find_open_touches, zones_at
 from domain.templates import DEFAULT_TEMPLATE, get_template
 from domain.pose import ZoneEvent, Navigation
+from domain.pose_export import special_zone_ids
 from gui.pose_panel import PosePanel
 from domain.pose_timeline import PoseTimelineIndex
 from gui.pose_timeline import (PoseTimelineView, POSE_DETAIL_HEIGHT, POSE_OVERVIEW_HEIGHT,
@@ -71,7 +72,8 @@ from gui.diagram_resize import clamp_scale
 from gui.video_overlay import BADGE_INSET
 from log_setup import open_logs_folder
 from perf_utils import PerfLogger
-from service_layer import analysis_service, annotation_service, project_service, save_service
+from service_layer import (analysis_service, annotation_service, pose_export_service,
+                           project_service, save_service)
 from service_layer.project_service import LabelingTimer
 from service_layer.save_service import SaveOutcome
 from service_layer.frame_preparation import FramePreparationJob
@@ -134,6 +136,13 @@ EXPORT_STALE_MESSAGE = (
     "Close the CSV in other programs (for example Excel) and save again. "
     "Details are in the log."
 )
+# Pose publishes a CSV and metadata only (no diagram).
+POSE_EXPORT_STALE_MESSAGE = (
+    "Your annotations are saved, but the Pose export files (CSV and metadata) "
+    "could not be updated and are out of date.\n\n"
+    "Close the CSV in other programs (for example Excel) and save again. "
+    "Details are in the log."
+)
 NOT_SAVED_MESSAGE = (
     "Your latest changes were NOT saved to disk. Details are in the log.\n\n"
     "Try Save again before closing the video."
@@ -146,10 +155,16 @@ UNLOAD_SAVE_FAILED_MESSAGE = (
 )
 
 
+def _export_stale_message(app):
+    """The out-of-date export text for the open project's annotation type."""
+    return (POSE_EXPORT_STALE_MESSAGE if getattr(app, "annotation_type", "Touch") == "Pose"
+            else EXPORT_STALE_MESSAGE)
+
+
 def _report_save_outcome(parent, outcome):
-    """Tell the user about a Touch save that did not fully reach disk."""
+    """Tell the user about a save that did not fully reach disk."""
     if outcome is SaveOutcome.EXPORT_STALE:
-        messagebox.showwarning("Export not updated", EXPORT_STALE_MESSAGE, parent=parent)
+        messagebox.showwarning("Export not updated", _export_stale_message(parent), parent=parent)
     elif outcome is SaveOutcome.NOT_SAVED:
         messagebox.showerror("Save failed", NOT_SAVED_MESSAGE, parent=parent)
 
@@ -2373,7 +2388,7 @@ class LabelingApp(tk.Tk):
 
     # === Save / Export =========================================================
     def _save_pose_workspace(self):
-        """Save Pose working state only; CSV and Analysis await their own format."""
+        """Save the Pose working state (the database only; `save_data` exports next)."""
         session = self.pose_session
         dialog = self.__dict__.get("_special_zones_app")
         if dialog is not None and dialog.top_level.winfo_exists():
@@ -2381,6 +2396,10 @@ class LabelingApp(tk.Tk):
             session.special_zones = special_zone_rows(dialog.dots, dialog.diagram_scale, self._zone_masks)
             session.special_note = dialog.note()
             session.special_scale = dialog.diagram_scale
+        # The save below clears the dirty trackers, so note here that the
+        # published CSV no longer matches; only a successful export restores it.
+        if pose_export_service.has_unexported_changes(session.labels, self.video.frames):
+            self.video.published_export_csv = None
         session.save_workspace(
             self.video.frames, last_frame=self.video.current_frame,
             total_frames=self.video.total_frames,
@@ -2390,12 +2409,55 @@ class LabelingApp(tk.Tk):
         )
         return True
 
+    def _publish_pose_export(self) -> SaveOutcome:
+        """Publish the Pose CSV and metadata after a successful database save.
+
+        The CSV is written on a worker thread from detached copies; the SQLite
+        connection stays on this thread. A save with nothing edited since this
+        session's last export rewrites only the small metadata file, inline.
+        Never raises: a failure is `EXPORT_STALE`, the labels are in the DB.
+        """
+        video = self.video
+        # Only a successful export below may vouch for the published CSV again.
+        published_csv = getattr(video, "published_export_csv", None)
+        video.published_export_csv = None
+        started = time.perf_counter()
+        try:
+            session = self.pose_session
+            paths = ProjectPaths(self.video_name, annotation_type="Pose")
+            metadata = pose_export_service.PoseExportMetadata(
+                program_version=video.program_version,
+                video_name=self.video_name,
+                labeling_mode=self.labeling_mode,
+                coding_setup=getattr(self, "coding_setup", None) or self.state_repo.load_coding_setup(),
+                special_zones=tuple(special_zone_ids(session.special_zones)),
+                special_zones_note=session.special_note,
+                labeling_time_seconds=self._current_video_time_s(),
+            )
+            frame_rate, total_frames = self.frame_rate, video.total_frames
+            if pose_export_service.csv_can_be_reused(paths, published_csv):
+                stamp = pose_export_service.run_pose_export(
+                    paths, frame_rate, total_frames, metadata, None)
+            else:
+                content = pose_export_service.capture_content(session.labels, video.frames)
+                stamp = self._run_export_with_progress(
+                    lambda: pose_export_service.run_pose_export(
+                        paths, frame_rate, total_frames, metadata, content))
+        except Exception:
+            logger.exception("Pose annotations saved to the state database, but the export was NOT updated")
+            return SaveOutcome.EXPORT_STALE
+        video.published_export_csv = stamp
+        logger.info("Pose export published for %s in %.2fs", self.video_name,
+                    time.perf_counter() - started)
+        return SaveOutcome.SAVED
+
     def save_from_button(self):
         """The Save button: save, then report anything that did not reach disk.
-        Pose reports its own failure inside `save_data`."""
+        Pose reports a failed database save inside `save_data`."""
         outcome = self.save_data()
-        if getattr(self, "annotation_type", "Touch") != "Pose":
-            _report_save_outcome(self, outcome)
+        if getattr(self, "annotation_type", "Touch") == "Pose" and outcome is SaveOutcome.NOT_SAVED:
+            return
+        _report_save_outcome(self, outcome)
 
     def save_data(self) -> SaveOutcome:
         """Save the open project and return what reached disk.
@@ -2403,7 +2465,9 @@ class LabelingApp(tk.Tk):
         Touch never raises and shows no dialog here: each caller decides how
         to tell the user (`save_from_button`, `on_close`, `analysis`, ...).
         The state DB is written first and is the source of truth, so a failed
-        export alone is `EXPORT_STALE`, not a lost save.
+        export alone is `EXPORT_STALE`, not a lost save. Pose follows the same
+        order (`_save_pose_workspace`, then `_publish_pose_export`) but shows
+        its own error when the database save fails.
         """
         if not self.video or not self.video.frames_dir:
             logger.info("save skipped: no video loaded")
@@ -2418,8 +2482,10 @@ class LabelingApp(tk.Tk):
                 logger.exception("Pose workspace save failed; session retained for retry")
                 messagebox.showerror("Save failed", f"The Pose project remains open for retry.\n{exc}", parent=self)
                 return SaveOutcome.NOT_SAVED
+            if not saved:
+                return SaveOutcome.NOT_SAVED
             logger.info("Pose workspace saved for %s", self.video_name)
-            return SaveOutcome.SAVED if saved else SaveOutcome.NOT_SAVED
+            return self._publish_pose_export()
         started = time.perf_counter()
         video = self.video
         dirty_count = count_unsaved_frames(video.frames)
@@ -2796,7 +2862,7 @@ class LabelingApp(tk.Tk):
             return False
         if outcome is SaveOutcome.EXPORT_STALE and not messagebox.askyesno(
             "Export not updated",
-            f"{EXPORT_STALE_MESSAGE}\n\nOpen the other video anyway?",
+            f"{_export_stale_message(self)}\n\nOpen the other video anyway?",
             parent=self,
         ):
             logger.info("unload cancelled: export out of date; keeping current video open")
@@ -3249,8 +3315,11 @@ class LabelingApp(tk.Tk):
             session.special_note = note
             session.special_scale = scale
             try:
-                if self.save_data() is not SaveOutcome.SAVED:
+                outcome = self.save_data()
+                if outcome is SaveOutcome.NOT_SAVED:
                     return False
+                # The Special Zones are in the database; only the export is behind.
+                _report_save_outcome(self, outcome)
             except Exception as exc:
                 logger.exception("Pose Special Zones save failed")
                 messagebox.showerror("Save failed", f"Special Zones remain open for retry.\n{exc}", parent=self)
@@ -3320,13 +3389,13 @@ class LabelingApp(tk.Tk):
             except Exception:
                 logger.exception("final save failed while closing")
                 outcome = SaveOutcome.NOT_SAVED
-            if outcome is not SaveOutcome.SAVED and getattr(self, "annotation_type", "Touch") == "Pose":
+            if outcome is SaveOutcome.NOT_SAVED and getattr(self, "annotation_type", "Touch") == "Pose":
                 self._closing = False
                 messagebox.showerror("Save failed", "The Pose project remains open. Retry Save before closing.", parent=self)
                 return
             if outcome is SaveOutcome.EXPORT_STALE and not messagebox.askyesno(
                 "Export not updated",
-                f"{EXPORT_STALE_MESSAGE}\n\nClose anyway? The export files stay out of date "
+                f"{_export_stale_message(self)}\n\nClose anyway? The export files stay out of date "
                 "until the next save of this video.",
             ):
                 self._closing = False

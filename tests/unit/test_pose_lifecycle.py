@@ -31,7 +31,9 @@ def test_pose_save_routes_only_to_workspace_and_reports_retry(monkeypatch):
     errors = []
     app = SimpleNamespace(annotation_type="Pose", video_name="pose",
                           video=SimpleNamespace(frames_dir="frames"), state_repo=object(),
-                          _save_pose_workspace=lambda: True)
+                          _save_pose_workspace=lambda: True,
+                          # The export step has its own tests (test_pose_export_save.py).
+                          _publish_pose_export=lambda: SaveOutcome.SAVED)
     assert LabelingApp.save_data(app) is SaveOutcome.SAVED
     def fail():
         raise OSError("disk full")

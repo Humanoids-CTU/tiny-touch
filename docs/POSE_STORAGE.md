@@ -2,7 +2,9 @@
 
 This is internal Pose label storage, separate from the frozen Touch export
 contract in `DATA_FORMAT.md`. Pose setup, controls, timelines and lifecycle are
-wired into the application. Pose CSV/export and Analysis are explicitly deferred.
+wired into the application. Every Pose save also publishes the Pose export
+(see "Export after each save" below and `POSE_DATA_FORMAT.md`). Pose Analysis is
+explicitly deferred.
 
 `ProjectPaths.pose_state_db` resolves to
 `data/<video>/state/<video>_pose.db`, using the existing project/state directories.
@@ -89,7 +91,48 @@ Measured with body+head carried on 344,033 frames: an unchanged save and a save
 after seven edits each take about 5-10 ms (previously 10-14 s). The full-replace
 fallback still costs several seconds at that size.
 
+## Export after each save
+
+The database stays the source of truth; the export is derived from it and
+never read back. After the workspace transaction commits,
+`LabelingApp._publish_pose_export` publishes
+`export/<video>_pose_export.csv` and `export/<video>_pose_metadata.json`
+(`ProjectPaths.pose_export_csv` / `pose_export_metadata`; format in
+`POSE_DATA_FORMAT.md`). The schema and stored rows are unchanged.
+
+- Layers: cell and metadata rules in `domain.pose_export`, file writing in
+  `adapters.pose_export_writer`, staging and publishing in
+  `service_layer.pose_export_service`.
+- Threads: the CSV is written on the save worker thread from
+  `PoseLabels.tables()` (shallow copies of the three label tables, about 20 ms
+  for 300,000 dense frames; `snapshot()` sorts and validates and takes about
+  1.6 s there) and a deep copy of the shared frames. The SQLite connection
+  never leaves the Tk thread.
+- Outcome: a failed export returns `SaveOutcome.EXPORT_STALE`. The labels are
+  committed, the previous export pair is left in place, and the user gets the
+  same warning and close / switch-video confirmations as for Touch. A failed
+  database save stays `NOT_SAVED` and publishes nothing. Closing with
+  "Don't save" publishes nothing.
+- CSV skip: the CSV is rewritten unless this session already published it,
+  no label, note or parameter changed since (`PoseLabels.has_pending_changes`
+  and the shared frames' `Changed` flags, read before the database save clears
+  them), and the file still has that export's size and modification time
+  (`Video.published_export_csv`). Any export failure drops the stamp. The
+  metadata is rewritten on every save.
+- A project saved before the export existed has no export files; its next
+  save writes them.
+
+Measured with body, head and quality on 300,000 frames (17 MB CSV): a save
+that rewrites the CSV spends about 1.2-1.4 s in the export, on the worker
+thread; an unchanged save spends about 5 ms (metadata only, on the Tk thread).
+
 ## Bounded acceptance
+
+`tests/unit/test_pose_export.py` pins the export columns, cell encodings, a
+golden CSV fixture and the metadata keys. `tests/unit/test_pose_export_save.py`
+drives the controller's save over a real database and export folder: publishing
+from a worker thread, a blocked CSV or metadata file, the unchanged-save skip,
+a failed database save, and the close paths including "Don't save".
 
 `tests/integration/test_pose_persistence.py` covers S7/J5 label roundtrips,
 quality 0, explicit neutral, independent deletion, sparse gaps, fresh inactive

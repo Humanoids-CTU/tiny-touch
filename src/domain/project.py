@@ -8,7 +8,8 @@ Layout:
 
     data/<video_name>/
     ├── state/      Touch <video_name>.db; independent Pose <video_name>_pose.db
-    ├── export/     publication-ready CSV + metadata JSON
+    ├── export/     publication-ready CSV + metadata JSON (Pose: *_pose_export.csv,
+    │               *_pose_metadata.json)
     ├── frames/     frame0.jpg … frameN.jpg
     └── plots/      Plotly HTML from Analysis
 
@@ -123,3 +124,13 @@ class ProjectPaths:
     @property
     def export_metadata(self) -> str:
         return os.path.join(self.export_dir, f"{self.video_name}_metadata.json")
+
+    # Pose publishes its own pair next to Touch's; the `_pose` infix keeps the
+    # two apart when one video folder holds a Touch and a Pose project.
+    @property
+    def pose_export_csv(self) -> str:
+        return os.path.join(self.export_dir, f"{self.video_name}_pose_export.csv")
+
+    @property
+    def pose_export_metadata(self) -> str:
+        return os.path.join(self.export_dir, f"{self.video_name}_pose_metadata.json")

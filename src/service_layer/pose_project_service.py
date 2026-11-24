@@ -1,4 +1,6 @@
-"""Headless Pose workspace saving and restoration, without Touch export.
+"""Headless Pose workspace saving and restoration (database only).
+
+The Pose export that follows each GUI save lives in `pose_export_service`.
 
 The GUI owns its repository; standalone callers may open a session from paths.
 Close only releases storage, so callers explicitly save before detaching.

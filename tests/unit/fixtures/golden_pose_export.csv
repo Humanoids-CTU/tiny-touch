@@ -1,0 +1,10 @@
+Frame,Time_ms,Zones_On,Zones_Off,Body_Scale,Body_Scale_Source,Head_Scale,Head_Scale_Source,Quality,Parameter_1,Parameter_2,Parameter_3,Note
+0,0.000,,,,,,,,,,,
+1,40.000,"[""A"", ""L"", ""BOX2""]",,1.20,manual,1.00,manual,0.00,,,,
+2,80.000,,,1.20,carried,1.00,carried,0.00,,,,
+3,120.000,,,,,,,,,,,
+4,160.000,"[""C""]","[""B""]",,,,,0.85,ON,,OFF,
+5,200.000,,,0.50,manual,,,,,,,"said ""hi"", then
+rolled over ěšč"
+6,240.000,,"[""QB""]",,,,,,,ON,,
+7,280.000,,,,,1.50,carried,1.00,,,,

@@ -9,6 +9,7 @@ This is the developer-facing document. See also:
 | [README.md](README.md) | Users — install and quick start |
 | [docs/ANNOTATION_GUIDE.md](docs/ANNOTATION_GUIDE.md) | Annotators — the coding manual |
 | [docs/DATA_FORMAT.md](docs/DATA_FORMAT.md) | Data consumers — the frozen export specification |
+| [docs/POSE_DATA_FORMAT.md](docs/POSE_DATA_FORMAT.md) | Data consumers — the Pose export specification |
 
 ## Purpose
 
@@ -52,6 +53,7 @@ tiny-touch/
 │   ├── adapters/                 # I/O edges: files, cv2/ffmpeg, plotly, config.json
 │   │   ├── sqlite_repo.py        # Working-state DB per video (SOURCE OF TRUTH)
 │   │   ├── export_writer.py      # Versioned channel CSV + metadata snapshot (write)
+│   │   ├── pose_export_writer.py # Pose per-frame CSV + metadata (write)
 │   │   ├── export_reader.py      # Export CSV read, incl. legacy 6-line preamble
 │   │   ├── plotting.py           # Every plotly figure / CSV table (ReportFigure factory)
 │   │   ├── report_page.py        # master_<name>.html layout/CSS (inlines the figures)
@@ -64,6 +66,7 @@ tiny-touch/
 │   │   └── atomic_io.py          # Write-temp-then-replace helper
 │   ├── service_layer/            # Use cases: orchestration only
 │   │   ├── save_service.py       # The save Unit of Work
+│   │   ├── pose_export_service.py # Pose export: stage + publish after a Pose save
 │   │   ├── project_service.py    # Video load / project preparation, labeling timer
 │   │   ├── annotation_service.py # Click / parameter mutations on the frames dict
 │   │   └── analysis_service.py   # Analysis: read -> validate -> compute -> write
@@ -151,6 +154,13 @@ never leaves the Tk thread (`SqliteRepository` raises if it does).
 The `Changed` flags are cleared only after `SAVED`, so after any failure the next
 save writes those frames again.
 
+Pose saves return the same outcomes. `EXPORT_STALE` means the Pose database is
+saved and the Pose export pair was not updated; the user sees the same warning
+and confirmations. For `NOT_SAVED`, Pose shows its error inside `save_data` and
+refuses to close until a save succeeds. Pose clears its dirty trackers when the
+database commit succeeds and tracks the export separately through
+`Video.published_export_csv`.
+
 ### In-memory data model
 
 Touch-mode state for a frame is a **`FrameBundle`** (see [src/domain/model.py](src/domain/model.py)):
@@ -218,11 +228,28 @@ Quality carries forward on forward step/hold/play like body/head scale; it has n
 stored provenance, so only frames the current session carried onto are overwritten.
 Edits update affected bins; zone boundary changes also revise later shading.
 Touch and Pose share video playback/navigation, while annotation,
-state and timeline dispatch remain separate. Pose CSV/export and Analysis are
-explicitly deferred; Analysis is disabled for Pose. See
+state and timeline dispatch remain separate. Pose Analysis is explicitly
+deferred and disabled. See
 [Pose working state](docs/POSE_STORAGE.md) and
 [the behavior specification](docs/plans/2026-11-12_3d_pose_behavior.md) for
 automated coverage and outstanding manual GUI/platform acceptance.
+
+Every successful Pose save also publishes the Pose export,
+`export/<video>_pose_export.csv` and `export/<video>_pose_metadata.json`
+([docs/POSE_DATA_FORMAT.md](docs/POSE_DATA_FORMAT.md)): one row per frame with the
+zone ON/OFF boundaries, body/head scale with provenance, quality, global parameters
+and the note, plus the coding setup and Special Zones in the metadata. Unset
+labels are empty cells. `domain.pose_export` holds the cell and metadata rules,
+`adapters.pose_export_writer` writes the files, and
+`service_layer.pose_export_service` stages and publishes them.
+`LabelingApp.save_data` commits the workspace transaction first, then
+`_publish_pose_export` runs the CSV write on the export worker thread from
+`PoseLabels.tables()` (detached shallow copies) and a copy of the shared frames.
+A failed export is `SaveOutcome.EXPORT_STALE` with the Touch messages and
+confirmations; a failed database save keeps Pose's own handling (an error, and
+close is refused). The CSV is skipped when this session published it, nothing
+was edited since and the file is unchanged on disk; then only the metadata is
+rewritten, on the Tk thread. There is no Pose diagram PNG.
 
 ### Background processes
 
@@ -521,6 +548,8 @@ data/<video_name>/
 │   ├── <video>_export.csv            # Flat schema (see below) -- the file analysis reads
 │   ├── <video>_metadata.json         # Program version, FPS, mode, special zones + note, param labels,
 │   │                                 # total labeling time (hours)
+│   ├── <video>_pose_export.csv       # Pose projects: one row per frame (docs/POSE_DATA_FORMAT.md)
+│   ├── <video>_pose_metadata.json    # Pose projects: coding setup, special zones, interval rule
 ├── frames/                           # frame0.jpg ... frameN.jpg (one per video frame)
 └── plots/                            # Plotly HTMLs from "Analysis"
 ```

@@ -171,6 +171,20 @@ class PoseChanges:
                     or self.deleted_events or self.deleted_quality or self.deleted_scales)
 
 
+@dataclass(frozen=True)
+class PoseTables:
+    """Detached copies of the three label tables, for bulk readers (the export).
+
+    Keys are (frame, zone), frame and (frame, kind), as in `PoseLabels`; the
+    values are immutable. Unlike `PoseSnapshot` nothing is sorted or validated
+    again, so taking one costs milliseconds even for dense labels.
+    """
+
+    events: dict
+    quality: dict
+    scales: dict
+
+
 class PoseLabels:
     """Sparse recorded labels. Reads do not create records or infer defaults.
 
@@ -206,6 +220,15 @@ class PoseLabels:
         self._changed_scales.clear()
         self._tracking_token = object()
         return self._tracking_token
+
+    @property
+    def has_pending_changes(self) -> bool:
+        """True when any label was touched since the baseline (or ever, untracked)."""
+        return bool(self._changed_events or self._changed_quality or self._changed_scales)
+
+    def tables(self) -> PoseTables:
+        """Detached label tables; later edits here never reach the copy."""
+        return PoseTables(dict(self._events), dict(self._quality), dict(self._scales))
 
     def pending_changes(self) -> PoseChanges:
         """Edits since the baseline, in key order; cost follows the edit count."""
