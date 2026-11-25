@@ -11,7 +11,7 @@ silently corrupts published datasets even though the schema test stays green.
 The checked-in fixture `fixtures/golden_export_v2.csv` was generated from the
 CURRENT exporter (current behavior IS the contract) and covers every encoding
 case: multi-click cells, multi-zone buckets, empty frame gaps, params-only
-frames, the legacy "None" limb-param string, and a note with a comma + UTF-8.
+frames, cleared (None) params, and a note with a comma + UTF-8.
 
 Newlines are the ONE platform-dependent byte: pandas' `to_csv` writes
 `os.linesep` line terminators (CRLF on Windows, LF elsewhere), so comparisons
@@ -60,11 +60,10 @@ def build_golden_frames():
     frames[2] = b
 
     # Frame 4 — params only, no clicks anywhere.
-    # Global: Par2 is None -> empty cell. Limb: the legacy string "None"
-    # (old toggle_limb_parameter artifact) must be normalized to an empty cell.
+    # Global: Par2 is None -> empty cell. Limb: a cleared Par1 -> empty cell.
     b = empty_bundle()
     b["Params"] = {"Par1": "ON", "Par2": None, "Par3": "OFF"}
-    b["LF"]["LimbParams"] = {"Par1": "None", "Par2": "ON"}
+    b["LF"]["LimbParams"] = {"Par1": None, "Par2": "ON"}
     b["RH"]["LimbParams"] = {"Par3": "OFF"}
     frames[4] = b
 

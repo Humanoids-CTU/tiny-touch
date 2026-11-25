@@ -129,7 +129,7 @@ def test_unknown_other_type_source_cannot_reuse_shared_frames(tmp_path, monkeypa
         validate_source_association(candidate, str(source))
 
 
-def test_pose_empty_workspace_does_not_invoke_touch_legacy_inference(tmp_path):
+def test_pose_empty_workspace_starts_from_the_default_setup(tmp_path):
     paths = ProjectPaths("clip", str(tmp_path), "Pose")
     repo = open_state(paths)
     repo.close()

@@ -282,15 +282,6 @@ class _ProjectSnapshot:
     def get_meta(self, key, default=None):
         return self.meta.get(key, default)
 
-    def load_template(self):
-        return TemplateState(self.get_meta("template"), self.get_meta("template_locked", "0") == "1")
-
-    def load_zone_display(self, template):
-        import json
-        from domain.zone_display import ZoneDisplaySettings
-        raw = self.get_meta(f"zone_display:{template}")
-        return ZoneDisplaySettings(**json.loads(raw)) if raw else ZoneDisplaySettings()
-
     def load_coding_setup(self):
         import json
         from domain.coding_setup import CodingSetup
@@ -305,8 +296,11 @@ class _ProjectSnapshot:
 
 
 def inspect_coding_setup(paths):
-    """Read an existing snapshot without changing any files on Cancel."""
-    import json
+    """Read an existing snapshot without changing any files on Cancel.
+
+    A database without a saved setup (the load stopped between creating the
+    database and saving the wizard's setup) is treated like a new project.
+    """
     from domain.coding_setup import default_coding_setup
     def read(candidate):
         if not os.path.isfile(candidate.state_db):
@@ -315,16 +309,7 @@ def inspect_coding_setup(paths):
         setup = repo.load_coding_setup()
         if setup:
             return setup, repo.load_preparation_state() == "ready"
-        if candidate.annotation_type == "Pose":
-            from domain.pose_setup import PoseCodingSetup
-            return PoseCodingSetup(), False
-        metadata = {}
-        if os.path.isfile(candidate.export_metadata):
-            with open(candidate.export_metadata, encoding="utf-8") as stream:
-                metadata = json.load(stream)
-        from service_layer.coding_setup_service import inspect_legacy_coding_setup
-        review = inspect_legacy_coding_setup(repo, metadata)
-        return review.setup, not review.needs_review
+        return None, False
     own, ready = read(paths)
     if own:
         return own, ready
@@ -343,8 +328,8 @@ def inspect_coding_setup(paths):
 def can_resume_preparation(paths):
     """A saved, accepted setup can resume without declaring its frames ready.
 
-    Legacy projects and snapshots explicitly awaiting review still use the
-    wizard. Each pass tracks preparation independently.
+    A project without a saved setup uses the wizard. Each pass tracks
+    preparation independently.
     """
     if not os.path.isfile(paths.state_db):
         return False
@@ -402,22 +387,6 @@ def files_identical(first, second):
                 result.update(chunk)
         return result.digest()
     return digest(first) == digest(second)
-
-
-def coding_setup_warning(paths):
-    """Explain exactly which legacy labels must be reviewed, without writing."""
-    import json
-    from service_layer.coding_setup_service import inspect_legacy_coding_setup
-    if not os.path.isfile(paths.state_db):
-        return ""
-    repo = _ProjectSnapshot(paths.state_db, paths.annotation_type)
-    if repo.load_coding_setup():
-        return "Video preparation is incomplete. Review the saved setup before retrying."
-    metadata = {}
-    if os.path.isfile(paths.export_metadata):
-        with open(paths.export_metadata, encoding="utf-8") as stream:
-            metadata = json.load(stream)
-    return inspect_legacy_coding_setup(repo, metadata).warning
 
 
 def source_fingerprint(path):

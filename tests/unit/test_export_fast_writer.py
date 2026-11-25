@@ -51,7 +51,7 @@ def _sparse_frames():
     for frame in (0, 1, 777, 9_999, LONG_RANGE):
         bundle = empty_bundle()
         bundle["LH"].update(X=[10 + frame % 50, 20], Y=[30, 40], Onset="ON", Zones=[["L"], ["I", "B"]])
-        bundle["RF"]["LimbParams"] = {"Par2": "OFF", "Par3": "None"}
+        bundle["RF"]["LimbParams"] = {"Par2": "OFF", "Par3": None}
         bundle["Params"] = {"Par1": "ON", "Par2": None}
         frames[frame] = bundle
     for frame, note in ((5, "line1\nline2"), (6, '  "lead'), (7, "a\r\nb;c\t"), (8, 'comma, "quote" ěšč')):

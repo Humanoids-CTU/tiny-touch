@@ -40,8 +40,7 @@ def empty_record(limb: str) -> FrameRecord:
 
 
 def _normalize_param_state(v):
-    # Legacy artifact: toggle_limb_parameter used to store the string "None" (M1).
-    return None if v in (None, "", "None") else v
+    return None if v in (None, "") else v
 
 
 def empty_bundle() -> FrameBundle:

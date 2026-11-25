@@ -7,7 +7,7 @@ import pytest
 
 from adapters.export_writer import write_export_metadata
 from domain.project import ProjectPaths
-from service_layer.analysis_service import resolve_template
+from service_layer.analysis_service import resolve_report_labels
 from service_layer.save_service import MetadataInputs, run_export
 
 
@@ -22,32 +22,34 @@ def _write_metadata(path, template):
 def test_metadata_round_trip(tmp_path, template):
     path = str(tmp_path / "vid_metadata.json")
     _write_metadata(path, template)
-    assert resolve_template(path) == template
+    assert resolve_report_labels(path).template == template
 
 
 @pytest.mark.parametrize("content", [
     "not json", "[]", '{"template": true}', '{"template": null}',
     '{"template": "unknown-v1"}', '{}',
+    '{"Export Format Version": 1, "template": "default"}',
+    '{"Export Format Version": 2, "Metadata Format Version": 2}',
 ])
 def test_bad_metadata_does_not_fall_back_to_explicit_choice(tmp_path, content):
     path = tmp_path / "vid_metadata.json"
     path.write_text(content, encoding="utf-8")
     with pytest.raises(ValueError):
-        resolve_template(str(path), template="default")
+        resolve_report_labels(str(path), template="default")
 
 
 @pytest.mark.parametrize("template", [None, "default", "alternate", "general"])
 def test_export_without_metadata_is_rejected_even_with_explicit_template(tmp_path, template):
     path = str(tmp_path / "absent.json")
     with pytest.raises(ValueError, match="metadata"):
-        resolve_template(path, template=template)
+        resolve_report_labels(path, template=template)
 
 
 def test_explicit_choice_cannot_override_metadata(tmp_path):
     path = str(tmp_path / "vid_metadata.json")
     _write_metadata(path, "alternate")
     with pytest.raises(ValueError, match="Export uses template"):
-        resolve_template(path, template="default")
+        resolve_report_labels(path, template="default")
 
 
 def test_invalid_template_preserves_existing_export_files(tmp_path):
@@ -73,5 +75,5 @@ def test_metadata_replace_failure_preserves_previous_file(tmp_path, monkeypatch)
     monkeypatch.setattr("adapters.atomic_io.os.replace", fail_replace)
     with pytest.raises(OSError, match="disk failure"):
         _write_metadata(path, "alternate")
-    assert resolve_template(path) == "default"
+    assert resolve_report_labels(path).template == "default"
     assert not Path(path + ".tmp").exists()

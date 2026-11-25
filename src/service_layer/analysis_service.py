@@ -36,6 +36,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 from adapters import plotting, report_page
 from adapters.export_reader import read_export_df
 from adapters.zone_masks import list_zone_names
+from domain.coding_setup import CodingSetup
 from domain.model import LIMBS
 from domain.project import ProjectPaths
 from domain.templates import validate_template
@@ -128,13 +129,12 @@ def resolve_frame_rate(caller_frame_rate, metadata_path: str):
     return None, "unavailable"
 
 
-def resolve_template(metadata_path: str, template=None) -> str:
-    """Compatibility helper for callers that only need the recorded template ID."""
-    return resolve_report_labels(metadata_path, template).template
-
-
 def resolve_report_labels(metadata_path: str, template=None) -> ReportLabels:
-    """Read and validate exported labels; older exports use template defaults."""
+    """Read and validate the labels in version 2 export metadata.
+
+    Raises ValueError unless the metadata is Export and Metadata Format
+    Version 2 with a valid "Coding Setup".
+    """
     try:
         with open(metadata_path, encoding="utf-8") as stream:
             metadata = json.load(stream)
@@ -142,27 +142,19 @@ def resolve_report_labels(metadata_path: str, template=None) -> ReportLabels:
         raise ValueError(f"Cannot read export metadata {metadata_path}: {exc}") from exc
     if not isinstance(metadata, dict):
         raise ValueError("Export metadata must contain a JSON object.")
-    metadata_version = metadata.get("Metadata Format Version", 1)
-    if type(metadata_version) is not int or metadata_version not in (1, 2):
-        raise ValueError(f"Unsupported metadata format version: {metadata_version!r}")
-    setup = None
-    if metadata_version == 2:
-        from domain.coding_setup import CodingSetup
-        setup = CodingSetup.from_dict(metadata.get("Coding Setup"))
-    recorded = setup.template if setup else validate_template(metadata.get("template"))
+    versions = (metadata.get("Export Format Version"), metadata.get("Metadata Format Version"))
+    if any(type(version) is not int for version in versions) or versions != (2, 2):
+        raise ValueError(
+            f"Unsupported export metadata {metadata_path}: this release reads only "
+            f"Export Format Version 2 with Metadata Format Version 2 (found {versions[0]!r}/{versions[1]!r})."
+        )
+    setup = CodingSetup.from_dict(metadata.get("Coding Setup"))
     if template is not None:
-        if recorded != validate_template(template):
+        if setup.template != validate_template(template):
             raise ValueError(
-                f"Export uses template {recorded}; the requested template is {template}."
+                f"Export uses template {setup.template}; the requested template is {template}."
             )
-    channels = dict(setup.channel_labels) if setup else metadata.get("Channel Labels", {})
-    version = metadata.get("Export Format Version", 1)
-    if type(version) is not int or version not in (1, 2):
-        raise ValueError(f"Unsupported export format version: {version!r}")
-    if version >= 2:
-        from domain.coding_setup import PORTABLE_CHANNELS
-        channels = {PORTABLE_CHANNELS.get(key,key): value for key,value in channels.items()}
-    return ReportLabels(recorded, setup.zone_labels if setup else metadata.get("Zone Labels", {}), channels, version, setup)
+    return ReportLabels(setup.template, setup.zone_labels, dict(setup.channel_labels), setup)
 
 
 def run_analysis(paths: ProjectPaths,
@@ -216,12 +208,7 @@ def run_analysis(paths: ProjectPaths,
     # 3) COMPUTE everything first (see module docstring).
     stats: List[LimbStats] = []
     matrices: Dict[str, tuple] = {}
-    zone_setup = labels.coding_setup
-    if zone_setup is None and resolved_template == "general":
-        from dataclasses import replace
-        from domain.coding_setup import default_coding_setup
-        zone_setup = replace(default_coding_setup("general"), zone_layout="legacy", channel_zones=None)
-    zones_default = list_zone_names(resolved_template, coding_setup=zone_setup)
+    zones_default = list_zone_names(resolved_template, coding_setup=labels.coding_setup)
     for limb in limbs:
         episodes = data.episodes.get(limb, [])
         limb_stats = summarize(episodes, fps=fps, total_frames=data.total_frames, limb=limb)

@@ -39,15 +39,6 @@ def _empty_limb_record(limb: str) -> dict:
     return {"X": [], "Y": [], "Onset": "", "Bodypart": limb, "Zones": [], "Touch": None}
 
 
-def _normalize_zones_shape(rec: dict) -> list:
-    """Legacy zones shape (flat list) -> list-of-lists aligned with X/Y."""
-    zones = rec.get('Zones', [])
-    if zones and isinstance(zones[0], (int, str)):
-        zones = [[z] for z in zones]
-    rec['Zones'] = zones
-    return zones
-
-
 def add_click(frames: Dict[int, FrameBundle], idx: int, limb: str,
               x_pos: float, y_pos: float, onset: str, zones: list) -> dict:
     """Touch-branch mutation of on_diagram_click: append the click's X/Y and
@@ -73,9 +64,7 @@ def add_click(frames: Dict[int, FrameBundle], idx: int, limb: str,
         rec.setdefault('X', []).append(int(x_pos))
         rec.setdefault('Y', []).append(int(y_pos))
 
-        # normalize Zones to list-of-lists if older shape is present
-        zone_buckets = _normalize_zones_shape(rec)
-        zone_buckets.append(zones)  # one zones bucket per point
+        rec.setdefault('Zones', []).append(zones)  # one zones bucket per point
 
         rec['Bodypart'] = limb
         rec['Onset'] = onset
@@ -96,7 +85,7 @@ def remove_nearest_click(frames: Dict[int, FrameBundle], idx: int, limb: str,
 
     xs = rec.get('X', [])
     ys = rec.get('Y', [])
-    zones = _normalize_zones_shape(rec)
+    zones = rec.get('Zones', [])
 
     if not xs or not ys:
         return False

@@ -96,11 +96,3 @@ def test_a_deleted_csv_is_rewritten(paths):
     run_export(_frames(False), paths, 25, _inputs(), 9, published_csv=stamp)
     assert open(paths.export_csv, "rb").read() == expected
 
-
-def test_a_legacy_metadata_sidecar_forces_a_full_rewrite(paths, lock_csv):
-    stamp = run_export(_frames(True), paths, 25, _inputs(), 9)
-    with open(paths.export_metadata, "w", encoding="utf-8") as stream:
-        json.dump({"Export Format Version": 1}, stream)
-    lock_csv()
-    with pytest.raises(PermissionError):
-        run_export(_frames(False), paths, 25, _inputs(), 9, published_csv=stamp)

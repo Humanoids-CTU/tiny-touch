@@ -215,18 +215,6 @@ def test_empty_bucket_is_distinct_from_no_bucket(repo):
     assert loaded[2]["LH"]["X"] == [5]
 
 
-def test_flat_legacy_zone_shape_round_trips(repo):
-    """`csv_to_dict` (legacy per-limb CSVs) yields FLAT `list[str]` zones, not
-    list-of-lists. A bucket is therefore sometimes a bare string, and
-    `json.dumps`/`loads` must return the same type."""
-    b = empty_bundle()
-    b["RH"] = {"X": [1, 2], "Y": [3, 4], "Onset": "ON", "Bodypart": "RH",
-               "Zones": ["FACE", "BELLY"], "Touch": None}
-    repo.save_frames({1: _dirty(b)}, total_frames=2)
-
-    assert repo.load_frames()[1]["RH"]["Zones"] == ["FACE", "BELLY"]
-
-
 def test_empty_frames_and_gaps_are_preserved_exactly(repo):
     """Frame EXISTENCE is data: the store holds only labeled frames (the
     exporter synthesizes rows for the gaps), so the key set must round-trip."""

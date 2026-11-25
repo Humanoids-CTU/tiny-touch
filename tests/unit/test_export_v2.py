@@ -45,7 +45,7 @@ def test_reader_rejects_malformed_v2_alignment(tmp_path):
     with pytest.raises(ValueError, match='align'):
         read_export_df(str(path))
 
-def test_save_failure_keeps_existing_pair_and_success_archives_legacy(tmp_path):
+def test_save_failure_keeps_existing_pair_and_success_replaces_it(tmp_path):
     from pathlib import Path
     from domain.project import ProjectPaths
     from service_layer.save_service import MetadataInputs, run_export
@@ -61,11 +61,9 @@ def test_save_failure_keeps_existing_pair_and_success_archives_legacy(tmp_path):
         run_export({0:bundle}, paths, 25, metadata, 1)
     assert Path(paths.export_csv).read_bytes() == old_csv
     assert Path(paths.export_metadata).read_bytes() == old_meta
-    assert not list(Path(paths.export_dir).glob('legacy-*'))
     run_export({}, paths, 25, metadata, 1)
-    archive, = Path(paths.export_dir).glob('legacy-*')
-    assert (archive / Path(paths.export_csv).name).read_bytes() == old_csv
-    assert (archive / Path(paths.export_metadata).name).read_bytes() == old_meta
+    assert sorted(p.name for p in Path(paths.export_dir).iterdir()) == sorted(
+        Path(p).name for p in (paths.export_csv, paths.export_metadata, paths.export_diagram))
     assert json.loads(Path(paths.export_metadata).read_text())['Export Format Version'] == 2
     assert 'Channel1_XY' in pd.read_csv(paths.export_csv).columns
 

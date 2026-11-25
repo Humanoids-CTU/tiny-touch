@@ -649,12 +649,12 @@ def _on_window_map(event):
 
 
 def set_button_state(widget, state):
-    """Show an ON, OFF, or unset (None/"None"/"") state on a button.
+    """Show an ON, OFF, or unset (None/"") state on a button.
 
     Widgets with ``set_state`` (ParamPill) handle it themselves; ttk buttons
     swap their ``State*.TButton`` style, keeping a ``Card.`` prefix.
     """
-    normalized = None if state in (None, "None", "") else state
+    normalized = None if state in (None, "") else state
     if hasattr(widget, "set_state"):
         widget.set_state(normalized)
         return

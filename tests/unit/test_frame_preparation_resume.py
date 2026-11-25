@@ -30,6 +30,19 @@ def test_accepted_setup_resumes_without_becoming_ready(tmp_path, state):
     assert project_service.inspect_coding_setup(reliability) == (default_coding_setup(), False)
 
 
+def test_database_without_saved_setup_reopens_the_wizard_with_defaults(tmp_path):
+    # A load can stop after the database exists but before the wizard's setup
+    # is saved; that project starts over like a new one.
+    paths = ProjectPaths("clip", str(tmp_path))
+    repo = project_service.open_state(paths)
+    try:
+        project_service.apply_project_template(repo, project_service.TemplatePlan("alternate"))
+    finally:
+        repo.close()
+    assert not project_service.can_resume_preparation(paths)
+    assert project_service.inspect_coding_setup(paths) == (default_coding_setup(), False)
+
+
 def test_missing_frame_is_never_ready_even_with_matching_count(tmp_path):
     for index in (0, 2, 3):
         (tmp_path / f"frame{index}.jpg").write_bytes(b"placeholder")

@@ -391,8 +391,8 @@ Practical rules:
 Saving also writes `<video>_diagram.png` into the export folder. Share it with the
 CSV and metadata JSON. The image shows CSV zone IDs on the diagram and a burned-in
 saved names on the diagram, with channel and parameter settings beside it.
-The metadata stores labels once under `Coding Setup`; older exports are archived
-on their first save with this format. Existing files update on the next Save.
+The metadata stores labels once under `Coding Setup`. Existing files update on
+the next Save.
 
 ---
 

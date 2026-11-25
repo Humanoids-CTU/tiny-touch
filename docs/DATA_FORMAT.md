@@ -7,9 +7,7 @@ unversioned anatomical-column exports. Keep the CSV together with its metadata J
 SQLite working state uses private internal keys; older project databases are not migrated.
 
 Paths remain `data/<video>/export/<video>_export.csv` and
-`data/<video>/export/<video>_metadata.json`. Before the first version 2 save replaces
-an older export, both existing files are copied unchanged into a timestamped
-`export/legacy-<UTC timestamp>/` folder. Analysis no longer reads those older
+`data/<video>/export/<video>_metadata.json`. Analysis does not read older
 unversioned CSVs, including the pre-v8 six-line preamble layout, and rejects them with an error.
 
 The save service validates and stages all three files before replacing published
@@ -41,8 +39,7 @@ for example `[["A", "B"], ["OUTSIDE"]]`. The first point belongs to A and B;
 the second belongs to OUTSIDE. All points and all zone memberships are retained.
 An empty annotation has `[]` in both cells. A point without a recorded zone has
 an empty bucket, such as `[[]]`. X/Y length differences and ambiguous point/zone
-alignment are rejected instead of silently dropping data. Legacy state containing
-one point with flat multiple zones is normalized into one multi-zone bucket.
+alignment are rejected instead of silently dropping data.
 
 `Time_ms` is `Frame * 1000 / source_fps`, serialized to **three decimal places**:
 frame 201 at 25 FPS is `8040.000`; frame 1 at 30 FPS is `33.333`.
@@ -60,7 +57,7 @@ embedded quotes: this is CSV encoding, not extra annotation data.
 ## Metadata snapshot
 
 CSV format remains **2**. New metadata has `"Metadata Format Version": 2`;
-metadata without that key is the older revision. Analysis reads both revisions.
+metadata without that key is the older revision. Analysis reads only revision 2.
 External readers of new exports must use the paths below rather than the retired
 `Param Labels`, `Channel Param Labels`, `Channel Labels`, and `Zone Labels` fields.
 
@@ -90,8 +87,7 @@ selected-channel highlight. Labels come from the saved coding setup, not current
 machine preferences. Assets are the selected template assets installed at export
 time; this does not reconstruct historical assets from an older app installation.
 
-Before replacing an older metadata revision, existing export files are archived
-unchanged in `legacy-<UTC timestamp>/`. CSV, JSON, and PNG are staged before
+CSV, JSON, and PNG are staged before
 publication, and ordinary replacement failures restore the previous files. A
 process/machine crash between replacements can still require regenerating the
 export from SQLite. Keep all three files together when sharing a dataset.

@@ -359,7 +359,7 @@ class SqliteRepository:
 
     def load_preparation_state(self) -> str:
         state = self.get_meta("preparation_state", "draft")
-        if state not in ("draft", "preparing", "ready", "needs_review"):
+        if state not in ("draft", "preparing", "ready"):
             raise ValueError("Invalid video preparation state")
         return state
 
@@ -368,7 +368,7 @@ class SqliteRepository:
             raise ValueError("A complete coding setup is required")
         validate_coding_setup(setup)
         self.load_template().choose(setup.template)
-        if preparation_state not in ("draft", "preparing", "ready", "needs_review"):
+        if preparation_state not in ("draft", "preparing", "ready"):
             raise ValueError("Invalid video preparation state")
         current = self.load_coding_setup()
         if current is not None and self.load_preparation_state() == "ready":
@@ -806,8 +806,7 @@ def _record_is_empty(rec: dict) -> bool:
 
 
 def _loads_bucket(raw: str, frame: int, limb: str):
-    """A zone bucket is normally `list[str]`, but legacy flat-shaped data
-    stores a bare string per bucket; `json.dumps`/`loads` round-trips either."""
+    """One stored zone bucket (a JSON `list[str]`), or [] when unreadable."""
     try:
         return json.loads(raw)
     except (TypeError, ValueError) as exc:

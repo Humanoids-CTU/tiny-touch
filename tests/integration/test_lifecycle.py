@@ -41,7 +41,7 @@ TOTAL_FRAMES = 10
 
 def _build_frames_a():
     """Realistic multi-limb session: touches on 3 limbs across 3 frames,
-    global + limb params (incl. the legacy 'None' string), UTF-8 notes."""
+    global + limb params (incl. cleared ones), UTF-8 notes."""
     frames = {}
 
     b = empty_bundle()
@@ -60,8 +60,7 @@ def _build_frames_a():
                "Zones": [["FACE"]], "Touch": None}
     b["RF"] = {"X": [50], "Y": [400], "Onset": "ON", "Bodypart": "RF",
                "Zones": [["NN"]], "Touch": None,
-               # Legacy artifact: the string "None" (pre-M1 saves).
-               "LimbParams": {"Par1": "None", "Par2": "OFF", "Par3": None}}
+               "LimbParams": {"Par1": None, "Par2": "OFF", "Par3": None}}
     b["Changed"] = True
     frames[5] = b
 
@@ -79,16 +78,10 @@ def _build_frames_a():
 
 def _expected_after_state_roundtrip(frames):
     """What `load_frames` must return for `frames`:
-    - the top-level Changed flag is NOT persisted (documented loss);
-    - legacy 'None' LimbParams strings are normalized to real None on load."""
+    the top-level Changed flag is NOT persisted (documented loss)."""
     expected = copy.deepcopy(frames)
     for bundle in expected.values():
         bundle.pop("Changed", None)
-        for limb in ("LH", "RH", "LF", "RF"):
-            lp = bundle[limb].get("LimbParams")
-            if isinstance(lp, dict):
-                for k, v in lp.items():
-                    lp[k] = None if v in (None, "", "None") else v
     return expected
 
 

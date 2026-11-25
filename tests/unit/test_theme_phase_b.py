@@ -49,7 +49,6 @@ class _Button:
         ("ON", "StateOn.TButton"),
         ("OFF", "StateOff.TButton"),
         (None, "StateNeutral.TButton"),
-        ("None", "StateNeutral.TButton"),
         ("", "StateNeutral.TButton"),
     ],
 )

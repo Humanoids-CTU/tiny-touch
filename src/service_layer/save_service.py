@@ -32,10 +32,8 @@ repository enforces this itself (`SqliteRepository._check_thread`).
 import copy
 import os
 import logging
-import json
 import shutil
 import tempfile
-from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Optional, Tuple
@@ -121,17 +119,6 @@ def csv_stamp(path) -> Optional[CsvStamp]:
     return stat.st_size, stat.st_mtime_ns
 
 
-def _published_metadata_is_current(paths: ProjectPaths) -> bool:
-    try:
-        with open(paths.export_metadata, encoding="utf-8") as stream:
-            previous = json.load(stream)
-        version = (previous.get("Export Format Version"),
-                   previous.get("Metadata Format Version", 1))
-    except (OSError, ValueError, AttributeError):
-        return False
-    return version == (2, 2)
-
-
 def _csv_can_be_reused(snapshot: Dict[int, FrameBundle], paths: ProjectPaths,
                        published_csv: Optional[CsvStamp]) -> bool:
     """True only when the published CSV cannot be stale.
@@ -160,15 +147,12 @@ def run_export(snapshot: Dict[int, FrameBundle],
     snapshot. Runs on the GUI's worker thread.
 
     The metadata and diagram are written every time. The CSV is rewritten
-    unless `_csv_can_be_reused` proves the published one is still exact, and
-    always when an older export pair has to be archived first. Returns the
-    stamp of the published CSV, to pass back as `published_csv` next time.
+    unless `_csv_can_be_reused` proves the published one is still exact.
+    Returns the stamp of the published CSV, to pass back as `published_csv` next time.
     """
     template = validate_template(metadata.template)
     os.makedirs(paths.export_dir, exist_ok=True)
-    archive_previous = (os.path.exists(paths.export_csv)
-                        and not _published_metadata_is_current(paths))
-    write_csv = archive_previous or not _csv_can_be_reused(snapshot, paths, published_csv)
+    write_csv = not _csv_can_be_reused(snapshot, paths, published_csv)
     with tempfile.TemporaryDirectory(prefix=".export-", dir=paths.export_dir) as staging:
         staged_csv = os.path.join(staging, "export.csv")
         staged_meta = os.path.join(staging, "metadata.json")
@@ -204,12 +188,6 @@ def run_export(snapshot: Dict[int, FrameBundle],
             coding_setup=metadata.coding_setup,
             diagram_path=staged_diagram,
         )
-        if archive_previous:
-            archive = os.path.join(paths.export_dir, "legacy-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ"))
-            os.makedirs(archive)
-            for existing in (paths.export_csv, paths.export_metadata, paths.export_diagram):
-                if os.path.exists(existing):
-                    shutil.copy2(existing, archive)
         # Metadata goes LAST: it names the diagram by hash and describes the
         # CSV, so once a new metadata file is visible, the files it describes
         # are already in place. A failure undoes only what was replaced.

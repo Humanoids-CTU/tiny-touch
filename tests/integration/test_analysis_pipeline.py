@@ -71,7 +71,7 @@ def cat3_frames():
 
 
 def write_project(tmp_path, frames, total_frames=CAT3_TOTAL_FRAMES - 1,
-                  fps=CAT3_FPS, name="cat3", with_metadata=True):
+                  fps=CAT3_FPS, name="cat3"):
     """Materialize a project tree under tmp_path using the REAL exporter."""
     paths = ProjectPaths(video_name=name, base_dir=str(tmp_path / "data"))
     os.makedirs(paths.export_dir, exist_ok=True)
@@ -80,15 +80,11 @@ def write_project(tmp_path, frames, total_frames=CAT3_TOTAL_FRAMES - 1,
         program_version=8.0, video_name=name, labeling_mode="Normal",
         frame_rate=fps, special_zones_list=None, total_frames=total_frames,
     )
-    if with_metadata:
-        write_export_metadata(
-            meta_path=paths.export_metadata,
-            program_version=8.0, video_name=name, labeling_mode="Normal",
-            frame_rate=fps, special_zones_list=None, template="default",
-        )
-    else:
-        with open(paths.export_metadata, "w", encoding="utf-8") as stream:
-            json.dump({"template": "default"}, stream)
+    write_export_metadata(
+        meta_path=paths.export_metadata,
+        program_version=8.0, video_name=name, labeling_mode="Normal",
+        frame_rate=fps, special_zones_list=None, template="default",
+    )
     return paths
 
 
@@ -288,7 +284,7 @@ def test_zero_or_missing_fps_completes_without_crash(tmp_path, bad_fps):
     """Used to raise ZeroDivisionError AFTER writing several plots, leaving a
     half-populated plots/ dir. Now: full dashboard, frame-based numbers, empty
     seconds columns, WARN logged."""
-    paths = write_project(tmp_path, cat3_frames(), fps=0.0, with_metadata=True)
+    paths = write_project(tmp_path, cat3_frames(), fps=0.0)
     out = tmp_path / "plots"
 
     result = analysis_service.run_analysis(

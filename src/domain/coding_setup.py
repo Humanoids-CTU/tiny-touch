@@ -118,11 +118,6 @@ class CodingSetup:
                    limb_parameter_labels=value["channel_parameter_labels"] if "channel_parameter_labels" in value else value["limb_parameter_labels"])
 
 
-def channel_labels_following_zones(setup, zone_labels):
-    """Compatibility helper: channel names are independent of target names."""
-    return dict(setup.channel_labels)
-
-
 def default_coding_setup(template="default", parameter_labels=None, limb_parameter_labels=None):
     definition = get_template(template)
     parameter_prefix = "CP" if template == "general" else "LP"

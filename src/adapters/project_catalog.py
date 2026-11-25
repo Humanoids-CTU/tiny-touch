@@ -14,7 +14,7 @@ class LibraryEntry:
     paths: ProjectPaths
     source: str | None
     template: str
-    preparation_state: str
+    preparation_state: str | None   # None: no coding setup saved yet
     thumbnail: str | None
     setup_name: str = ""
     last_used: float = 0.0   # state DB modification time (seconds since the epoch)
@@ -71,7 +71,7 @@ def list_projects(base_dir=DATA_DIR, videos_dir=VIDEOS_DIR):
                     raise ValueError("Project kind disagrees with its database")
                 validate_template(template)
             thumb = Path(paths.frames_dir) / "frame0.jpg"
-            entries.append(LibraryEntry(paths, source, template, meta.get("preparation_state", "needs_review"), str(thumb) if thumb.is_file() else None, setup.get("name", "") if isinstance(setup, dict) else "", last_used))
+            entries.append(LibraryEntry(paths, source, template, meta.get("preparation_state"), str(thumb) if thumb.is_file() else None, setup.get("name", "") if isinstance(setup, dict) else "", last_used))
         except (sqlite3.Error, OSError, ValueError):
             # A damaged project stays visible with an explicit unavailable status.
             entries.append(LibraryEntry(paths, None, DEFAULT_TEMPLATE, "unavailable", None, last_used=last_used))

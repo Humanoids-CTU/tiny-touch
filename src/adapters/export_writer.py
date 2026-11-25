@@ -82,13 +82,9 @@ def _paired_annotations(rec, frame, channel):
     if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in [*xs, *ys]):
         raise ValueError(f'Frame {frame} {channel}: coordinates must be finite numbers')
     zones = rec.get('Zones') or []
-    # Older state may have clicks without zone hits. Retain the clicks explicitly.
+    # Clicks stored without zone buckets keep their points with empty zone groups.
     if not zones:
         zones = [[] for _ in xs]
-    elif len(xs) == 1 and all(isinstance(z, str) for z in zones):
-        zones = [zones]  # old flat multi-zone bucket, no relationship is lost
-    else:
-        zones = [[z] if isinstance(z, str) else z for z in zones]
     if len(zones) != len(xs) or any(not isinstance(z,list) or any(not isinstance(v,str) for v in z) for z in zones):
         raise ValueError(f'Frame {frame} {channel}: point and zone buckets must align')
     return list(map(list, zip(xs,ys))), zones

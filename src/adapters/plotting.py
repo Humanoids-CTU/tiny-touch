@@ -12,7 +12,7 @@ Each figure writer returns a `ReportFigure` that `adapters.report_page`
 arranges into `master_<name>.html`. Written artifacts (names are a contract:
 users bookmark them):
 
-    heatmap_<LIMB>.html       one transition heatmap per limb
+    heatmap_ChannelN.html     one transition heatmap per channel
     touch_trajectory.html     2x2 click-trajectory grid over the limb diagrams
     analysis_table_frames.csv frame-based per-limb table
     analysis_table_seconds.csv seconds-based per-limb table
@@ -385,7 +385,7 @@ def write_analysis_tables(stats: Sequence[LimbStats],
     limbs = [labels.channel_id(s.limb) for s in stats]
     df_frames = pd.DataFrame(
         {
-            ("Channel" if labels.export_format_version >= 2 else "Limb"): limbs,
+            "Channel": limbs,
             "Total Touches": [s.total_touches for s in stats],
             "Open (Unterminated) Touches": [s.open_touches for s in stats],
             "Touch Durations [Frames]": [list(s.durations_frames) for s in stats],
@@ -408,7 +408,7 @@ def write_analysis_tables(stats: Sequence[LimbStats],
 
     df_seconds = pd.DataFrame(
         {
-            ("Channel" if labels.export_format_version >= 2 else "Limb"): limbs,
+            "Channel": limbs,
             "Total Touches": [s.total_touches for s in stats],
             "Open (Unterminated) Touches": [s.open_touches for s in stats],
             "Touch Durations [Seconds]": [

@@ -2993,8 +2993,6 @@ class LabelingApp(tk.Tk):
             state = (SqliteRepository.inspect_template(candidate_paths.state_db)
                      if annotation_type == "Touch" else None)
             if not ready and not project_service.can_resume_preparation(candidate_paths):
-                if os.path.exists(candidate_paths.state_db):
-                    messagebox.showinfo("Review coding setup", project_service.coding_setup_warning(candidate_paths), parent=self)
                 setup = (configure_pose_video(self, setup, center=center_over_parent)
                          if annotation_type == "Pose" else
                          configure_video(self, setup, center=center_over_parent, locked_template=bool(state and state.locked)))

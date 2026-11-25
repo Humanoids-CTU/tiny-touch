@@ -452,21 +452,20 @@ These files are reusable starting points, not live references. Each project keep
 its own complete snapshot in SQLite metadata. Application appearance/playback
 preferences remain in `config.json` and cannot redefine a prepared project.
 
-Preparation state (`draft`, `preparing`, `ready`, `needs_review`) distinguishes a
+Preparation state (`draft`, `preparing`, `ready`) distinguishes a
 usable video from an interrupted preparation. After frames have been verified,
 the repository marks the setup ready and locks its definition. Repository methods
 enforce the lock, including legacy template/zone-name setters. Annotation values,
 notes, Special Zones marks and visibility preferences remain editable.
 
-Supported older databases without a snapshot can adopt their recorded template,
-zone aliases and export parameter labels. Missing historical label provenance
-requires review; mutable global preferences are not historical evidence. A new
+A database without a saved setup (a load that stopped between creating the
+database and saving the wizard's setup) reopens the wizard with the default
+setup, like a new video. A new
 Reliability pass has an independent setup and separate annotations; it never
 requires a local Normal project. A prepared local Normal snapshot can seed the
 setup wizard, where users may import a configuration or choose manually.
 Template selection and locking apply only to the current pass; cross-pass
 compatibility is the researcher's responsibility.
-This adoption does not restore retired pre-SQLite project formats.
 
 ### Diagram registry and compatibility
 
@@ -560,16 +559,15 @@ them.
 
 ### Supported data layout (no migration path)
 
-The app resumes supported schema 4 databases with recorded template IDs and
-adopts their coding labels as described above. Other working-state formats are
-not imported or converted.
+The app resumes schema 4 databases with recorded template IDs. Other
+working-state formats are not imported or converted.
 Project loading rejects existing exports with no working database, preventing them
 from being opened as an empty project and overwritten on Save. Use a fresh data
 folder for new work and keep older project folders as archives.
 
 New saves use the versioned channel export contract in `docs/DATA_FORMAT.md`.
-Historical export pairs are archived before the first format replacement.
-The app's Analysis workflow requires the template recorded in the accompanying metadata.
+The app's Analysis workflow requires the coding setup recorded in the accompanying
+version 2 metadata.
 
 ### Working state: `state/<video>.db`
 
@@ -588,11 +586,6 @@ labeling-time accumulator.
 | `limb_params` | per-limb `Par1..3`, same NULL semantics as `frame_params` |
 | `special_zone_dots` | dot id, x, y, comma-joined zone string (frozen sidecar tokenization) |
 
-Databases created during 9.0 development may also carry two now-unused tables,
-`legacy_notes` and `legacy_limb_params`, plus `migrated_at` / `migrated_sources`
-rows in `meta`. Nothing reads or writes them; `CREATE TABLE IF NOT EXISTS` simply
-no longer lists them, so they are inert leftovers rather than schema.
-
 Operational choices, all deliberate:
 
 - **Saves are transactional and idempotent.** Each dirty frame (`Changed` is still the tracker) is deleted and re-inserted inside one `BEGIN IMMEDIATE`. Saving twice changes nothing; a crash leaves either the old or the new state. This retired the journal's duplicate-row resolution, load-time compaction and torn-tail repair.
@@ -604,7 +597,7 @@ Operational choices, all deliberate:
 The split between the state DB and `export/<video>_export.csv` stays deliberate:
 
 - **State DB** is the source of truth for round-trips, written incrementally.
-- **Export CSV** is the full table, one row per frame in the canonical column order, always written whole (never patched in place) by a direct `csv.writer` stream (about 0.4 s for 344k frames). Downstream consumers (Analysis, external tooling) read this file. A save skips rewriting it only when it provably cannot be stale: this session already published it successfully for the open video (`Video.published_export_csv` holds the file's size and mtime from that export, reset on load, unload and any export failure), no frame is dirty, and the file on disk still has that size and mtime. A legacy metadata sidecar also forces a rewrite. The metadata JSON is rewritten on every save (labeling time, special zones and zone labels change without frame edits).
+- **Export CSV** is the full table, one row per frame in the canonical column order, always written whole (never patched in place) by a direct `csv.writer` stream (about 0.4 s for 344k frames). Downstream consumers (Analysis, external tooling) read this file. A save skips rewriting it only when it provably cannot be stale: this session already published it successfully for the open video (`Video.published_export_csv` holds the file's size and mtime from that export, reset on load, unload and any export failure), no frame is dirty, and the file on disk still has that size and mtime. The metadata JSON is rewritten on every save (labeling time, special zones and zone labels change without frame edits).
 - **Diagram PNG** is deterministic for a coding setup, so `export_diagram_png` keeps the rendered bytes in memory keyed by the full setup content. The first save of a session renders it; later saves reuse the identical bytes, and any setup change renders a new one.
 - **Publish order:** all three files are staged in a temporary folder first. They then replace the published ones in the order diagram, CSV, metadata, so a new metadata file only appears once the files it describes are in place. If a replace fails, only the files already replaced are restored from their backups.
 
@@ -648,8 +641,8 @@ the matching zone groups. Both multiple points and multiple zones per point are
 preserved. Misaligned data is rejected before publication. `Time_ms` uses source
 FPS precision and three decimal places; unusable FPS gives an empty time cell.
 Metadata records `Export Format Version: 2`, the full coding setup and coordinate
-conventions. The reader normalizes both versions into the existing internal
-calculation vocabulary. Older export pairs are archived before replacement.
+conventions. The reader accepts only version 2 and maps its channel columns onto the
+internal calculation vocabulary.
 
 **Version 2 is the current export contract.** Three test files pin it:
 `tests/unit/test_export_schema.py` (column set + order),
@@ -781,9 +774,9 @@ them and users bookmark them): `heatmap_ChannelN.html`, `touch_trajectory.html`,
 touch counts with readable names and separate stable IDs.
 
 Analysis resolves `domain.report_labels.ReportLabels` from export metadata before
-creating the output directory. New metadata validates its single `Coding Setup` snapshot;
-older metadata validates optional `Zone Labels` and `Channel Labels`;
-older exports fall back to zone IDs and template channel names. Labels affect only
+creating the output directory. The metadata must be Export and Metadata Format
+Version 2 with a valid `Coding Setup` snapshot; anything else stops the analysis
+with one `ValueError`. Labels affect only
 presentation: renamed zones display as `Name (ID)` so duplicate names remain distinct.
 Heatmap ticks and hover data, trajectory hovers, summary/zone tables, and histogram
 legends use the same labels. User text is escaped before entering Plotly text fields.
@@ -803,10 +796,10 @@ the mouse wheel scrolls the page; zooming is an explicit drag-select.
 ## Testing
 
 Coding setup tests cover portable-file validation, full project snapshots,
-preparation locking, legacy label adoption and independent Reliability setup. Export
+preparation locking and independent Reliability setup. Export
 tests cover the versioned Channel1–4 schema, aligned paired coordinates and zone
-groups, multiple points/multiple zones, timestamp rounding, and reading historical
-exports for analysis. GUI tests must isolate both the project roots and the
+groups, multiple points/multiple zones, timestamp rounding, and rejecting
+unversioned exports and older metadata in analysis. GUI tests must isolate both the project roots and the
 `config/` directory; they must never modify real research projects.
 
 ```bash
@@ -872,8 +865,7 @@ renders the selected template with zone IDs/names and a settings sidebar to
 `<video>_diagram.png` without Tk. `save_service` stages and publishes CSV, JSON, and
 PNG together, rolling back ordinary replacement failures. The JSON references
 the PNG by relative filename and SHA-256. CSV format remains version 2; analysis
-accepts both metadata revisions. Older export revisions are archived before
-replacement. See `docs/DATA_FORMAT.md` for field paths and coordinate conventions.
+reads only metadata revision 2. See `docs/DATA_FORMAT.md` for field paths and coordinate conventions.
 
 ### Pose presentation update (2026-11-14)
 

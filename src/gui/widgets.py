@@ -475,7 +475,7 @@ class ParamPill(tk.Canvas):
         return None
 
     def set_state(self, state):
-        state = None if state in (None, "None", "") else state
+        state = None if state in (None, "") else state
         if state != self.state:
             self.state = state
             self.repaint()

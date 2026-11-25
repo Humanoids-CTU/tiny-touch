@@ -6,17 +6,17 @@ import pytest
 
 from adapters.coding_configs import CodingConfigStore
 from adapters.sqlite_repo import SqliteRepository
-from domain.coding_setup import CodingSetup, channel_labels_following_zones, default_coding_setup
+from domain.coding_setup import CodingSetup, default_coding_setup
 from domain.templates import TemplateState
 from domain.zone_display import ZoneDisplaySettings
-from service_layer.coding_setup_service import adopt_legacy_coding_setup, inherit_coding_setup
+from service_layer.coding_setup_service import inherit_coding_setup
 
 
 def test_channel_names_are_independent_of_zone_names():
     setup = default_coding_setup("general")
-    assert channel_labels_following_zones(setup, {"9": "Mother", "10": "Toy"}) == dict(setup.channel_labels)
+    assert replace(setup, zone_labels={"9": "Mother", "10": "Toy"}).channel_labels == setup.channel_labels
     renamed = replace(setup, channel_labels={**setup.channel_labels, "RH": "Parent"})
-    assert channel_labels_following_zones(renamed, {"9": "Ball"})["RH"] == "Parent"
+    assert replace(renamed, zone_labels={"9": "Ball"}).channel_labels["RH"] == "Parent"
 
 
 @pytest.fixture
@@ -150,38 +150,21 @@ def test_reopen_snapshot_ignores_later_config_file_changes(tmp_path):
         reopened.close()
 
 
-def test_legacy_missing_labels_requires_review(repo):
-    repo.save_template(TemplateState("default"))
-    assert adopt_legacy_coding_setup(repo) is None
-    assert repo.load_preparation_state() == "needs_review"
-    assert repo.load_coding_setup() is None
-
-
-def test_legacy_adoption_and_reliability_preserve_historical_labels(repo, tmp_path):
-    repo.save_template(TemplateState("general"))
-    repo.save_zone_display("general", ZoneDisplaySettings({"1": "Target"}))
-    original = default_coding_setup("general")
-    metadata = {"Param Labels": {"Parameter_1": "Historical gaze", "Parameter_2": "P2", "Parameter_3": "P3"},
-                "Limb Param Labels": {f"XX_Parameter_{i}": original.limb_parameter_labels[f"Par{i}"] for i in (1, 2, 3)}}
-    setup = adopt_legacy_coding_setup(repo, metadata)
-    assert setup.parameter_labels["Par1"] == "Historical gaze"
-    assert setup.zone_labels == {"1": "Target"}
+def test_reliability_inherits_a_prepared_setup(repo, tmp_path):
+    setup = replace(default_coding_setup("general"), zone_labels={"1": "Target"},
+                    parameter_labels={"Par1": "Gaze", "Par2": "P2", "Par3": "P3"})
     target = SqliteRepository(str(tmp_path / "reliability.db"))
     try:
+        repo.save_coding_setup(setup)
+        with pytest.raises(ValueError):
+            inherit_coding_setup(repo, target)
+        repo.mark_prepared()
         assert inherit_coding_setup(repo, target) == setup
+        assert target.load_preparation_state() == "draft"
         target.mark_prepared()
         assert target.load_coding_setup() == setup
     finally:
         target.close()
-
-
-def test_legacy_cleared_aliases_override_stale_export(repo):
-    repo.save_template(TemplateState("general"))
-    repo.save_zone_display("general", ZoneDisplaySettings())
-    defaults = default_coding_setup("general")
-    metadata = {"Param Labels": dict(defaults.parameter_labels),
-                "Limb Param Labels": dict(defaults.limb_parameter_labels), "Zone Labels": {"1": "Stale"}}
-    assert adopt_legacy_coding_setup(repo, metadata).zone_labels == {}
 
 
 def test_legacy_template_lock_cannot_be_bypassed_by_new_snapshot(repo):
@@ -203,39 +186,3 @@ def test_configuration_rejects_aliases_outside_template(tmp_path, repo, zone):
 def test_configuration_rejects_nonportable_filenames(tmp_path, filename):
     with pytest.raises(ValueError):
         CodingConfigStore(tmp_path).save(default_coding_setup(), filename)
-
-
-def test_read_only_legacy_review_preserves_partial_historical_labels(repo):
-    from service_layer.coding_setup_service import inspect_legacy_coding_setup
-    repo.save_template(TemplateState("default", True))
-    metadata = {"Param Labels": {"Parameter_1": "Historical gaze"},
-                "Limb Param Labels": {"XX_Parameter_2": "Historical reach"},
-                "Zone Labels": {"A": "Face"}}
-    review = inspect_legacy_coding_setup(repo, metadata)
-    assert review.setup.parameter_labels["Par1"] == "Historical gaze"
-    assert review.setup.limb_parameter_labels["Par2"] == "Historical reach"
-    assert review.setup.zone_labels == {"A": "Face"}
-    assert review.setup.channel_labels["RH"] == "Right Hand"
-    assert review.needs_review
-    assert "P2" in review.warning and "CP1" in review.warning
-    assert repo.load_coding_setup() is None
-    assert repo.get_meta("preparation_state") is None
-
-
-def test_read_only_legacy_review_accepts_actual_historical_metadata(repo):
-    from service_layer.coding_setup_service import inspect_legacy_coding_setup
-    repo.save_template(TemplateState("general"))
-    metadata = json.loads('''{"template":"general","Param Labels":{"Parameter_1":"Looking","Parameter_2":"Quiet","Parameter_3":"Awake"},"Limb Param Labels":{"XX_Parameter_1":"Grasp","XX_Parameter_2":"Reach","XX_Parameter_3":"Other"},"Channel Labels":{"RH":"Tool 1","LH":"Tool 2","RF":"Tool 3","LF":"Tool 4"},"Zone Labels":{"1":"Target"}}''')
-    review = inspect_legacy_coding_setup(repo, metadata)
-    assert not review.needs_review
-    assert review.warning == ""
-    assert review.setup.parameter_labels == {"Par1": "Looking", "Par2": "Quiet", "Par3": "Awake"}
-    assert review.setup.channel_labels["RH"] == "Tool 1"
-    assert repo.load_coding_setup() is None
-
-
-def test_read_only_legacy_review_rejects_conflicting_template(repo):
-    from service_layer.coding_setup_service import inspect_legacy_coding_setup
-    repo.save_template(TemplateState("general"))
-    with pytest.raises(ValueError, match="template"):
-        inspect_legacy_coding_setup(repo, {"template": "default"})
