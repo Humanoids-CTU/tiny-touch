@@ -20,7 +20,7 @@ def test_prepared_video_exports_its_snapshot_after_shared_config_changes(tmp_pat
         zone_labels={"1": "Left target", "2": "Right target"},
         parameter_labels={"Par1": "Looking", "Par2": "Vocalizing", "Par3": "Moving"},
     )
-    config_path = store.save(original, "coding_look.json")
+    config_path = store.save(original, "shared_protocol.json")
     paths = ProjectPaths("video_a", str(tmp_path / "data"))
     repo = SqliteRepository(paths.state_db)
     try:
@@ -30,7 +30,7 @@ def test_prepared_video_exports_its_snapshot_after_shared_config_changes(tmp_pat
         repo.close()
 
     revised = replace(original, name="Revised study", parameter_labels={"Par1": "Sleeping", "Par2": "P2", "Par3": "P3"})
-    store.save(revised, "coding_look.json", overwrite=True)
+    store.save(revised, "shared_protocol.json", overwrite=True)
     assert store.load(config_path) == revised
 
     repo = SqliteRepository(paths.state_db)

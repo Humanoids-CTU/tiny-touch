@@ -208,7 +208,7 @@ def run_analysis(paths: ProjectPaths,
     # 3) COMPUTE everything first (see module docstring).
     stats: List[LimbStats] = []
     matrices: Dict[str, tuple] = {}
-    zones_default = list_zone_names(resolved_template, coding_setup=labels.coding_setup)
+    zones_default = list_zone_names(resolved_template)
     for limb in limbs:
         episodes = data.episodes.get(limb, [])
         limb_stats = summarize(episodes, fps=fps, total_frames=data.total_frames, limb=limb)

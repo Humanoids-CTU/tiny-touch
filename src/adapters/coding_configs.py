@@ -11,7 +11,7 @@ from adapters.zone_masks import editable_zone_names
 def validate_coding_setup(setup):
     if isinstance(setup, PoseCodingSetup):
         return setup  # The typed constructor validates Alternate IDs and labels.
-    allowed = set(editable_zone_names(setup.template, coding_setup=setup))
+    allowed = set(editable_zone_names(setup.template))
     unknown = set(setup.zone_labels) - allowed
     if unknown:
         raise ValueError(f"Unknown zone aliases for {setup.template}: {', '.join(sorted(unknown))}")

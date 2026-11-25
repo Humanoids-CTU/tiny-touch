@@ -42,19 +42,12 @@ def _scaled(size):
 
 
 @lru_cache(maxsize=None)
-def _cached_zone_masks(template, zone_layout):
-    """Zone masks per template and layout, read once (reading takes ~100 ms)."""
-    masks = load_zone_masks(zones_dir(template), coding_setup=_LayoutOnly(zone_layout))
+def _cached_zone_masks(template):
+    """Zone masks per template, read once (reading takes ~100 ms)."""
+    masks = load_zone_masks(zones_dir(template))
     for _, pixels in masks:
         pixels.flags.writeable = False   # shared between calls
     return tuple(masks)
-
-
-class _LayoutOnly:
-    """The one coding-setup field ``load_zone_masks`` reads."""
-
-    def __init__(self, zone_layout):
-        self.zone_layout = zone_layout
 
 
 class CodingSetupWizard:
@@ -134,10 +127,10 @@ class CodingSetupWizard:
         ttk.Label(self.content, text=text, wraplength=theme.px(DESCRIPTION_WRAP)).pack(anchor="w", pady=(0, theme.px(12)))
 
     def zone_masks(self):
-        return _cached_zone_masks(self.setup.template, self.setup.zone_layout)
+        return _cached_zone_masks(self.setup.template)
 
     def editable_zones(self):
-        return POSE_ZONES if self.pose else editable_zone_names(self.setup.template, coding_setup=self.setup)
+        return POSE_ZONES if self.pose else editable_zone_names(self.setup.template)
 
     def render(self):
         # On screen, the old step stays visible until the new one is drawn.
@@ -385,21 +378,23 @@ class CodingSetupWizard:
         try:
             path = self.config_paths.get(self.config_choice.get())
             if path:
-                setup = self.store.load(path)
-                if self.locked_template and setup.template != self.setup.template:
-                    raise ValueError("This historical project keeps its original diagram.")
+                setup = self._matching_locked_template(self.store.load(path))
                 self.setup = setup if self.pose else replace(setup, channel_zones=None)
                 self.render()
         except (ValueError, OSError) as exc:
             self.error.configure(text=str(exc))
 
+    def _matching_locked_template(self, setup):
+        """Refuse a configuration for another diagram once the template is locked."""
+        if self.locked_template and setup.template != self.setup.template:
+            raise ValueError("This project's diagram is locked; the configuration uses another diagram.")
+        return setup
+
     def import_config(self):
         path = filedialog.askopenfilename(parent=self.win, title="Import coding configuration", filetypes=[("JSON configuration", "*.json")])
         if path:
             try:
-                setup = self.store.load(path)
-                if self.locked_template and setup.template != self.setup.template:
-                    raise ValueError("This historical project keeps its original diagram.")
+                self._matching_locked_template(self.store.load(path))  # before copying it in
                 imported = self.store.load(self.store.import_config(path))
                 self.setup = imported if self.pose else replace(imported, channel_zones=None)
                 self.render()

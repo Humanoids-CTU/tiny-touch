@@ -110,7 +110,7 @@ def test_long_zone_names_are_complete_and_labels_do_not_overlap_or_clip(template
     from domain.templates import get_template
 
     setup = default_coding_setup(template)
-    positions = zone_label_positions(load_zone_masks(zones_dir(template), coding_setup=setup))
+    positions = zone_label_positions(load_zone_masks(zones_dir(template)))
     name = "A carefully configured long target name"
     setup = replace(setup, zone_labels={zone: name for zone in positions})
     width, height = get_template(template).native_size

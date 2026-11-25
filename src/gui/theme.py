@@ -101,9 +101,7 @@ PALETTES = {"light": LIGHT_PALETTE, "dark": DARK_PALETTE}
 # Legacy role -> new role (or a literal colour). Derived whenever a palette is
 # applied so unmigrated code keeps working; new code uses the new names.
 LEGACY_ALIASES = {
-    "SURFACE": "WIN", "SURFACE_ALT": "TRACK", "TOOLBAR_BG": "WIN", "VIDEO_BG": "VIDEO",
-    "BORDER": "LINE", "TEXT_MUTED": "MUTED", "NEUTRAL": "BTN", "ON_GREEN": "ON", "OFF_RED": "OFF",
-    "DIAGRAM_BG": "DIAGRAM", "DISABLED_BG": "BTN_DISABLED", "DISABLED_FG": "MUTED",
+    "SURFACE": "WIN",
     "TL_EMPTY": "TRACK", "TL_ON": "ON", "TL_OFF": "OFF", "TL_OUTLINE": "LINE_SOFT",
     "TL_ONSET_MARK": "ON_MARK", "TL_OFFSET_MARK": "OFF_MARK", "TL_NOTE_MARK": "NOTE",
     "PLAYHEAD": "ACCENT", "STATUS_OK": "ON_MARK", "STATUS_BAD": "OFF_MARK",

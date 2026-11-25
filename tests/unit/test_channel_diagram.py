@@ -33,7 +33,7 @@ def test_channel_highlight_changes_only_mapped_mask_interiors(template):
     selected = render_channel_diagram(setup, "RH")
     difference = ImageChops.difference(neutral, selected).convert("L")
     assert difference.getbbox() is not None
-    masks = dict(load_zone_masks(zones_dir(template), coding_setup=setup))
+    masks = dict(load_zone_masks(zones_dir(template)))
     for zone in setup.channel_zones["RH"]:
         region = Image.fromarray((masks[zone] == 0).astype("uint8") * 255)
         difference = ImageChops.multiply(difference, ImageChops.invert(region))

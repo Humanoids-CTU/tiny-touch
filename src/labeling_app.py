@@ -387,7 +387,6 @@ class LabelingApp(tk.Tk):
         self.labeling_timer = LabelingTimer()
         self._zone_masks = []
         self._zone_dir = None
-        self._zone_layout = None
         # Hover highlight + zone tag on the diagram (gui.diagram_highlight).
         # Built in _draw_diagram_base once masks and scale are known, keyed by
         # (zone directory, scale) so limb switches reuse it.
@@ -1388,8 +1387,7 @@ class LabelingApp(tk.Tk):
             return
         definition = get_template(self.template)
         expected_dir = asset_path(definition.masks_directory)
-        zone_layout = getattr(getattr(self, "coding_setup", None), "zone_layout", None)
-        if getattr(self, "_zone_dir", None) != expected_dir or getattr(self, "_zone_layout", None) != zone_layout:
+        if getattr(self, "_zone_dir", None) != expected_dir:
             self._reset_zone_cache()
             self._load_zone_masks()
         image_path = self._diagram_image_path()
@@ -1418,7 +1416,7 @@ class LabelingApp(tk.Tk):
         self.diagram_canvas.create_image(0, 0, anchor="nw", image=self.photo, tags=("diagram",))
         draw_zone_labels(self.diagram_canvas, self.zone_display, self._zone_label_positions, scale)
 
-        key = (self._zone_dir, self._zone_layout, scale)
+        key = (self._zone_dir, scale)
         if self._highlighter is None or self._highlighter_key != key:
             if self._highlighter is not None:
                 self._highlighter.destroy()
@@ -1439,15 +1437,10 @@ class LabelingApp(tk.Tk):
             self._zone_label_positions = zone_label_positions(self._zone_masks)
             return
         directory = asset_path(get_template(self.template).masks_directory)
-        setup = getattr(self, "coding_setup", None)
-        layout = getattr(setup, "zone_layout", None)
-        if (getattr(self, "_zone_dir", None) == directory
-                and getattr(self, "_zone_layout", None) == layout
-                and getattr(self, "_zone_masks", None)):
+        if getattr(self, "_zone_dir", None) == directory and getattr(self, "_zone_masks", None):
             return
         self._zone_dir = directory
-        self._zone_layout = layout
-        self._zone_masks = load_zone_masks(directory, coding_setup=setup)
+        self._zone_masks = load_zone_masks(directory)
         self._zone_label_positions = zone_label_positions(self._zone_masks)
 
     def find_image_with_white_pixel(self, x, y):
@@ -2784,7 +2777,7 @@ class LabelingApp(tk.Tk):
             return self._save_zone_display(ZoneDisplaySettings(labels, self.zone_display.show_names))
 
         edit_zone_names(
-            self._settings_win, editable_zone_names(self.template, coding_setup=getattr(self, "coding_setup", None)), self.zone_display,
+            self._settings_win, editable_zone_names(self.template), self.zone_display,
             apply, center=center_over_parent,
         )
 

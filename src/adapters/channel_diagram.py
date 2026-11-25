@@ -13,7 +13,7 @@ def render_channel_diagram(setup, channel, masks=None):
     with Image.open(asset_path(get_template(setup.template).diagram)) as source:
         image = source.convert("RGB")
     if masks is None:
-        masks = load_zone_masks(zones_dir(setup.template), coding_setup=setup)
+        masks = load_zone_masks(zones_dir(setup.template))
     selected = set(setup.channel_zones.get(channel, ()))
     combined = Image.new("L", image.size, 0)
     for zone, pixels in masks:

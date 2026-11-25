@@ -171,7 +171,7 @@ extension. Adding a PNG to the mask directory adds a zone; nothing else needs to
 | --- | --- | --- |
 | Default | [`src/resources/icons/zones3/`](../src/resources/icons/zones3/) | 38 masks: `A`–`Z`, `WB`, `XB`, `YB`, `ZB`, `BOX1`–`BOX6`, `LINE`, `OUTSIDE` |
 | Alternate | [`src/resources/icons/zones3_new_template/`](../src/resources/icons/zones3_new_template/) | 32 masks: `A`–`T`, `QB`, `RB`, `SB`, `TB`, `BOX1`–`BOX6`, `LINE`, `OUTSIDE` |
-| General | [`src/resources/icons/zones_general/`](../src/resources/icons/zones_general/) | New setups use zones `1`–`12`, plus `LINE` and `OUTSIDE`. Zones `9`–`12` are the four bottom boxes. Historical setups retain `Channel1`–`Channel4` for these same regions. |
+| General | [`src/resources/icons/zones_general/`](../src/resources/icons/zones_general/) | New setups use zones `1`–`12`, plus `LINE` and `OUTSIDE`. Zones `9`–`12` are the four bottom boxes. |
 
 Select a video from the library, then choose Default, Alternate, or General in the
 preparation wizard. The prepared project choice determines the annotation diagram, Special Zones outline, and channel images. **The zone name alone does not tell you which
@@ -184,12 +184,10 @@ of zone IDs fixed by the selected template. It identifies the acting channel's d
 it does not restrict which zones that channel may touch. A zone belongs to at
 most one channel. User labels do not change IDs or relationships. New-video setup
 shows these relationships read-only; there is no mapping editor. `zone_layout` is
-`numbered` for new setups and `legacy` for historical General zone IDs.
+always `numbered`.
 
 Defaults in Channel1–4 order are Default: N, M, B, A; Alternate: L, K, B, A;
-General: 9, 10, 11, 12. Setup files using schema 1 remain readable and receive
-the historical assignments (General: Channel1, Channel2, Channel3, Channel4).
-Loading a historical project does not rename its annotation zone IDs. The saved
+General: 9, 10, 11, 12. Setup files using schema 1 cannot be read. The saved
 mapping is frozen with the other settings and inherited by Reliability passes.
 CSV format remains version 2. Hover displays the user label (or ID if unlabeled);
 the reference PNG displays the label with the ID beneath it. CSV zone cells always

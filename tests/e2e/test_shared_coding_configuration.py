@@ -22,7 +22,7 @@ def test_shared_json_prefills_wizard_and_reopening_uses_frozen_copy(app, workspa
         channel_labels={"RH": "Observer", "LH": "Target", "RF": "Object", "LF": "Background"},
         parameter_labels={"Par1": "Looking", "Par2": "P2", "Par3": "P3"},
     )
-    store.save(setup, "coding_look.json")
+    store.save(setup, "shared_protocol.json")
     workspace.chosen_video = str(workspace.video)
     dismiss_dialog(app, "Video library", "Load new video")
     dismiss_dialog(app, "Select Mode", "Continue", radio_text="Normal")
@@ -37,8 +37,8 @@ def test_shared_json_prefills_wizard_and_reopening_uses_frozen_copy(app, workspa
             if window is not None:
                 if not state["selected"]:
                     picker = find_widget(window, cls=ttk.Combobox)
-                    assert "coding_look" in picker.cget("values")
-                    picker.set("coding_look")
+                    assert "shared_protocol" in picker.cget("values")
+                    picker.set("shared_protocol")
                     click(window, "Use configuration")
                     state["selected"] = True
                 button = find_widget(window, text="Next", cls=ttk.Button)
@@ -65,7 +65,7 @@ def test_shared_json_prefills_wizard_and_reopening_uses_frozen_copy(app, workspa
     assert app.state_repo.load_preparation_state() == "ready"
     assert app.par1_btn.cget("text") == "Looking"
     assert find_widget(app.mode_controls_frame, text="Observer") is not None
-    store.save(replace(setup, name="Changed protocol", zone_labels={"1": "Changed target"}), "coding_look.json", overwrite=True)
+    store.save(replace(setup, name="Changed protocol", zone_labels={"1": "Changed target"}), "shared_protocol.json", overwrite=True)
     load_video(app, workspace, workspace.video)
     assert app.coding_setup == setup
     save(app)

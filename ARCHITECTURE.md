@@ -442,8 +442,7 @@ ambiguous same-name sources must be rejected rather than silently reusing frames
 JSON representation uses `Channel1` through `Channel4`; working-state adapters
 use the internal `RH`, `LH`, `RF`, `LF` keys in that order. Schema 4 renamed the
 former foot keys `RL`/`LL` to `RF`/`LF` without migration. Diagram geometry remains unchanged;
-General uses numbered bottom zones for new setups and preserves historical IDs
-through the saved zone_layout discriminator. New selectors use Channel 1–4 with user-supplied labels.
+General uses numbered bottom zones `9`–`12`. New selectors use Channel 1–4 with user-supplied labels.
 
 `adapters.coding_configs.CodingConfigStore` reads and writes named JSON files in
 `config/` beside the application's `config.json`. The GUI supplies this directory,
@@ -478,10 +477,10 @@ General uses eight square zones (`1`-`8`). Portable channel order is Channel1 (`
 Channel2 (`LH`), Channel3 (`RF`), Channel4 (`LF`), independently of historical CSV
 column order. New exports use these generic channel identifiers for every diagram.
 New General setups use bottom zones `9`–`12`, mapped to Channel1–4 by default.
-Historical snapshots keep the old bottom-zone IDs `Channel1`–`Channel4` using
-`zone_layout="legacy"`. Setup-aware mask adapters translate IDs without changing
-pixel geometry or existing annotations. Coding setup schema 2 stores explicit
-`channel_zones` independently of all display names; schema 1 is still readable.
+Coding setup schema 2 stores explicit `channel_zones` independently of all
+display names. Its serialized `zone_layout` is always `numbered`; schema 1 files
+and the older `zone_layout="legacy"` are refused with a request to recreate the
+configuration.
 The setup wizard displays template-fixed assignments read-only and applies those
 defaults when importing a preset. Existing prepared snapshots retain their recorded
 assignments. Zone labels never rename annotation IDs; hover displays the label,

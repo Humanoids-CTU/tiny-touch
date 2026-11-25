@@ -25,7 +25,7 @@ def test_channel_name_focus_outlines_only_assigned_zone(app, template):
     pump(app)
     wizard.highlight_channel(None)
     neutral = ImageTk.getimage(wizard.channel_photo).convert("RGB")
-    masks = dict(load_zone_masks(zones_dir(template), coding_setup=wizard.setup))
+    masks = dict(load_zone_masks(zones_dir(template)))
     for channel in wizard.setup.channel_labels:
         entry = next(widget for widget in walk(wizard.win)
                      if getattr(widget, "setup_key", None) == channel)

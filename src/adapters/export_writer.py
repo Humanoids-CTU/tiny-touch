@@ -52,7 +52,7 @@ def write_export_metadata(meta_path, program_version, video_name, labeling_mode,
     setup_snapshot = setup.to_dict()
     setup_snapshot['zone_labels'] = {
         zone: setup.zone_labels.get(zone, zone)
-        for zone in list_zone_names(template, coding_setup=setup)
+        for zone in list_zone_names(template)
     }
     meta = {
         'Export Format Version': EXPORT_FORMAT_VERSION,

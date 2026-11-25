@@ -9,7 +9,6 @@ from adapters.sqlite_repo import SqliteRepository
 from domain.coding_setup import CodingSetup, default_coding_setup
 from domain.templates import TemplateState
 from domain.zone_display import ZoneDisplaySettings
-from service_layer.coding_setup_service import inherit_coding_setup
 
 
 def test_channel_names_are_independent_of_zone_names():
@@ -60,38 +59,16 @@ def test_incomplete_or_future_configs_fail():
         replace(default_coding_setup(), channel_labels={"RH": "a" * 41, "LH": "2", "RF": "3", "LF": "4"})
 
 
-def test_portable_schema_uses_channel_parameters_and_reads_legacy_key():
+def test_portable_schema_uses_channel_parameters():
     setup = default_coding_setup(limb_parameter_labels={"Par1": "LP1", "Par2": "LP2", "Par3": "LP3"})
     raw = setup.to_dict()
     assert raw["channel_parameter_labels"] == dict(setup.limb_parameter_labels)
     assert "limb_parameter_labels" not in raw
     assert CodingSetup.from_dict(raw) == setup
-    legacy = dict(raw)
-    legacy["limb_parameter_labels"] = legacy.pop("channel_parameter_labels")
-    assert CodingSetup.from_dict(legacy) == setup
-    assert "channel_parameter_labels" in CodingSetup.from_dict(legacy).to_dict()
-    assert CodingSetup.from_dict(legacy).limb_parameter_labels["Par1"] == "LP1"
-
-
-def test_legacy_database_snapshot_keeps_explicit_channel_labels(repo):
-    setup = default_coding_setup(limb_parameter_labels={"Par1": "Historical grasp", "Par2": "LP2", "Par3": "LP3"})
-    legacy = setup.to_dict()
-    legacy["limb_parameter_labels"] = legacy.pop("channel_parameter_labels")
-    repo.save_template(TemplateState("default", True))
-    repo.set_meta_many({"coding_setup": json.dumps(legacy), "preparation_state": "ready"})
-    assert repo.load_coding_setup() == setup
-    repo.mark_prepared()
-    assert repo.load_coding_setup().limb_parameter_labels["Par1"] == "Historical grasp"
-
-
-def test_portable_schema_rejects_conflicting_channel_parameter_aliases():
-    setup = default_coding_setup()
-    raw = setup.to_dict()
-    raw["limb_parameter_labels"] = dict(setup.limb_parameter_labels)
-    assert CodingSetup.from_dict(raw) == setup
-    raw["limb_parameter_labels"]["Par1"] = "Different study meaning"
-    with pytest.raises(ValueError, match="Conflicting"):
-        CodingSetup.from_dict(raw)
+    renamed = dict(raw)
+    renamed["limb_parameter_labels"] = renamed.pop("channel_parameter_labels")
+    with pytest.raises(ValueError, match="missing or unknown fields"):
+        CodingSetup.from_dict(renamed)
 
 
 def test_portable_schema_requires_channel_parameters():
@@ -148,23 +125,6 @@ def test_reopen_snapshot_ignores_later_config_file_changes(tmp_path):
         assert reopened.load_preparation_state() == "ready"
     finally:
         reopened.close()
-
-
-def test_reliability_inherits_a_prepared_setup(repo, tmp_path):
-    setup = replace(default_coding_setup("general"), zone_labels={"1": "Target"},
-                    parameter_labels={"Par1": "Gaze", "Par2": "P2", "Par3": "P3"})
-    target = SqliteRepository(str(tmp_path / "reliability.db"))
-    try:
-        repo.save_coding_setup(setup)
-        with pytest.raises(ValueError):
-            inherit_coding_setup(repo, target)
-        repo.mark_prepared()
-        assert inherit_coding_setup(repo, target) == setup
-        assert target.load_preparation_state() == "draft"
-        target.mark_prepared()
-        assert target.load_coding_setup() == setup
-    finally:
-        target.close()
 
 
 def test_legacy_template_lock_cannot_be_bypassed_by_new_snapshot(repo):

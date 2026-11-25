@@ -10,15 +10,21 @@ SCHEMA_VERSION = 2
 CHANNEL_KEYS = ("RH", "LH", "RF", "LF")
 PARAMETER_KEYS = ("Par1", "Par2", "Par3")
 PORTABLE_CHANNELS = dict(zip(("Channel1", "Channel2", "Channel3", "Channel4"), CHANNEL_KEYS))
+# Serialized for the frozen export metadata contract; it is the only value.
+ZONE_LAYOUT = "numbered"
+FIELDS = {"schema_version", "name", "template", "zone_labels", "zone_layout", "channel_zones",
+          "channel_labels", "parameter_labels", "channel_parameter_labels"}
+OLDER_CONFIGURATION = ("This coding configuration was made by an older version of TinyTouch "
+                       "and cannot be read. Recreate it in the coding setup wizard.")
 
 
-def default_channel_zones(template, zone_layout="numbered"):
+def default_channel_zones(template):
     """Defaults match the filled regions in the shipped channel reference images."""
     get_template(template)
     zones = {
         "default": ("N", "M", "B", "A"),
         "alternate": ("L", "K", "B", "A"),
-        "general": tuple(PORTABLE_CHANNELS) if zone_layout == "legacy" else ("9", "10", "11", "12"),
+        "general": ("9", "10", "11", "12"),
     }[template]
     return {key: (zone,) for key, zone in zip(CHANNEL_KEYS, zones)}
 
@@ -61,13 +67,10 @@ class CodingSetup:
     parameter_labels: Mapping[str, str] = field(default_factory=dict)
     limb_parameter_labels: Mapping[str, str] = field(default_factory=dict)
     channel_zones: Mapping[str, tuple[str, ...]] | None = None
-    zone_layout: str = "numbered"
 
     def __post_init__(self):
         get_template(self.template)
-        if self.zone_layout not in {"numbered", "legacy"}:
-            raise ValueError("Unknown zone layout")
-        zones = default_channel_zones(self.template, self.zone_layout) if self.channel_zones is None else self.channel_zones
+        zones = default_channel_zones(self.template) if self.channel_zones is None else self.channel_zones
         object.__setattr__(self, "channel_zones", _channel_zones(zones))
         object.__setattr__(self, "name", _text(self.name, "Coding name"))
         object.__setattr__(self, "zone_labels", ZoneDisplaySettings(self.zone_labels).labels)
@@ -83,7 +86,7 @@ class CodingSetup:
         return {
             "schema_version": SCHEMA_VERSION, "name": self.name, "template": self.template,
             "zone_labels": dict(self.zone_labels),
-            "zone_layout": self.zone_layout,
+            "zone_layout": ZONE_LAYOUT,
             "channel_zones": {portable: list(self.channel_zones[key]) for portable, key in PORTABLE_CHANNELS.items()},
             "channel_labels": {portable: self.channel_labels[key] for portable, key in PORTABLE_CHANNELS.items()},
             "parameter_labels": dict(self.parameter_labels),
@@ -92,30 +95,26 @@ class CodingSetup:
 
     @classmethod
     def from_dict(cls, value):
-        required = {"schema_version", "name", "template", "zone_labels", "channel_labels", "parameter_labels"}
-        parameter_fields = {"channel_parameter_labels", "limb_parameter_labels"}
-        if isinstance(value, dict) and value.get("schema_version") == SCHEMA_VERSION:
-            required |= {"channel_zones", "zone_layout"}
-        if not isinstance(value, dict) or not required <= set(value) or set(value) - required - parameter_fields or not set(value) & parameter_fields:
-            raise ValueError("Coding configuration has missing or unknown fields")
-        if parameter_fields <= set(value) and value["channel_parameter_labels"] != value["limb_parameter_labels"]:
-            raise ValueError("Conflicting channel parameter labels in coding configuration")
-        if type(value["schema_version"]) is not int or value["schema_version"] not in {1, SCHEMA_VERSION}:
+        if not isinstance(value, dict):
+            raise ValueError("A coding configuration must be a JSON object")
+        version = value.get("schema_version")
+        if type(version) is int and version < SCHEMA_VERSION:
+            raise ValueError(OLDER_CONFIGURATION)
+        if type(version) is not int or version != SCHEMA_VERSION:
             raise ValueError("Unsupported coding configuration version")
+        if set(value) != FIELDS:
+            raise ValueError("Coding configuration has missing or unknown fields")
+        if value["zone_layout"] != ZONE_LAYOUT:  # Only older versions wrote another value.
+            raise ValueError(OLDER_CONFIGURATION)
         channels = _labels(value["channel_labels"], tuple(PORTABLE_CHANNELS), "Portable channel labels")
-        zone_layout = value.get("zone_layout", "legacy" if value["template"] == "general" else "numbered")
-        zones = value.get("channel_zones")
-        if value["schema_version"] == SCHEMA_VERSION and zones is None:
-            raise ValueError("Channel zones must be an explicit mapping")
-        if zones is not None:
-            if not isinstance(zones, Mapping) or set(zones) != set(PORTABLE_CHANNELS):
-                raise ValueError("Portable channel zones must contain exactly Channel1, Channel2, Channel3, Channel4")
-            zones = {key: zones[portable] for portable, key in PORTABLE_CHANNELS.items()}
+        zones = value["channel_zones"]
+        if not isinstance(zones, Mapping) or set(zones) != set(PORTABLE_CHANNELS):
+            raise ValueError("Portable channel zones must contain exactly Channel1, Channel2, Channel3, Channel4")
         return cls(name=value["name"], template=value["template"], zone_labels=value["zone_labels"],
-                   channel_zones=zones, zone_layout=zone_layout,
+                   channel_zones={key: zones[portable] for portable, key in PORTABLE_CHANNELS.items()},
                    channel_labels={key: channels[portable] for portable, key in PORTABLE_CHANNELS.items()},
                    parameter_labels=value["parameter_labels"],
-                   limb_parameter_labels=value["channel_parameter_labels"] if "channel_parameter_labels" in value else value["limb_parameter_labels"])
+                   limb_parameter_labels=value["channel_parameter_labels"])
 
 
 def default_coding_setup(template="default", parameter_labels=None, limb_parameter_labels=None):

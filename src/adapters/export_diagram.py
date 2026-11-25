@@ -163,7 +163,7 @@ def _render_png(setup):
         diagram = source.convert("RGB")
     if diagram.size != definition.native_size:
         raise ValueError("Diagram dimensions do not match the template")
-    masks = load_zone_masks(zones_dir(setup.template), coding_setup=setup)
+    masks = load_zone_masks(zones_dir(setup.template))
     if not masks or any(mask.shape[::-1] != diagram.size for _, mask in masks):
         raise ValueError("Diagram zone masks are missing or have inconsistent dimensions")
     positions = zone_label_positions(masks)

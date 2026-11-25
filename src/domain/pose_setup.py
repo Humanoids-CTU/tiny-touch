@@ -16,10 +16,6 @@ class PoseCodingSetup:
         key: f"P{i}" for i, key in enumerate(PARAMETER_KEYS, 1)})
     zone_labels: Mapping[str, str] = field(default_factory=dict)
 
-    @property
-    def zone_layout(self):
-        return "numbered"
-
     def __post_init__(self):
         if self.template != POSE_TEMPLATE:
             raise ValueError("3d Pose currently supports only the Alternate template")

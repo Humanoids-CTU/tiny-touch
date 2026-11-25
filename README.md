@@ -126,7 +126,7 @@ or picking up an object; agree on what each box means before labeling.
 
 ### Share a coding configuration
 
-Put shared setup files such as `coding_look.json` in the `config/` folder beside
+Put shared setup files (JSON) in the `config/` folder beside
 the application's `config.json`. Select a configuration while preparing a new
 video to prefill its diagram, zone names, four channel names, and all six
 parameter labels. Review or edit the values before preparing the video. You can

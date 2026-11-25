@@ -65,8 +65,6 @@ def normalize_export_df(df):
     import json
     import math
     from domain.coding_setup import PORTABLE_CHANNELS
-    if not any(str(column).startswith('Channel') for column in df.columns):
-        raise ExportReadError('Export CSV ' + UNVERSIONED_EXPORT_MESSAGE)
     result = df.copy()
     for channel,key in PORTABLE_CHANNELS.items():
         required = [f'{channel}_{suffix}' for suffix in ('XY','Onset','Zones')]
@@ -92,5 +90,4 @@ def normalize_export_df(df):
         for suffix in ('Onset','Zones','Parameter_1','Parameter_2','Parameter_3'):
             if f'{channel}_{suffix}' in df:
                 result[f'{key}_{suffix}'] = df[f'{channel}_{suffix}']
-    result.attrs['export_format_version'] = 2
     return result

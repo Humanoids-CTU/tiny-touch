@@ -21,17 +21,21 @@ def test_mapping_is_immutable_and_portable(tmp_path):
     assert store.load(store.save(setup, 'study')) == setup
 
 
-def test_schema_one_general_preserves_historical_footer_ids():
-    raw = default_coding_setup('general').to_dict()
-    raw['schema_version'] = 1
-    raw.pop('channel_zones', None)
-    raw.pop('zone_layout', None)
-    raw['zone_labels'] = {'Channel1': 'Parent'}
-    setup = CodingSetup.from_dict(raw)
-    assert setup.zone_layout == 'legacy'
-    assert setup.channel_zones['RH'] == ('Channel1',)
-    assert validate_coding_setup(setup) is setup
-    assert CodingSetup.from_dict(setup.to_dict()) == setup
+@pytest.mark.parametrize('change', [
+    {'schema_version': 1},
+    {'zone_layout': 'legacy'},
+])
+def test_configuration_from_an_older_version_must_be_recreated(tmp_path, change):
+    raw = {**default_coding_setup('general').to_dict(), **change}
+    with pytest.raises(ValueError, match='older version of TinyTouch'):
+        CodingSetup.from_dict(raw)
+    path = tmp_path / 'old.json'
+    path.write_text(json.dumps(raw), encoding='utf-8')
+    store = CodingConfigStore(tmp_path)
+    assert store.list_configs() == []
+    with pytest.raises(ValueError, match='Recreate it'):
+        store.import_config(path, 'copy.json')
+    assert not (tmp_path / 'copy.json').exists()
 
 
 @pytest.mark.parametrize('template,expected', [
