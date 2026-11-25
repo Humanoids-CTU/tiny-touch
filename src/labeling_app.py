@@ -3361,6 +3361,22 @@ class LabelingApp(tk.Tk):
             surface.close()  # Native resources must go before Tk's child HWND.
         super().destroy()
 
+    def close_before_project(self):
+        """Close without a prompt while no video is open (main.close_for_update).
+
+        `project_at_close` stays unset, so main.py keeps the remembered last
+        project and the next start resumes it.
+        """
+        if getattr(self, "_closing", False) or self.video is not None:
+            return
+        self._closing = True
+        try:
+            self.frame_buffer.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            logger.warning("loader pool shutdown failed", exc_info=True)
+        self._cancel_pending_timers()
+        self.destroy()
+
     def on_close(self):
         if getattr(self, "_closing", False):
             return

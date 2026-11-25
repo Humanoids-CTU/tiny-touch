@@ -397,7 +397,9 @@ Every failure returns `None` and logs one line; success logs one line too. The t
 calls Tk: it fills an `UpdateCheck` that the Tk thread reads. When the main window is revealed,
 `main.continue_startup` (queued with `after_idle`, like before) shows
 `app_dialogs.show_update_notice` (modal) if the answer is already there, and only then calls
-`open_startup_project`. Otherwise startup continues and an `after` poll shows the notice at the
+`open_startup_project`. **Open release page** opens the browser and closes the app instead
+(`main.close_for_update`: without a prompt and without loading the last project, which stays
+remembered; the normal close if a video is already open). Otherwise startup continues and an `after` poll shows the notice at the
 first moment no grab is held and no video load is running (`_suspend_frame_workers`), up to
 `UPDATE_NOTICE_LATE_WINDOW_S = 10` s after the reveal; after that it is dropped for the session.
 The release-page link is built from the validated version; nothing from the answer is shown or

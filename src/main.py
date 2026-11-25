@@ -79,8 +79,24 @@ def _app_is_free(app) -> bool:
         return False
 
 
-def offer_update(app, update) -> None:
-    """Show the update notice for a finished check and act on the answer."""
+def close_for_update(app) -> None:
+    """Close the app after "Open release page".
+
+    With no video open (the usual case: the notice comes before the last
+    project is reopened) it closes without a prompt. With a video open it is
+    the normal close, including the save prompt.
+    """
+    if app.video is None:
+        app.close_before_project()
+    else:
+        app.on_close()
+
+
+def offer_update(app, update) -> bool:
+    """Show the update notice for a finished check and act on the answer.
+
+    True when the user opened the release page: the app is then closing.
+    """
     from adapters import config, update_check
     from gui import app_dialogs
 
@@ -94,11 +110,14 @@ def offer_update(app, update) -> None:
             webbrowser.open(update_check.release_page_url(latest))
         except Exception:
             logger.warning("could not open the release page", exc_info=True)
+        close_for_update(app)
+        return True
     elif choice == app_dialogs.UPDATE_SKIP:
         try:
             config.save_update_skipped_version(latest)
         except OSError:
             logger.warning("could not remember the skipped version", exc_info=True)
+    return False
 
 
 def _poll_late_update(app, update, deadline) -> None:
@@ -125,12 +144,13 @@ def _poll_late_update(app, update, deadline) -> None:
 
 def continue_startup(app, update, last_project, revealed_at) -> None:
     """After the main window appeared: the update notice (if GitHub has
-    answered), then the last project or the video library."""
+    answered), then the last project or the video library. Nothing is loaded
+    when the user opened the release page: the app closes instead."""
     if update is not None:
         try:
             if update.done:
-                if update.latest is not None:
-                    offer_update(app, update)
+                if update.latest is not None and offer_update(app, update):
+                    return
             else:
                 _poll_late_update(app, update, revealed_at + UPDATE_NOTICE_LATE_WINDOW_S)
         except Exception:
