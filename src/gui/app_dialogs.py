@@ -1,4 +1,4 @@
-"""App-level dialogs: close and discard confirmation, labeling-mode picker, Settings.
+"""App-level dialogs: close and discard confirmation, update notice, labeling-mode picker, Settings.
 
 The dialog functions take the ``LabelingApp`` as ``app``. Styled with the
 shared theme roles and ``gui.widgets`` (grouped list, segmented control,
@@ -47,6 +47,13 @@ TOGGLE_MIN_SEG = 84              # two-option toggles: roomy segments, like the 
 # custom_confirm_close results (None: keep the app open).
 CLOSE_SAVE = "save"
 CLOSE_DISCARD = "discard"
+
+# Update notice (design px) and its results.
+UPDATE_NOTICE_MIN_W = 420
+UPDATE_NOTICE_WRAP = 400
+UPDATE_OPEN_PAGE = "open"
+UPDATE_CONTINUE = "continue"
+UPDATE_SKIP = "skip"
 
 
 def center_over_parent(window, parent) -> None:
@@ -124,6 +131,52 @@ def custom_confirm_close(root, unsaved_changes=0):
     if can_discard:
         ttk.Button(foot, text="Don't save", command=lambda: finish(CLOSE_DISCARD),
                    style="Tool.TButton", takefocus=0).pack(side="left")
+    win.protocol("WM_DELETE_WINDOW", win.destroy)
+    window_reveal.place_on_reveal(win, lambda: center_over_parent(win, root))
+    window_reveal.modal_grab(win)
+    win.wait_window()
+    return choice
+
+
+def show_update_notice(root, current, latest):
+    """Tell the user that TinyTouch `latest` is available (`current` is in use).
+
+    Returns UPDATE_OPEN_PAGE, UPDATE_SKIP or UPDATE_CONTINUE. Escape, Enter and
+    the title-bar close button mean "Continue". The caller acts on the answer.
+    """
+    px = theme.px
+    win = tk.Toplevel(root)   # hidden until settled and centred (gui.window_reveal)
+    win.title("Update available")
+    win.resizable(False, False)
+    win.transient(root)
+    theme.bind_colors(win, bg="WIN")
+    win.minsize(px(UPDATE_NOTICE_MIN_W), 1)
+    choice = UPDATE_CONTINUE
+
+    content = _dialog_frame(win)
+    ttk.Label(content, text=f"TinyTouch {latest} is available", style="Title.TLabel",
+              wraplength=px(UPDATE_NOTICE_WRAP)).pack(anchor="w", padx=px(SECTION_INDENT))
+    ttk.Label(content, style="Muted.TLabel", wraplength=px(UPDATE_NOTICE_WRAP), justify="left",
+              text=(f"You are using TinyTouch {current}. Finish your current projects in this version: "
+                    "they may not open in the new one. We recommend extracting the new version "
+                    "into a different folder and starting new projects there.")
+              ).pack(anchor="w", padx=px(SECTION_INDENT), pady=(px(6), 0))
+
+    def finish(result):
+        nonlocal choice
+        choice = result
+        win.destroy()
+
+    foot = _footer(content, top_gap=18)
+    # Packed right-to-left: [Skip this version]   [Continue with x] [Open release page]
+    ttk.Button(foot, text="Open release page", command=lambda: finish(UPDATE_OPEN_PAGE),
+               style="Primary.TButton", takefocus=0).pack(side="right")
+    ttk.Button(foot, text=f"Continue with {current}", command=win.destroy,
+               style="Tool.TButton", takefocus=0).pack(side="right", padx=(0, px(BUTTON_GAP)))
+    ttk.Button(foot, text="Skip this version", command=lambda: finish(UPDATE_SKIP),
+               style="Tool.TButton", takefocus=0).pack(side="left")
+    win.bind("<Return>", lambda _e: win.destroy())
+    win.bind("<Escape>", lambda _e: win.destroy())
     win.protocol("WM_DELETE_WINDOW", win.destroy)
     window_reveal.place_on_reveal(win, lambda: center_over_parent(win, root))
     window_reveal.modal_grab(win)

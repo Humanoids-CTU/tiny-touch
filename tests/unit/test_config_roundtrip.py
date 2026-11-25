@@ -117,6 +117,20 @@ def test_file_is_indent2_utf8_no_bom(config_path):
     assert raw.decode("utf-8").startswith('{\n  "diagram_scale": 1.5,')
 
 
+def test_skipped_update_version_keeps_the_rest_of_the_config(config_path):
+    """"Skip this version" adds one key at the end; every other key, value
+    and the key order stay as they were."""
+    save_config(dict(FULL_CONFIG))
+    assert config_utils.load_update_skipped_version() is None
+
+    config_utils.save_update_skipped_version("9.5.0")
+
+    loaded = load_config()
+    assert config_utils.load_update_skipped_version() == "9.5.0"
+    assert list(loaded.keys()) == list(FULL_CONFIG.keys()) + ["update_skipped_version"]
+    assert {k: v for k, v in loaded.items() if k != "update_skipped_version"} == FULL_CONFIG
+
+
 def test_loaders_see_saved_values(config_path):
     """The typed loaders sit on top of load_config; a saved config must be
     what they report back to the app."""

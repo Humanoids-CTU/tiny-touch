@@ -112,6 +112,24 @@ def save_last_project(project) -> None:
     save_config(config)
 
 
+# Release version ("MAJOR.MINOR.PATCH") chosen with "Skip this version" in the
+# startup update notice; absent until the user skips one.
+UPDATE_SKIPPED_VERSION_KEY = 'update_skipped_version'
+
+
+def load_update_skipped_version():
+    """The skipped release version string, or None."""
+    value = load_config().get(UPDATE_SKIPPED_VERSION_KEY)
+    return value if isinstance(value, str) and value else None
+
+
+def save_update_skipped_version(version: str) -> None:
+    """Remember `version` as skipped, keeping every other key and their order."""
+    config = load_config()
+    config[UPDATE_SKIPPED_VERSION_KEY] = version
+    save_config(config)
+
+
 def load_perf_config():
     config = load_config()
     enabled = bool(config.get('perf_enabled', CONFIG_DEFAULTS['perf_enabled']))

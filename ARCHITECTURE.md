@@ -63,6 +63,7 @@ tiny-touch/
 │   │   ├── frame_buffer.py       # Sliding JPEG buffer: buffering thread + decode pool
 │   │   ├── video_probe.py        # cv2 frame-count / fps probe
 │   │   ├── timer_resolution.py   # 1 ms Windows timer resolution while frames are paced
+│   │   ├── update_check.py       # Startup check for a newer GitHub release (stdlib, daemon thread)
 │   │   └── atomic_io.py          # Write-temp-then-replace helper
 │   ├── service_layer/            # Use cases: orchestration only
 │   │   ├── save_service.py       # The save Unit of Work
@@ -386,6 +387,24 @@ into the buffer alone does not authorize an annotation. Switching renderers
 preserves an unsaved note through the asynchronous repaint. The SQLite/CSV and
 diagram-coordinate contracts are unchanged. See [manual acceptance](docs/VIDEO_RENDERING.md).
 
+**Update check** ([plan](docs/plans/2026-11-25_update_notice.md)). Right after logging is
+configured, `main.start_update_check` calls `adapters.update_check.start_check`, which starts
+one daemon thread: a single `GET` of GitHub's `releases/latest` (stdlib `urllib`, 3 s timeout,
+generic `User-Agent`, no user data). `find_update` returns the newer version only when the tag
+is exactly `vMAJOR.MINOR.PATCH`, numerically newer than the current version, the release lists
+a file for this platform (`-windows-` / `-linux-`) and it is not `update_skipped_version`.
+Every failure returns `None` and logs one line; success logs one line too. The thread never
+calls Tk: it fills an `UpdateCheck` that the Tk thread reads. When the main window is revealed,
+`main.continue_startup` (queued with `after_idle`, like before) shows
+`app_dialogs.show_update_notice` (modal) if the answer is already there, and only then calls
+`open_startup_project`. Otherwise startup continues and an `after` poll shows the notice at the
+first moment no grab is held and no video load is running (`_suspend_frame_workers`), up to
+`UPDATE_NOTICE_LATE_WINDOW_S = 10` s after the reveal; after that it is dropped for the session.
+The release-page link is built from the validated version; nothing from the answer is shown or
+opened. `TINYTOUCH_UPDATE_TEST_VERSION=<MAJOR.MINOR.PATCH>` replaces `PROGRAM_VERSION` for this
+comparison and the dialog only (never exports or database provenance); an invalid value is
+ignored with a log line.
+
 ### Window reveal and content swaps
 
 No half-built frame reaches the screen ([plan](docs/plans/2026-11-12_flicker_free_ui.md)).
@@ -675,6 +694,7 @@ survive a Settings round-trip (`AppConfig.raw` keeps the full parsed dict). Keys
 | `max_display_width` / `max_display_height` | no | Optional hard caps on the rendered video size (`0` = unlimited). |
 | `last_labeling_mode` | no | Last-chosen `Normal` / `Reliability`; written by the mode dialog. |
 | `last_project` | no | `{"name", "annotation_type"}` of the project open when the app last closed, or `null`. `main.py` writes it after the main loop (only after a completed close) and, once the main window is shown, calls `LabelingApp.open_startup_project`: that project is resumed on its saved frame, or the video library opens when there was none or it is no longer prepared with its source present (`project_catalog.find_resumable`). |
+| `update_skipped_version` | no (update notice) | Absent by default. The release version (`"9.5.0"`) chosen with **Skip this version** in the startup update notice; that version is not offered again, a newer one is. Written by `config.save_update_skipped_version`. The update check itself is always on and has no key; `TINYTOUCH_UPDATE_TEST_VERSION` overrides the compared version for development. |
 
 Defaults for every key live in `adapters.config.CONFIG_DEFAULTS`, so a missing or corrupt
 `config.json` degrades to defaults with a WARN instead of failing. When the app is run from

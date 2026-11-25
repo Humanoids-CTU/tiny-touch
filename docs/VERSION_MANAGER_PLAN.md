@@ -3,6 +3,8 @@
 Status: agreed product direction; implementation not started.
 Recorded: 2026-11-11.
 
+First step: the [update notice at startup](plans/2026-11-25_update_notice.md) (2026-11-25).
+
 This document preserves the planned change from individually downloaded standalone
 executables to a launcher that installs and opens specific TinyTouch releases.
 It is an implementation roadmap, not a description of current functionality.
