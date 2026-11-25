@@ -14,6 +14,13 @@ started; the timelines shade that touch green from its start to its end.
 
 ## New in 9.5.0
 
+- **Older projects:** Touch projects made in 9.4.0 or earlier cannot be opened in
+  9.5.0. Finish them in the version you started them with, and extract 9.5.0
+  into a different folder for new projects.
+- **Update notice:** at startup TinyTouch tells you when a newer release exists
+  and links to its release page (see [New versions](#new-versions)).
+- **Right Foot and Left Foot:** the two lower channels are renamed from Right Leg
+  and Left Leg. Export columns are unchanged.
 - **Close without saving:** closing the app now offers **Save and close**,
   **Don't save** or **Cancel**. Don't save asks once more before discarding the
   changes made since the last save.
@@ -81,7 +88,7 @@ Download TinyTouch from the
 [Releases page](https://github.com/Humanoids-CTU/tiny-touch/releases).
 
 **Windows 10/11 (64-bit):** download **windows-x64.zip**, extract it, and
-double-click **TinyTouch-v9.4.0.exe** (the version number matches your download).
+double-click **TinyTouch-v9.5.0.exe** (the version number matches your download).
 
 **Linux (Ubuntu 24.04 or newer, Intel/AMD 64-bit):** download **linux-x64.zip**
 from the 9.3.0 release (the latest with a Linux build) and extract it. Open a
@@ -91,6 +98,16 @@ terminal in the extracted folder and run:
 chmod +x TinyTouch-v9.3.0
 ./TinyTouch-v9.3.0
 ```
+
+### New versions
+
+At startup TinyTouch asks GitHub once whether a newer release exists. No data
+about you or your projects is sent. If there is one, a short notice links to its
+release page; nothing is downloaded or installed for you.
+
+Finish a study in the version you started it with: projects may not open in a
+newer version. We recommend extracting the new version into a different folder
+and starting new projects there.
 
 ## Label a video
 
