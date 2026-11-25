@@ -82,6 +82,10 @@ external analysis scripts using the [data format specification](docs/DATA_FORMAT
 - **GPU-accelerated video rendering:** uses the GPU for video scaling and drawing
   to improve playback performance on supported hardware, with automatic CPU fallback.
 
+## Planned updates
+
+Linux support, custom templates, an option to safely delete extracted frames, and a signed Windows executable.
+
 ## Install
 
 Download TinyTouch from the
