@@ -1,9 +1,12 @@
 # TinyTouch launcher and version manager plan
 
-Status: agreed product direction; implementation not started.
+Status: agreed product direction; only the first step is implemented.
 Recorded: 2026-11-11.
 
-First step: the [update notice at startup](plans/2026-11-25_update_notice.md) (2026-11-25).
+First step, shipped in 9.5.0: a notice at startup when a newer release exists, with a
+link to its release page. Nothing is downloaded or installed. See "Update check" under
+Background processes in [ARCHITECTURE.md](../ARCHITECTURE.md). The launcher, version
+selection and separate workspaces described below are not implemented.
 
 This document preserves the planned change from individually downloaded standalone
 executables to a launcher that installs and opens specific TinyTouch releases.

@@ -129,7 +129,7 @@ and starting new projects there.
 
 | Control | Action |
 | --- | --- |
-| Left / right arrow | Step one frame; hold for 150 ms to play backward / forward (when Hold arrows is enabled) |
+| Left / right arrow | Step one frame; hold for 150 ms to play backward / forward |
 | **<** / **>**, or mouse wheel | Previous / next frame |
 | Shift + arrow, or **<<** / **>>** | Jump back / forward |
 | Space, or **Play / Stop** | Play or pause |
@@ -164,10 +164,7 @@ Appearance, playback preferences, and annotations remain editable.
 | Diagram size | Not in Settings: drag the small grip in the diagram's bottom-left corner to make the body diagram larger or smaller. The proportions stay fixed and the size is remembered. |
 | Dot size | Changes the size of the marks on the diagram. |
 | Fast-jump seconds | Sets how far **<< / >>** and **Shift + arrow** jump. |
-| Hold arrows to play | Steps once on key-down, starts playback after a 150 ms hold, and stops on release. Targets the video's frame rate without skipping frames; slower rendering slows playback. Disable for keyboard-repeat stepping. **< / >** always step one frame. |
-| Highlight the zone under the pointer | Tints the zone under the mouse on the diagram and shows its name, so you see which zone a click will record. Visual only. |
 | Show zone names on diagrams | Draws each zone's name on the body diagram. |
-| Coding setup | Shows the prepared project's fixed diagram and naming configuration. Set these names in the new-video wizard. |
 
 Newly generated video frames fit within **1920 × 1080**, preserving aspect ratio
 and every frame index. Smaller inputs are not enlarged during preparation.

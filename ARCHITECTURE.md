@@ -1,6 +1,6 @@
 # TinyTouch architecture
 
-**TinyTouch** is a desktop annotation tool for behavioral researchers studying how infants learn to understand their own body through self-touch. It provides **Touch Labeling**: frame-by-frame annotation of which limb (LH / RH / LF / RF) touches which body zone, including onset/offset marking, gaze tracking, and customizable global / per-limb parameters.
+**TinyTouch** is a desktop annotation tool for behavioral researchers studying how infants learn to understand their own body through self-touch. It provides two annotation types. **Touch**: frame-by-frame annotation of which limb (LH / RH / LF / RF) touches which body zone, including onset/offset marking, gaze tracking, and customizable global / per-limb parameters. **3D Pose**: zone ON/OFF events on the Alternate diagram, body and head size, and per-frame quality, stored and exported separately from Touch.
 
 This is the developer-facing document. See also:
 
@@ -26,7 +26,7 @@ Researchers record videos of infants and use TinyTouch to produce structured CSV
 - **Pandas** -- CSV / JSON I/O and tabular handling
 - **Plotly** -- interactive analysis dashboards (rendered to HTML and opened in the default browser)
 - **keyboard** -- global hotkey support
-- **PyInstaller** -- packaging into standalone Windows / Linux executables (see [TinyTouch.spec](TinyTouch.spec))
+- **PyInstaller** -- packaging into a standalone executable (see [TinyTouch.spec](TinyTouch.spec)); releases are Windows only since 9.4.0
 
 The full pinned list lives in [requirements.txt](requirements.txt).
 
@@ -35,30 +35,51 @@ The full pinned list lives in [requirements.txt](requirements.txt).
 ```
 tiny-touch/
 ├── src/                          # Application source
-│   ├── main.py                   # Entry point: builds and runs LabelingApp.mainloop()
-│   ├── labeling_app.py           # Main controller (~2.3k LOC): video, annotation, persistence,
+│   ├── main.py                   # Entry point: single instance, logging, update check, LabelingApp.mainloop()
+│   ├── labeling_app.py           # Main controller (~3.7k LOC): video, annotation, persistence,
 │   │                             # frame buffer + playback wiring, save/export orchestration
-│   ├── app_info.py               # Application version metadata
+│   ├── app_info.py               # PROGRAM_VERSION
 │   ├── video_model.py            # Video entity (LimbView wrappers over frames)
+│   ├── single_instance.py        # One running TinyTouch per app folder
+│   ├── startup_splash.py         # Status line of the PyInstaller splash (no-op from source)
 │   ├── perf_utils.py             # Optional perf timer + periodic summary logging
 │   ├── log_setup.py              # Session handlers, retention and exception hooks
 │   ├── resource_utils.py         # PyInstaller-aware asset path resolution (used by every layer above domain)
 │   ├── generate_zone_masks.py    # Offline tool: build per-zone PNG masks from a diagram
+│   ├── generate_general_template.py  # Offline tool: rebuild the General diagram and masks
 │   ├── domain/                   # PURE rules: no I/O, no Tk, no plotting, no config
 │   │   ├── model.py              # FrameRecord / FrameBundle shapes, LIMBS, LimbView
 │   │   ├── project.py            # ProjectPaths -- the only place on-disk layout is built
-│   │   ├── touch.py              # Touch-annotation rules (zone hit test, open-onset scan)
+│   │   ├── annotation_type.py    # Touch / Pose project kinds
+│   │   ├── annotation_channel.py # ON/OFF rules of one channel, shared by Touch and Pose
+│   │   ├── templates.py          # Template definitions and project selection rules
+│   │   ├── coding_setup.py       # Immutable Touch study labels (zones, channels, parameters)
+│   │   ├── zone_display.py       # Project display names (aliases) of zones
+│   │   ├── touch.py              # Touch-annotation rules (zone hit test, unpaired-mark scan)
+│   │   ├── touch_timeline.py     # Touch timeline projections
 │   │   ├── touch_stats.py        # Episode reconstruction + touch statistics (Analysis core)
+│   │   ├── report_labels.py      # Display labels for a report
+│   │   ├── pose.py               # Pose labels and painted-frame editing rules
+│   │   ├── pose_setup.py         # Immutable Pose study settings
+│   │   ├── pose_geometry.py      # Viewport padding for the Pose outlines
+│   │   ├── pose_timeline.py      # Sparse Pose display indexes
+│   │   ├── pose_export.py        # Pose export columns, cells and metadata content
 │   │   └── playback.py           # Pure play-step rule (boundary stop + clamped advance)
-│   ├── adapters/                 # I/O edges: files, cv2/ffmpeg, plotly, config.json
-│   │   ├── sqlite_repo.py        # Working-state DB per video (SOURCE OF TRUTH)
+│   ├── adapters/                 # I/O edges: files, cv2/ffmpeg, plotly, config.json, network
+│   │   ├── sqlite_repo.py        # Touch working-state DB per video (SOURCE OF TRUTH)
+│   │   ├── pose_sqlite_repo.py   # Pose working-state DB (state/<video>_pose.db)
+│   │   ├── project_catalog.py    # Read-only discovery of projects for the video library
+│   │   ├── coding_configs.py     # Named, shareable coding setup files (config/)
 │   │   ├── export_writer.py      # Versioned channel CSV + metadata snapshot (write)
+│   │   ├── export_diagram.py     # Labeled diagram PNG of the export, rendered without Tk
 │   │   ├── pose_export_writer.py # Pose per-frame CSV + metadata (write)
 │   │   ├── export_reader.py      # Export CSV read (format 2 only; unversioned rejected)
 │   │   ├── plotting.py           # Every plotly figure / CSV table (ReportFigure factory)
 │   │   ├── report_page.py        # master_<name>.html layout/CSS (inlines the figures)
 │   │   ├── config.py             # config.json read / write, AppConfig snapshot
 │   │   ├── zone_masks.py         # Zone-mask PNG loading + zone-name listing
+│   │   ├── channel_diagram.py    # Selected-channel feedback rendered from the zone mapping
+│   │   ├── pose_diagram.py       # Pose artwork, reference silhouette and matching masks
 │   │   ├── frame_extractor.py    # Frame extraction (ffmpeg → OpenCV fallback) + integrity
 │   │   ├── frame_buffer.py       # Sliding JPEG buffer: buffering thread + decode pool
 │   │   ├── video_probe.py        # cv2 frame-count / fps probe
@@ -67,24 +88,47 @@ tiny-touch/
 │   │   └── atomic_io.py          # Write-temp-then-replace helper
 │   ├── service_layer/            # Use cases: orchestration only
 │   │   ├── save_service.py       # The save Unit of Work
+│   │   ├── pose_project_service.py # Pose workspace save and restore (database only)
 │   │   ├── pose_export_service.py # Pose export: stage + publish after a Pose save
 │   │   ├── project_service.py    # Video load / project preparation, labeling timer
+│   │   ├── project_copy.py       # Fresh project identity for "Create new copy"
+│   │   ├── frame_preparation.py  # One cancellable frame-extraction worker
 │   │   ├── annotation_service.py # Click / parameter mutations on the frames dict
 │   │   └── analysis_service.py   # Analysis: read -> validate -> compute -> write
 │   ├── gui/                      # Tkinter only
-│   │   ├── ui_components.py      # Layout, widgets, key/mouse bindings
+│   │   ├── ui_components.py      # Main window layout, key/mouse bindings
+│   │   ├── theme.py              # Palettes, fonts, ttk styling
+│   │   ├── widgets.py            # Canvas-drawn controls (cards, segmented control, switch, chips)
+│   │   ├── app_icon.py           # Window / taskbar / exe icon, drawn at runtime
+│   │   ├── app_dialogs.py        # Close and discard confirmation, update notice, mode picker, Settings
+│   │   ├── video_library.py      # Library window: resume a project or prepare a new video
+│   │   ├── template_dialog.py    # Template selection with the zone-mask outlines
+│   │   ├── coding_setup_wizard.py # Touch coding setup wizard (draft until confirmed)
+│   │   ├── pose_setup_wizard.py  # Pose setup wizard
+│   │   ├── zone_names_dialog.py  # Project zone names editor
+│   │   ├── zone_labels.py        # Zone-name overlays for the diagram and Special Zones
+│   │   ├── frame_dialog.py       # "Select Frame" prompt
+│   │   ├── open_touches_dialog.py # Unpaired onsets/offsets before Analysis and on close
+│   │   ├── special_zones_app.py  # Special-zone selector + note dialog (Toplevel)
+│   │   ├── timeline.py           # Touch timeline rendering and shared canvas decorations
+│   │   ├── timeline_geometry.py  # Timeline coordinates and click mapping
+│   │   ├── timeline_raster.py    # Timeline tracks as pixel arrays
+│   │   ├── pose_panel.py         # Pose diagram, size and quality controls
+│   │   ├── pose_timeline.py      # Cached Pose timelines
 │   │   ├── diagram_highlight.py  # Hover highlight, zone tag and click flash on the diagram
 │   │   ├── diagram_resize.py     # Corner grip: drag to rescale the diagram (aspect kept)
-│   │   ├── theme.py              # Colors / fonts / widget styling
+│   │   ├── video_surface.py      # GPU video drawing in a Tk-owned child window (SDL)
+│   │   ├── video_overlay.py      # Name badge blended onto the video frame
+│   │   ├── floating_image.py     # Picture floating over a Tk window (Windows only)
 │   │   ├── native_title_bar.py   # Windows title-bar colors and DWM cloak; no-op on Linux
 │   │   ├── window_reveal.py      # Every window appears once, settled and placed
-│   │   ├── content_swap.py       # Rebuild a visible window behind a still cover
-│   │   └── special_zones_app.py  # Special-zone selector + note dialog (Toplevel)
+│   │   └── content_swap.py       # Rebuild a visible window behind a still cover
 │   └── resources/                # RUNTIME assets -- everything here ships in the exe
 │       └── icons/                # Body diagrams, limb images, zone masks
 │           ├── diagram0.png      # Default touch diagram (rendered on canvas)
 │           ├── zones3/           # Touch-mode zone masks (one PNG per zone)
 │           └── zones3_new_template/  # Alternate zone set (project: alternate)
+├── config/                       # Shareable coding setup files (see config/README.md)
 ├── data/                         # Output (gitignored) -- one folder per video
 ├── videos/                       # Local source videos (gitignored; not distributed)
 ├── tests/                        # pytest suite: unit/ + integration/ + e2e/ (see "Testing")
@@ -866,12 +910,13 @@ The executable is windowed (`console=False`): it opens no console, so console lo
 
 ## Releasing a New Version
 
-A GitHub Actions workflow ([.github/workflows/build.yml](.github/workflows/build.yml)) builds and publishes Windows x64 and Linux x64 (Ubuntu 24.04 / Python 3.12) artifacts on every non-legacy `v*` tag push, then creates a GitHub Release with the zips attached.
+A GitHub Actions workflow ([.github/workflows/build.yml](.github/workflows/build.yml)) builds the Windows x64 zip on every non-legacy `v*` tag push, then creates a GitHub Release with it attached and `docs/releases/<tag>.md` as the release text. The Linux job is still in the workflow but switched off (`if: ${{ false }}`) since 9.4.0.
 
 Quick reference:
 
-Update `PROGRAM_VERSION` in `src/app_info.py`, `version` in `CITATION.cff`, and the
-README version badge, executable examples, and versioned documentation links together.
+Update `PROGRAM_VERSION` in `src/app_info.py`, `version` in `CITATION.cff`, the README
+("New in" section and the executable name in Install) and add `docs/releases/<tag>.md`
+together. The startup update notice compares the release tag with `PROGRAM_VERSION`.
 
 ```bash
 # Bump PROGRAM_VERSION in src/app_info.py, commit, push to master, then:

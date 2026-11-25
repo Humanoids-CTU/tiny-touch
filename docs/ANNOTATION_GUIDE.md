@@ -18,10 +18,15 @@ the files it produces, read [DATA_FORMAT.md](DATA_FORMAT.md) instead.
 10. [Saving](#10-saving)
 11. [Analysis](#11-analysis)
 12. [Practical tips and common mistakes](#12-practical-tips-and-common-mistakes)
+13. [3D Pose projects](#13-3d-pose-projects)
 
 ---
 
 ## 1. What you are coding
+
+Sections 1 to 12 describe **Touch** projects. A **3D Pose** project uses the same
+window, navigation, notes and saving, with different labels; see
+[section 13](#13-3d-pose-projects).
 
 For each of the infant's four limbs — **RH** (right hand), **LH** (left hand), **RF**
 (right foot), **LF** (left foot) — you mark every episode in which that limb is in contact
@@ -60,8 +65,8 @@ your own, blind) so the two datasets can be compared instead of overwriting each
   extracted from the selected video.
 - `Labeling Mode` in the export metadata records which pass produced the file.
 
-The mode chip in the bottom-left corner of the window shows which mode you are in; it turns
-amber in Reliability mode. Your choice is remembered as the default for next time.
+The **Mode** chip in the status row under the top bar shows the annotation type and the
+mode (for example `Touch / Normal`); it turns amber in Reliability mode. Your choice is remembered as the default for next time.
 
 ---
 
@@ -75,7 +80,8 @@ amber in Reliability mode. Your choice is remembered as the default for next tim
    **Resume existing** or **Create new copy**. A copy starts a fresh Normal
    project named `<video>_copy` (then `_copy2`, `_copy3`, etc.), with its own
    setup and annotations. It shares the source video without duplicating it.
-3. Choose the mode and a diagram: **Default**, **Alternate**, or **General**.
+3. Choose the annotation type (**Touch** or **3d Pose**), the mode, and for Touch a
+   diagram: **Default**, **Alternate**, or **General**. Pose always uses the Alternate diagram.
    Alternatively, load a shared coding configuration from `config/` to prefill
    all the settings. This folder sits beside the application's `config.json`.
 4. Review the zone names, four channel names, three global parameter labels, and
@@ -109,8 +115,8 @@ Launch from the same working directory each time and use the same mode and video
 resume. Project names come from video filenames without their extensions; use unique
 names for distinct videos. See the README for [backup and transfer instructions](../README.md#find-your-data-and-run-analysis).
 
-Do not close the terminal window while using the application. If something goes wrong,
-use **Settings -> Open Logs Folder** to find the session log for your bug report.
+If something goes wrong, use **Settings -> Open logs folder** to find the session log for
+your bug report.
 
 ---
 
@@ -127,20 +133,21 @@ use **Settings -> Open Logs Folder** to find the session log for your bug report
 
 Clicking either timeline jumps to that frame.
 
-**Right** — the body diagram, the limb selector, the parameter buttons and the note box.
+**Right** — the body diagram, the **Channel Selector**, the parameter buttons and the note box.
 
 **Top bar** — Load Video, Settings, Special Zones, Analysis, Save on the left; the navigation
 buttons, Play/Stop and the frame/time counters on the right.
 
-**Bottom strip** — the mode chip, the buffer indicator, the minimal-touch-length readout,
-the jump size, and the video name. A red **Buffer: Loading** indicator means the decoded
-frames around your position are still being read; wait a second and it turns green.
+**Status row** (under the top bar) — the mode chip, the buffer indicator, the
+minimal-touch-length readout and the jump size. A red **Buffer: Loading** indicator means
+the decoded frames around your position are still being read; wait a second and it turns
+green. The video name, frame rate and program version are shown in a badge on the video.
 
 ### Keyboard and mouse
 
 | Input | Action |
 | --- | --- |
-| `←` / `→` | Play backward / forward while held when Hold arrows is enabled; otherwise step on keyboard repeat |
+| `←` / `→` | Step one frame; hold to play backward / forward |
 | `Shift`+`←` / `Shift`+`→` | Jump back / forward by the fast-jump distance |
 | Mouse wheel | Previous / next frame |
 | `Space` | Toggle Play / Stop |
@@ -155,12 +162,12 @@ frames around your position are still being read; wait a second and it turns gre
 
 The fast-jump distance is set in Settings as **Fast-jump seconds** and is converted to a
 frame count using the video's frame rate; the current value is shown as `Jump: N` in the
-bottom strip.
+status row.
 
 Navigation keys are ignored while the cursor is inside the note box, so typing a note that
 contains a `d` or an arrow key does not move you off the frame.
 
-With **Hold arrows to play** enabled, key-down steps one frame. A tap released within
+An arrow key-down steps one frame. A tap released within
 150 ms stays on that frame; holding longer starts playback. Release or focus loss
 stops playback. **< / >** always step one frame. Playback targets the video's frame
 rate but slows down if rendering cannot keep up, preserving frames.
@@ -193,7 +200,7 @@ the window saves the new state.
 
 ## 6. Coding a touch
 
-1. **Select the limb** with the radio buttons under the diagram (Right Hand, Left Hand,
+1. **Select the limb** in the **Channel Selector** under the diagram (Right Hand, Left Hand,
    Right Foot, Left Foot). The diagram redraws with that limb's zone map, and the timeline
    switches to that limb. Annotations for the other three limbs are untouched — you code
    one limb at a time, but all four coexist in the same project.
@@ -225,7 +232,7 @@ the touch.
 up in amber and a small tag next to the pointer shows its name, so you can see which zone
 a click will record before you commit. A renamed zone shows as `Name (ID)`. The boundary
 lines and the off-body area are named but not lit. After a click the zone flashes briefly
-in the dot's colour. Settings > "Highlight the zone under the pointer" turns this off.
+in the dot's colour.
 
 **Deleting.** Middle-click near a dot, or hover over it and press `d`, to remove it. The
 dot must be within roughly 20 pixels of the pointer. Removing the last dot on a frame also
@@ -265,8 +272,7 @@ Special zones:
 - **`NN`** — **no zone matched at all.** Almost always a misclick outside the diagram's
   masked area. `NN` clicks are kept in the data and show up in the analysis, so treat `NN`
   in a finished dataset as a defect to be corrected, not as a category. Every `NN` click is
-  also announced with a `WARN` line in the console, naming the frame and limb, so you can
-  fix it while you are still on the video.
+  also recorded with a `WARN` line in the session log, naming the frame and limb.
 
 The zone masks overlap slightly, so a click can match several. The winner is decided by
 precedence, not by name: **a real body zone beats a box, a box beats `OUTSIDE`, and
@@ -281,7 +287,7 @@ to sort first.
 Add zone labels in the new-video setup wizard. Zone IDs are fixed. This works for **Default**,
 **Alternate**, and **General**. Enter names beside the zone IDs: for example,
 General's `1` could become `Light on`. Its four bottom boxes are ordinary zones
-`9` through `12` in new setups (older projects keep `Channel1` through `Channel4`).
+`9` through `12`.
 Name them like any other zone. Channel names are configured separately in the
 next step. Channel-to-zone relationships are fixed by the template and shown
 read-only: General channels 1–4 correspond to zones 9–12. Selecting a channel
@@ -331,9 +337,9 @@ definitions. Each prepared video retains its own immutable copy, which is writte
 into export metadata. Global columns are `Parameter_1..3`; channel-specific columns
 are `Channel1_Parameter_1..3` through `Channel4_Parameter_1..3`.
 
-Settings also holds the display options: video downscale (higher values render smaller frames),
-dot size, the fast-jump distance, and whether holding an arrow key starts playback
-after a 150 ms tap delay at the video's target frame rate. Changes apply on **Apply** or **Apply & Close**.
+Settings also holds the display options: appearance, video renderer, video downscale (higher
+values render smaller frames), dot size and the fast-jump distance. Changes apply when you
+click **Save**; closing the Settings window with its title-bar button discards them.
 The diagram size is not a Settings field: drag the grip in the diagram's bottom-left corner
 (the pointer turns into a resize arrow there). The proportions stay fixed, recorded coordinates
 are unaffected, and the chosen size is remembered for the next launch.
@@ -374,9 +380,20 @@ Click **Save** regularly. Saving:
 2. rewrites the published dataset,
    `data/<video>/export/<video>_export.csv` plus `<video>_metadata.json` and `<video>_diagram.png`.
 
-TinyTouch also saves automatically before loading another video and when you close the
-window. A progress dialog appears during the export; on a long video this takes a few
-seconds.
+TinyTouch also saves automatically before loading another video. A progress dialog appears
+during the export; on a long video this takes a few seconds.
+
+**Closing the app** asks what to do with your work:
+
+- **Save and close** saves as above and closes. When nothing changed since the last save,
+  the button is simply **OK**.
+- **Don't save** closes and keeps the last saved version. It asks once more before
+  discarding the changes made since the last save. Your position and labeling time are
+  still recorded.
+- **Cancel** keeps the app open.
+
+If the project has unpaired onsets or offsets, a list of them is shown instead, with the
+same choices; see [section 12](#12-practical-tips-and-common-mistakes).
 
 Practical rules:
 
@@ -414,9 +431,8 @@ Reports use names from the exported metadata. Renamed zones appear as **Name (ID
 in heatmaps and trajectory hovers, keeping zones distinct even if they share a name.
 General uses channel names in titles, legends, and tables. Its diagram footer highlights
 the corresponding channel in both the app and each report trajectory panel. Clicking a
-footer box records a touch of that channel (zones `9`–`12` in new setups) for the channel
+footer box records a touch of that channel (zones `9`–`12`) for the channel
 selected in the radio buttons; it does not switch channels.
-Older exports without custom names use the original IDs and template defaults.
 The two analysis CSV files retain their original headers and channel IDs.
 
 Two things to read carefully:
@@ -443,26 +459,30 @@ is not silently dropped — the analysis reports it separately with its start fr
 summary table, in the banner on the dashboard page and in the log — but it contributes
 nothing to your statistics.
 
-When you press **Analysis** with such a touch in the data, the app first shows an
-**Open touches** dialog listing each open onset (channel and frame). **Go to onset** jumps
-there without running the analysis so you can place the missing offset (right-click).
-**Skip and analyze** runs the analysis with the touch left open: it is reported as "open
-(unterminated)" and excluded from the durations. If a touch genuinely lasts until the end of
-the recording, place its offset on the last frame yourself.
+When you press **Analysis** with such a touch in the data, the app first shows the
+**Unpaired onsets and offsets** dialog. It lists each onset without an offset and each
+offset without an onset, with its channel and frame. **Go to frame** (or Enter, or a
+double-click on a row) jumps to the selected mark without running the analysis, so you can
+place the missing offset (right-click) or remove the stray one. **Skip and analyze** runs
+the analysis with the marks left as they are: an open touch is reported as "open
+(unterminated)" and excluded from the durations, and an offset without an onset is
+ignored. **Cancel** closes the dialog and does nothing. If a touch genuinely lasts until
+the end of the recording, place its offset on the last frame yourself.
 
 **Run Analysis before you consider a video finished and check that the "Open
 (Unterminated) Touches" column is zero for all four limbs.**
 
-When you close the app with an open touch, the same **Open touches** dialog appears.
-**Go to onset** keeps the app open and jumps to the selected onset. **Save and close**
-saves your progress with the touches left open, so you can continue labeling later.
-**Cancel** keeps the app open without saving or closing. This reminder does not require
-you to finish a touch before stopping work.
+When you close the app with unpaired marks, the same dialog replaces the close
+confirmation. **Go to frame** keeps the app open and jumps to the selected mark. **Save
+and close** saves your progress with the marks left as they are, so you can continue
+labeling later. **Don't save** closes and keeps the last saved version. **Cancel** keeps
+the app open without saving or closing. This reminder does not require you to finish a
+touch before stopping work.
 
-**A stray `OFF` is silently ignored.** An offset with no preceding onset belongs to no
-touch. It appears nowhere in the statistics and produces no warning, so it is harder to
-notice than a missing offset. Work forward through the video in order rather than jumping
-around, and you will rarely create one.
+**A stray `OFF` is ignored by the analysis.** An offset with no preceding onset belongs to
+no touch and appears nowhere in the statistics. The dialog above lists it before Analysis
+and before closing, so check that list. Work forward through the video in order rather
+than jumping around, and you will rarely create one.
 
 **Check the selected limb before you click.** Nothing stops you from coding a right-hand
 touch onto the left foot. The limb selector and the timeline are the only cues; get into the
@@ -485,8 +505,48 @@ display-only.
 frames around your position are still being read from disk; the display catches up on its
 own.
 
-**If something goes wrong**, do not close the terminal window — it holds the log. Save a
-screenshot of it along with a description of what you were doing.
+**If something goes wrong**, open **Settings -> Open logs folder** and send the newest
+session log along with a description of what you were doing.
+
+---
+
+## 13. 3D Pose projects
+
+Choose **3d Pose** as the annotation type when you prepare a new video. A Pose project is
+separate from a Touch project of the same video: it has its own setup, its own saved
+labels and its own export files. The top bar, navigation, timelines, global parameters,
+notes, Special Zones and saving work as described above. There is no Channel Selector and
+no channel parameters, and **Analysis** is not available for Pose projects yet.
+
+**Zones on and off.** Pose always uses the Alternate diagram.
+
+- **Left-click** a zone to mark it **ON** on the current frame.
+- **Right-click** a zone to mark **OFF**.
+- **Middle-click**, or `d`, removes the mark under the pointer.
+
+There is one ON/OFF sequence for the whole project, not one per zone: an OFF closes the
+open interval even when it is clicked in a different zone. The zone of each click records
+where that boundary happened. As in Touch, several clicks on one frame all take the kind
+of the most recent click.
+
+**Pose size.** The **Head** and **Body** sliders (0.5 to 1.5, in steps of 0.01) set the
+size of the head and body outlines for the current frame. **Reset** returns a slider
+to 1.0. After you set a size, it carries forward to the frames you arrive on by stepping
+or holding the forward arrow. Play, stepping backward and jumps only show the stored
+values; they never label frames.
+
+**Quality.** The **Quality** slider (0 to 1) rates the current frame; **Clear** removes
+the rating. Quality is optional. It carries forward like the sizes, and also during
+forward playback. The readout shows `carried` on frames that received their value this way.
+
+**Timelines.** The timelines show the ON/OFF intervals, the head and body size as traces,
+and quality as a band along the bottom of the track, from red (0) to green (1).
+
+**Saving and export.** Every save writes the Pose labels and two export files,
+`<video>_pose_export.csv` and `<video>_pose_metadata.json`, into the video's `export/`
+folder. If the export cannot be written (for example because the CSV is open in Excel),
+your labels are still saved and TinyTouch tells you the export is out of date. The files
+are described in [POSE_DATA_FORMAT.md](POSE_DATA_FORMAT.md).
 
 ---
 
@@ -494,4 +554,5 @@ screenshot of it along with a description of what you were doing.
 
 - [../README.md](../README.md) — installation and a short quick start.
 - [DATA_FORMAT.md](DATA_FORMAT.md) — the exact structure and semantics of the exported
-  files.
+  Touch files.
+- [POSE_DATA_FORMAT.md](POSE_DATA_FORMAT.md) — the same for the Pose export.

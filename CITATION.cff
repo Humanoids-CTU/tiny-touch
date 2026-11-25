@@ -16,7 +16,8 @@ abstract: >-
   TinyTouch is a desktop tool for frame-by-frame annotation of infant self-touch
   in behavioral research. It records limb-to-body-zone contacts, onset and offset
   events, gaze, and configurable annotation parameters, and exports structured
-  datasets and analysis reports.
+  datasets and analysis reports. A second annotation type, 3D Pose, records body-zone
+  events, body and head size, and frame quality.
 keywords:
   - video annotation
   - infant development
